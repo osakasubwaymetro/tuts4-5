@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>投稿一覧</title>
+  <style>
+    table {
+      border-collapse: collapse;
+      width: 90%;
+      margin: 20px auto;
+    }
+    th, td {
+      border: 1px solid #aaa;
+      padding: 8px;
+      text-align: center;
+    }
+    th {
+      background-color: #f2f2f2;
+    }
+  </style>
+</head>
+<body>
+    <header>
+        <h2>新規投稿</h2>
+        <a href="index.html">投稿ページ</a>
+    </header>
+  <h2 style="text-align:center;">投稿一覧</h2>
+  <table id="postTable">
+    <thead>
+      <tr id="headerRow"></tr>
+    </thead>
+    <tbody id="tableBody"></tbody>
+    <p id="reload">読み込み中...</p>
+  </table>
+
+  <script>
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec"; // ← ここに貼り付ける
+
+    fetch(GAS_URL)
+      .then(res => res.json())
+      .then(data => {
+        const headerRow = document.getElementById("headerRow");
+        const tableBody = document.getElementById("tableBody");
+
+        if (data.length === 0) {
+          tableBody.innerHTML = "<tr><td colspan='99'>投稿がありません</td></tr>";
+          return;
+        }
+
+        // ヘッダー行を作成
+        Object.keys(data[0]).forEach(key => {
+          const th = document.createElement("th");
+          th.textContent = key;
+          headerRow.appendChild(th);
+        });
+
+        // 各投稿を行として表示
+        data.forEach(row => {
+          const tr = document.createElement("tr");
+          Object.values(row).forEach(val => {
+            const td = document.createElement("td");
+            td.textContent = val;
+            tr.appendChild(td);
+          });
+          tableBody.appendChild(tr);
+        });
+        document.getElementById("reload").innerHTML = "";
+      })
+      .catch(err => {
+        console.error(err);
+        document.getElementById("tableBody").innerHTML = "<tr><td colspan='99'>データ取得エラー</td></tr>";
+      });
+  </script>
+</body>
+</html>

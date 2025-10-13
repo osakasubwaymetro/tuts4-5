@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>tuts4</title>
+</head>
+<body>
+    
+    <header>
+        <h2>新規投稿</h2>
+        <a href="show.html">投稿履歴確認ページ</a>
+    </header>
+    <center>
+        <h3>ユーザー名</h3>
+        <input type="text" id="username">
+        <br><br><br>
+
+
+        <h3>現在時刻</h3>
+        <input type="datetime-local" id="departing_time">
+        <button type="button" onclick="setCurrentDateTime()">現在日時を入力</button>
+        <br><br><br>
+
+        <h3>エリア</h3>
+        <select id="area">
+            <option>読み込み中...</option>
+        </select><br><br><br>
+
+        <h3>区分</h3>
+        <select id="type">
+            <option>読み込み中...</option>
+        </select><br><br><br>
+
+        <h3>会社</h3>
+        <select id="country">
+            <option>読み込み中...</option>
+        </select><br><br><br>
+
+        <h3>路線</h3>
+        <select id="route">
+            <option>読み込み中...</option>
+        </select><br><br><br>
+
+        <h3>車両形式</h3>
+        <select id="model">
+            <option>読み込み中...</option>
+        </select><br><br><br>
+
+        <h3>乗車駅</h3>
+        <select id="station">
+            <option>読み込み中...</option>
+        </select><br><br><br>
+
+        <h3>種別</h3>
+        <select id="sujitype">
+            <option>読み込み中...</option>
+        </select><br><br><br>
+
+        <h3>行先</h3>
+        <select id="bound">
+            <option>読み込み中...</option>
+        </select><br><br><br>
+
+        <h3>車番</h3>
+        <select id="number">
+            <option>読み込み中...</option>
+        </select><br><br><br>
+
+        <h3>メモ</h3>
+        <h5>プルダウンに要素がない場合はこちらへ    すぐに追加するよ</h5>
+        <input type="text", id="memo"><br><br><br>
+
+
+
+
+
+
+        <button onclick="upload()">投稿する</button>
+    
+    </center>
+    
+    <script src="scripts.js"></script>
+</body>
+</html>
