@@ -1,85 +1,142 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>tuts4</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>新規投稿</title>
+  <style>
+    body {
+      font-family: "Hiragino Sans", "Segoe UI", sans-serif;
+      background-color: #F7F8FA;
+      margin: 0;
+      padding: 0;
+      color: #222;
+    }
+
+    header {
+      background-color: #004C97; /* ミャクミャクブルー */
+      color: white;
+      text-align: center;
+      padding: 15px;
+      font-size: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+
+    header a {
+      color: #E60012; /* ミャクミャクレッド */
+      text-decoration: none;
+      font-size: 14px;
+      margin-left: 10px;
+      background: white;
+      padding: 5px 10px;
+      border-radius: 6px;
+      transition: 0.2s;
+    }
+    header a:hover {
+      background-color: #E60012;
+      color: white;
+    }
+
+    main {
+      max-width: 600px;
+      background: white;
+      margin: 30px auto;
+      padding: 20px 25px;
+      border-radius: 15px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    }
+
+    h2 {
+      text-align: center;
+      color: #004C97;
+      margin-bottom: 20px;
+    }
+
+    h3 {
+      color: #004C97;
+      font-size: 16px;
+      margin-top: 20px;
+    }
+
+    input, select, button {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+
+    button {
+      background-color: #004C97;
+      color: white;
+      border: none;
+      font-weight: bold;
+      margin-top: 25px;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+
+    button:hover {
+      background-color: #E60012;
+    }
+
+    small {
+      font-size: 12px;
+      color: #666;
+    }
+  </style>
 </head>
 <body>
-    
-    <header>
-        <h2>新規投稿</h2>
-        <a href="show.html">投稿履歴確認ページ</a>
-    </header>
-    <center>
-        <h3>ユーザー名</h3>
-        <input type="text" id="username">
-        <br><br><br>
 
+  <header>
+    新規投稿ページ
+    <a href="show.html">投稿履歴を見る ▶</a>
+  </header>
 
-        <h3>現在時刻</h3>
-        <input type="datetime-local" id="departing_time">
-        <button type="button" onclick="setCurrentDateTime()">現在日時を入力</button>
-        <br><br><br>
+  <main>
+    <h2>投稿フォーム</h2>
 
-        <h3>エリア</h3>
-        <select id="area">
-            <option>読み込み中...</option>
-        </select><br><br><br>
+    <label><h3>ユーザー名</h3></label>
+    <input type="text" id="username">
 
-        <h3>区分</h3>
-        <select id="type">
-            <option>読み込み中...</option>
-        </select><br><br><br>
+    <label><h3>発車時刻</h3></label>
+    <input type="datetime-local" id="departing_time">
+    <button type="button" onclick="setCurrentDateTime()">🕓 現在時刻を入力</button>
 
-        <h3>会社</h3>
-        <select id="country">
-            <option>読み込み中...</option>
-        </select><br><br><br>
+    <label><h3>エリア</h3></label>
+    <select id="area"></select>
 
-        <h3>路線</h3>
-        <select id="route">
-            <option>読み込み中...</option>
-        </select><br><br><br>
+    <label><h3>区分</h3></label>
+    <select id="type"></select>
 
-        <h3>車両形式</h3>
-        <select id="model">
-            <option>読み込み中...</option>
-        </select><br><br><br>
+    <label><h3>会社</h3></label>
+    <select id="country"></select>
 
-        <h3>乗車駅</h3>
-        <select id="station">
-            <option>読み込み中...</option>
-        </select><br><br><br>
+    <label><h3>路線</h3></label>
+    <select id="route"></select>
 
-        <h3>種別</h3>
-        <select id="sujitype">
-            <option>読み込み中...</option>
-        </select><br><br><br>
+    <label><h3>車両形式</h3></label>
+    <select id="model"></select>
 
-        <h3>行先</h3>
-        <select id="bound">
-            <option>読み込み中...</option>
-        </select><br><br><br>
+    <label><h3>乗車駅</h3></label>
+    <select id="station"></select>
 
-        <h3>車番</h3>
-        <select id="number">
-            <option>読み込み中...</option>
-        </select><br><br><br>
+    <label><h3>種別</h3></label>
+    <select id="sujitype"></select>
 
-        <h3>メモ</h3>
-        <h5>プルダウンに要素がない場合はこちらへ    すぐに追加するよ</h5>
-        <input type="text", id="memo"><br><br><br>
+    <label><h3>行先</h3></label>
+    <select id="bound"></select>
 
+    <label><h3>車番</h3></label>
+    <select id="number"></select>
 
+    <label><h3>メモ</h3></label>
+    <small>プルダウンにない場合はここに入力してください</small>
+    <input type="text" id="memo">
 
+    <button onclick="upload()">🚆 投稿する</button>
+  </main>
 
-
-
-        <button onclick="upload()">投稿する</button>
-    
-    </center>
-    
-    <script src="scripts.js"></script>
+  <script src="scripts.js"></script>
 </body>
 </html>
