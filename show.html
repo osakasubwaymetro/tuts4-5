@@ -3,73 +3,154 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>投稿一覧</title>
+  <title>投稿履歴</title>
   <style>
-    table {
-      border-collapse: collapse;
-      width: 90%;
-      margin: 20px auto;
+    body {
+      font-family: "Hiragino Sans", "Segoe UI", sans-serif;
+      background-color: #F7F8FA;
+      margin: 0;
+      padding: 0;
     }
-    th, td {
-      border: 1px solid #aaa;
-      padding: 8px;
+
+    header {
+      background-color: #004C97;
+      color: white;
       text-align: center;
+      padding: 15px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
     }
-    th {
-      background-color: #f2f2f2;
+
+    header a {
+      color: #E60012;
+      text-decoration: none;
+      font-size: 14px;
+      margin-left: 10px;
+      background: white;
+      padding: 5px 10px;
+      border-radius: 6px;
+      transition: 0.2s;
+    }
+    header a:hover {
+      background-color: #E60012;
+      color: white;
+    }
+
+    h2 {
+      text-align: center;
+      margin-top: 20px;
+      color: #004C97;
+    }
+
+    #postContainer {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+      padding: 20px;
+      width: 90%;
+      max-width: 1000px;
+      margin: auto;
+    }
+
+    .card {
+      background-color: #fff;
+      border-radius: 15px;
+      padding: 20px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+      border-left: 6px solid #E60012; /* ミャクミャクレッドアクセント */
+      transition: transform 0.15s ease;
+    }
+
+    .card:hover {
+      transform: translateY(-3px);
+    }
+
+    .card h3 {
+      margin: 0 0 8px;
+      color: #004C97;
+      font-size: 18px;
+    }
+
+    .card p {
+      margin: 4px 0;
+      color: #333;
+      font-size: 14px;
+    }
+
+    .time {
+      color: #666;
+      font-size: 12px;
+      margin-top: 10px;
+    }
+
+    #reload {
+      text-align: center;
+      color: #555;
     }
   </style>
 </head>
 <body>
-    <header>
-        <h2>新規投稿</h2>
-        <a href="index.html">投稿ページ</a>
-    </header>
-  <h2 style="text-align:center;">投稿一覧</h2>
-  <table id="postTable">
-    <thead>
-      <tr id="headerRow"></tr>
-    </thead>
-    <tbody id="tableBody"></tbody>
-    <p id="reload">読み込み中...</p>
-  </table>
+  <header>
+    投稿履歴
+    <a href="index.html">新規投稿へ ▶</a>
+  </header>
+
+  <h2>投稿一覧</h2>
+  <p id="reload">読み込み中...</p>
+
+  <div id="postContainer"></div>
 
   <script>
-    const GAS_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec"; // ← ここに貼り付ける
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
 
     fetch(GAS_URL)
       .then(res => res.json())
       .then(data => {
-        const headerRow = document.getElementById("headerRow");
-        const tableBody = document.getElementById("tableBody");
+        const container = document.getElementById("postContainer");
+        const reloadMsg = document.getElementById("reload");
 
-        if (data.length === 0) {
-          tableBody.innerHTML = "<tr><td colspan='99'>投稿がありません</td></tr>";
+        if (!data || data.length === 0) {
+          reloadMsg.textContent = "投稿がまだありません。";
           return;
         }
 
-        // ヘッダー行を作成
-        Object.keys(data[0]).forEach(key => {
-          const th = document.createElement("th");
-          th.textContent = key;
-          headerRow.appendChild(th);
-        });
+        reloadMsg.textContent = "";
 
-        // 各投稿を行として表示
         data.forEach(row => {
-          const tr = document.createElement("tr");
-          Object.values(row).forEach(val => {
-            const td = document.createElement("td");
-            td.textContent = val;
-            tr.appendChild(td);
+          const card = document.createElement("div");
+          card.classList.add("card");
+
+          const title = document.createElement("h3");
+          title.textContent = `${row["会社"] || ""} ${row["路線"] || ""}`;
+          card.appendChild(title);
+
+          const info = [
+            ["ユーザー", row["ユーザー名"]],
+            ["発車時刻", row["発車時刻"]],
+            ["エリア", row["エリア"]],
+            ["区分", row["区分"]],
+            ["車両形式", row["車両形式"]],
+            ["種別", row["種別"]],
+            ["行先", row["行先"]],
+            ["車番", row["車番"]],
+            ["乗車駅", row["乗車駅"]],
+            ["メモ", row["メモ"]]
+          ];
+
+          info.forEach(([label, value]) => {
+            if (value && value.trim() !== "") {
+              const p = document.createElement("p");
+              p.innerHTML = `<strong>${label}：</strong>${value}`;
+              card.appendChild(p);
+            }
           });
-          tableBody.appendChild(tr);
+
+
+          container.appendChild(card);
         });
-        document.getElementById("reload").innerHTML = "";
       })
       .catch(err => {
         console.error(err);
-        document.getElementById("tableBody").innerHTML = "<tr><td colspan='99'>データ取得エラー</td></tr>";
+        document.getElementById("reload").textContent = "データ取得エラーが発生しました。";
       });
   </script>
 </body>
