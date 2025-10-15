@@ -137,6 +137,22 @@
     <button onclick="upload()">🚆 投稿する</button>
   </main>
 
+  <script>
+  // ログインチェック
+  const username = localStorage.getItem("username");
+  const accessKey = localStorage.getItem("accessKey");
+
+  // 許可されたキー一覧（login.htmlと同じ内容）
+  //const VALID_KEYS = ["12345678", "87654321", "11223344"];
+  const VALID_KEYS = ["00002025"];
+
+  if (!username || !VALID_KEYS.includes(accessKey)) {
+    alert("ログインが必要です。");
+    window.location.href = "login.html";
+  }
+  </script>
+
+
   <script src="scripts.js"></script>
 </body>
 </html>
