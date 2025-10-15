@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ログイン | tuts4</title>
+<style>
+  body {
+    font-family: "Hiragino Sans", "Segoe UI", sans-serif;
+    background-color: #F7F8FA;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+  }
+
+  main {
+    background: #fff;
+    border-radius: 15px;
+    padding: 25px 30px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+    max-width: 350px;
+    width: 90%;
+    text-align: center;
+  }
+
+  h2 {
+    color: #004C97;
+    margin-bottom: 20px;
+  }
+
+  input {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 12px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 14px;
+  }
+
+  button {
+    width: 100%;
+    background-color: #004C97;
+    color: white;
+    border: none;
+    padding: 10px;
+    border-radius: 6px;
+    font-size: 15px;
+    cursor: pointer;
+    transition: 0.2s;
+  }
+
+  button:hover {
+    background-color: #E60012;
+  }
+
+  p {
+    font-size: 13px;
+    color: #666;
+  }
+</style>
+</head>
+<body>
+
+  <main>
+    <h2>🔐 ログイン</h2>
+    <input type="text" id="username" placeholder="ユーザー名">
+    <input type="password" id="accessKey" placeholder="アクセスキー（8桁）">
+    <button onclick="login()">ログイン</button>
+    <p id="msg"></p>
+  </main>
+
+  <script>
+    // ✅ 許可されたアクセスキー（あなた側で管理）
+    // const VALID_KEYS = ["12345678", "87654321", "11223344"]; // ← ここを自由に設定！
+    const VALID_KEYS = ["00002025"]; // ← ここを自由に設定！
+
+    function login() {
+      const username = document.getElementById("username").value.trim();
+      const key = document.getElementById("accessKey").value.trim();
+      const msg = document.getElementById("msg");
+
+      if (!username || !key) {
+        msg.textContent = "ユーザー名とアクセスキーを入力してください。";
+        msg.style.color = "red";
+        return;
+      }
+
+      if (VALID_KEYS.includes(key)) {
+        localStorage.setItem("username", username);
+        localStorage.setItem("accessKey", key);
+        msg.style.color = "green";
+        msg.textContent = "ログイン成功！";
+        setTimeout(() => {
+          window.location.href = "index.html";
+        }, 800);
+      } else {
+        msg.textContent = "アクセスキーが間違っています。";
+        msg.style.color = "red";
+      }
+    }
+  </script>
+
+</body>
+</html>
