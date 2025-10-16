@@ -315,45 +315,56 @@ function updatenumberList() {
 
 
 
-const scriptURL = "https://script.google.com/macros/s/AKfycbzuhYRx9gyb5J1a-6ZuxmcCepIU1hIMnuBo58wh5CTYMWE785YAnuJY4ckm_13-ZHc7/exec";
-
+// 投稿ボタン（確認用）
 function upload() {
+    const usernameValue = document.getElementById('username').value;
+    const timeValue = document.getElementById('departing_time').value;
+    const areaValue = document.getElementById('area').value;
+    const typeValue = document.getElementById('type').value;
+    const countryValue = document.getElementById('country').value;
+    const routeValue = document.getElementById('route').value;
+    const modelValue = document.getElementById('model').value;
+    const stationValue = document.getElementById('station').value;
+    const sujitypeValue = document.getElementById('sujitype').value;
+    const boundValue = document.getElementById('bound').value;
+    const numberValue = document.getElementById('number').value;
+    const memoValue = document.getElementById('memo').value;
+    console.log(numberValue)
+
   const payload = {
-    usernameValue: document.getElementById('username').value,
-    timeValue: document.getElementById('departing_time').value,
-    areaValue: document.getElementById('area').value,
-    typeValue: document.getElementById('type').value,
-    countryValue: document.getElementById('country').value,
-    routeValue: document.getElementById('route').value,
-    modelValue: document.getElementById('model').value,
-    stationValue: document.getElementById('station').value,
-    sujitypeValue: document.getElementById('sujitype').value,
-    boundValue: document.getElementById('bound').value,
-    numberValue: document.getElementById('number').value,
-    memoValue: document.getElementById('memo').value
+    usernameValue,
+    timeValue,
+    areaValue,
+    typeValue,
+    countryValue,
+    routeValue,
+    modelValue,
+    stationValue,
+    sujitypeValue,
+    boundValue,
+    numberValue,
+    memoValue
   };
 
+  // ▼ここにGASのデプロイURLを入れる
+  const scriptURL = "https://script.google.com/macros/s/AKfycbzuhYRx9gyb5J1a-6ZuxmcCepIU1hIMnuBo58wh5CTYMWE785YAnuJY4ckm_13-ZHc7/exec";
+
   fetch(scriptURL, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify(payload),
-})
-  .then(res => res.json())
-  .then(data => {
-    console.log("GASレスポンス:", data);
-    if (data.result === "success") {
-      alert("送信しました！");
-    } else {
-      alert("送信失敗: " + (data.message || "不明なエラー"));
-    }
+    method: "POST",
+    mode: "no-cors", // GASを匿名アクセス可能にしているため
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  })
+  .then(() => {
+    alert("送信しました！");
   })
   .catch(err => {
     console.error("送信エラー:", err);
-    alert("通信に失敗しました");
+    alert("送信に失敗しました");
   });
-
+}
 
 function setCurrentDateTime() {
   const now = new Date();
@@ -367,8 +378,4 @@ function setCurrentDateTime() {
 
   const localDatetime = `${year}-${month}-${day}T${hours}:${minutes}`;
   document.getElementById("departing_time").value = localDatetime;
-
 }
-
-
-
