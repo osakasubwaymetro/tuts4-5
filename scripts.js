@@ -315,7 +315,7 @@ function updatenumberList() {
 
 
 
-const scriptURL = "あなたのGASデプロイURL";
+const scriptURL = "https://script.google.com/macros/s/AKfycbzuhYRx9gyb5J1a-6ZuxmcCepIU1hIMnuBo58wh5CTYMWE785YAnuJY4ckm_13-ZHc7/exec";
 
 function upload() {
   const payload = {
@@ -375,4 +375,5 @@ function setCurrentDateTime() {
   document.getElementById("departing_time").value = localDatetime;
 
 }
+
 
