@@ -315,7 +315,7 @@ function updatenumberList() {
 
 
 
-const scriptURL = "https://script.google.com/macros/s/AKfycbzuhYRx9gyb5J1a-6ZuxmcCepIU1hIMnuBo58wh5CTYMWE785YAnuJY4ckm_13-ZHc7/exec";
+const scriptURL = "あなたのGASデプロイURL";
 
 function upload() {
   const payload = {
@@ -338,8 +338,17 @@ function upload() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   })
-  .then(res => res.json())
-  .then(data => {
+  .then(async res => {
+    const text = await res.text(); // GASのレスポンスを文字列で取得
+    console.log("GASからの応答:", text);
+
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error("レスポンスがJSONではありません");
+    }
+
     if (data.result === "success") {
       alert("✅ 投稿が完了しました！");
     } else {
@@ -348,7 +357,7 @@ function upload() {
   })
   .catch(err => {
     console.error("送信エラー:", err);
-    alert("⚠️ 通信に失敗しました");
+    alert("⚠️ 通信に失敗しました\n（ブラウザコンソールで詳細を確認してください）");
   });
 }
 
@@ -366,3 +375,4 @@ function setCurrentDateTime() {
   document.getElementById("departing_time").value = localDatetime;
 
 }
+
