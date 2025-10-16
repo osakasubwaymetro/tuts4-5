@@ -334,32 +334,26 @@ function upload() {
   };
 
   fetch(scriptURL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  })
-  .then(async res => {
-    const text = await res.text(); // GASのレスポンスを文字列で取得
-    console.log("GASからの応答:", text);
-
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      throw new Error("レスポンスがJSONではありません");
-    }
-
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify(payload),
+})
+  .then(res => res.json())
+  .then(data => {
+    console.log("GASレスポンス:", data);
     if (data.result === "success") {
-      alert("✅ 投稿が完了しました！");
+      alert("送信しました！");
     } else {
-      alert("⚠️ 投稿エラー：" + (data.message || "不明なエラー"));
+      alert("送信失敗: " + (data.message || "不明なエラー"));
     }
   })
   .catch(err => {
     console.error("送信エラー:", err);
-    alert("⚠️ 通信に失敗しました\n（ブラウザコンソールで詳細を確認してください）");
+    alert("通信に失敗しました");
   });
-}
+
 
 function setCurrentDateTime() {
   const now = new Date();
@@ -375,5 +369,6 @@ function setCurrentDateTime() {
   document.getElementById("departing_time").value = localDatetime;
 
 }
+
 
 
