@@ -16,25 +16,38 @@
     header {
       background-color: #004C97; /* ミャクミャクブルー */
       color: white;
-      text-align: center;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
       padding: 15px;
-      font-size: 20px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+
+    .header-left, .header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
 
     header a {
       color: #E60012; /* ミャクミャクレッド */
+      background: white;
       text-decoration: none;
       font-size: 14px;
-      margin-left: 10px;
-      background: white;
       padding: 5px 10px;
       border-radius: 6px;
       transition: 0.2s;
     }
+
     header a:hover {
       background-color: #E60012;
       color: white;
+    }
+
+    #usernameDisplay {
+      font-weight: bold;
+      font-size: 14px;
+      color: #FFD700; /* 金色で強調 */
     }
 
     main {
@@ -89,15 +102,23 @@
 <body>
 
   <header>
-    新規投稿ページ
-    <a href="show.html">投稿履歴を見る ▶</a>
+    <div class="header-left">
+      <a href="show.html">📜 投稿履歴</a>
+    </div>
+
+    <div><strong>新規投稿ページ</strong></div>
+
+    <div class="header-right">
+      <span id="usernameDisplay"></span>
+      <a href="#" onclick="logout()">🚪 ログアウト</a>
+    </div>
   </header>
 
   <main>
     <h2>投稿フォーム</h2>
 
     <label><h3>ユーザー名</h3></label>
-    <input type="text" id="username">
+    <input type="text" id="username" readonly>
 
     <label><h3>発車時刻</h3></label>
     <input type="datetime-local" id="departing_time">
@@ -140,9 +161,9 @@
   <script src="logs.js"></script>
   <script src="scripts.js"></script>
   <script>
-    // ✅ ログインチェック
     const username = checkLogin();
     document.getElementById("username").value = username;
+    document.getElementById("usernameDisplay").textContent = `👤 ${username} さん`;
   </script>
 </body>
 </html>

@@ -18,14 +18,22 @@
       text-align: center;
       padding: 15px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .header-left, .header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
 
     header a {
       color: #E60012;
+      background: white;
       text-decoration: none;
       font-size: 14px;
-      margin-left: 10px;
-      background: white;
       padding: 5px 10px;
       border-radius: 6px;
       transition: 0.2s;
@@ -33,6 +41,12 @@
     header a:hover {
       background-color: #E60012;
       color: white;
+    }
+
+    #usernameDisplay {
+      font-weight: bold;
+      font-size: 14px;
+      color: #FFD700; /* 金色で強調 */
     }
 
     h2 {
@@ -56,7 +70,7 @@
       border-radius: 15px;
       padding: 20px;
       box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-      border-left: 6px solid #E60012; /* ミャクミャクレッドアクセント */
+      border-left: 6px solid #E60012;
       transition: transform 0.15s ease;
     }
 
@@ -76,12 +90,6 @@
       font-size: 14px;
     }
 
-    .time {
-      color: #666;
-      font-size: 12px;
-      margin-top: 10px;
-    }
-
     #reload {
       text-align: center;
       color: #555;
@@ -90,8 +98,16 @@
 </head>
 <body>
   <header>
-    投稿履歴
-    <a href="index.html">新規投稿へ ▶</a>
+    <div class="header-left">
+      <a href="index.html">📝 新規投稿</a>
+    </div>
+
+    <div><strong>投稿履歴</strong></div>
+
+    <div class="header-right">
+      <span id="usernameDisplay"></span>
+      <a href="#" onclick="logout()">🚪 ログアウト</a>
+    </div>
   </header>
 
   <h2>投稿一覧</h2>
@@ -99,11 +115,10 @@
 
   <div id="postContainer"></div>
 
- 
   <script src="logs.js"></script>
   <script>
-    // ✅ ログインチェック
     const username = checkLogin();
+    document.getElementById("usernameDisplay").textContent = `👤 ${username} さん`;
 
     const GAS_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
 
@@ -129,7 +144,7 @@
 
           const info = [
             ["ユーザー", row["ユーザー名"]],
-            ["発車時刻", row["発車時刻"]],
+            ["発車時刻", row["時刻"]],
             ["エリア", row["エリア"]],
             ["区分", row["区分"]],
             ["車両形式", row["車両形式"]],
@@ -137,7 +152,6 @@
             ["行先", row["行先"]],
             ["車番", row["車番"]],
             ["乗車駅", row["乗車駅"]],
-            ["時刻", row["時刻"]],
           ];
 
           info.forEach(([label, value]) => {
