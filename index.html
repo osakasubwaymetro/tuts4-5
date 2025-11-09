@@ -192,7 +192,9 @@
           const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=ja`);
           const data = await res.json();
           const address = data.address;
-          const pref = address.state || address.region || ""; // 都道府県名
+          const pref = address.state || address.region || address.province || ""; // 都道府県名
+          
+          console.log("address.province:", address.province);
 
           const regionMap = {
             "北海道": "北海道",
