@@ -164,56 +164,62 @@
     const username = checkLogin();
     document.getElementById("username").value = username;
     document.getElementById("usernameDisplay").textContent = `👤 ${username} さん`;
-    
-  // ---- ここから位置情報関連処理 ----
-  async function setAreaByLocation() {
-    const areaSelect = document.getElementById("area");
-    const areas = ["北海道", "東北", "関東", "北陸", "東海", "関西", "中国", "四国", "九州"];
-    areaSelect.innerHTML = areas.map(a => `<option value="${a}">${a}</option>`).join("");
 
-    if (!navigator.geolocation) {
-      console.log("位置情報が利用できません");
-      return;
+    // 現在時刻を入力 + エリア自動設定
+    function setCurrentDateTime() {
+      const now = new Date();
+      const localDatetime = now.toISOString().slice(0, 16); // yyyy-MM-ddTHH:mm
+      document.getElementById("departing_time").value = localDatetime;
+      setAreaByLocation(); // 現在地からエリアを自動設定
     }
 
-    navigator.geolocation.getCurrentPosition(async pos => {
-      const lat = pos.coords.latitude;
-      const lon = pos.coords.longitude;
+    // 位置情報からエリア設定
+    async function setAreaByLocation() {
+      const areaSelect = document.getElementById("area");
+      const areas = ["北海道", "東北", "関東", "北陸", "東海", "関西", "中国", "四国", "九州"];
+      areaSelect.innerHTML = areas.map(a => `<option value="${a}">${a}</option>`).join("");
 
-      try {
-        // OpenStreetMap Nominatim APIで逆ジオコーディング
-        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=ja`);
-        const data = await res.json();
-        const address = data.address;
-        const pref = address.state || address.region || ""; // 都道府県名を取得
-        console.log("現在地の都道府県:", pref);
-
-        const regionMap = {
-          "北海道": "北海道",
-          "青森県": "東北", "岩手県": "東北", "宮城県": "東北", "秋田県": "東北", "山形県": "東北", "福島県": "東北",
-          "茨城県": "関東", "栃木県": "関東", "群馬県": "関東", "埼玉県": "関東", "千葉県": "関東", "東京都": "関東", "神奈川県": "関東",
-          "新潟県": "北陸", "富山県": "北陸", "石川県": "北陸", "福井県": "北陸",
-          "山梨県": "東海", "長野県": "東海", "岐阜県": "東海", "静岡県": "東海", "愛知県": "東海",
-          "三重県": "関西", "滋賀県": "関西", "京都府": "関西", "大阪府": "関西", "兵庫県": "関西", "奈良県": "関西", "和歌山県": "関西",
-          "鳥取県": "中国", "島根県": "中国", "岡山県": "中国", "広島県": "中国", "山口県": "中国",
-          "徳島県": "四国", "香川県": "四国", "愛媛県": "四国", "高知県": "四国",
-          "福岡県": "九州", "佐賀県": "九州", "長崎県": "九州", "熊本県": "九州", "大分県": "九州", "宮崎県": "九州", "鹿児島県": "九州", "沖縄県": "九州"
-        };
-
-        const selectedArea = regionMap[pref] || "";
-        if (selectedArea) {
-          areaSelect.value = selectedArea;
-        }
-      } catch (e) {
-        console.error("逆ジオコーディング失敗:", e);
+      if (!navigator.geolocation) {
+        console.log("位置情報が利用できません");
+        return;
       }
-    }, err => {
-      console.warn("位置情報が取得できません:", err.message);
-    });
-  }
 
-  // ページ読み込み時に実行
-  window.addEventListener("load", setAreaByLocation);
+      navigator.geolocation.getCurrentPosition(async pos => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+
+        try {
+          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=ja`);
+          const data = await res.json();
+          const address = data.address;
+          const pref = address.state || address.region || ""; // 都道府県名
+
+          const regionMap = {
+            "北海道": "北海道",
+            "青森県": "東北", "岩手県": "東北", "宮城県": "東北", "秋田県": "東北", "山形県": "東北", "福島県": "東北",
+            "茨城県": "関東", "栃木県": "関東", "群馬県": "関東", "埼玉県": "関東", "千葉県": "関東", "東京都": "関東", "神奈川県": "関東",
+            "新潟県": "北陸", "富山県": "北陸", "石川県": "北陸", "福井県": "北陸",
+            "山梨県": "東海", "長野県": "東海", "岐阜県": "東海", "静岡県": "東海", "愛知県": "東海",
+            "三重県": "関西", "滋賀県": "関西", "京都府": "関西", "大阪府": "関西", "兵庫県": "関西", "奈良県": "関西", "和歌山県": "関西",
+            "鳥取県": "中国", "島根県": "中国", "岡山県": "中国", "広島県": "中国", "山口県": "中国",
+            "徳島県": "四国", "香川県": "四国", "愛媛県": "四国", "高知県": "四国",
+            "福岡県": "九州", "佐賀県": "九州", "長崎県": "九州", "熊本県": "九州", "大分県": "九州", "宮崎県": "九州", "鹿児島県": "九州", "沖縄県": "九州"
+          };
+
+          const selectedArea = regionMap[pref] || "";
+          if (selectedArea) {
+            areaSelect.value = selectedArea;
+            console.log(`エリア自動設定: ${selectedArea}（${pref}）`);
+          } else {
+            console.log("エリア判定できませんでした:", pref);
+          }
+        } catch (e) {
+          console.error("逆ジオコーディング失敗:", e);
+        }
+      }, err => {
+        console.warn("位置情報が取得できません:", err.message);
+      });
+    }
   </script>
 </body>
 </html>
