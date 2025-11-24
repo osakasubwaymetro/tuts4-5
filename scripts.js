@@ -125,6 +125,10 @@ fetch(model)
   .then(res => res.json())
   .then(data => {
     allmodelData = data;
+
+    // データがロードされたらイベント登録
+    document.getElementById("route").addEventListener("change", updatemodelList);
+  })
   })
   .catch(err => console.error(err));
 
@@ -378,4 +382,5 @@ function setCurrentDateTime() {
 
   const localDatetime = `${year}-${month}-${day}T${hours}:${minutes}`;
   document.getElementById("departing_time").value = localDatetime;
+
 }
