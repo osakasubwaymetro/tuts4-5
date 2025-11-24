@@ -125,9 +125,6 @@ fetch(model)
   .then(res => res.json())
   .then(data => {
     allmodelData = data;
-
-    // データがロードされたらイベント登録
-    document.getElementById("route").addEventListener("change", updatemodelList);
   })
   .catch(err => console.error(err));
 
@@ -383,4 +380,5 @@ function setCurrentDateTime() {
   document.getElementById("departing_time").value = localDatetime;
 
 }
+
 
