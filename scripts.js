@@ -129,7 +129,6 @@ fetch(model)
     // データがロードされたらイベント登録
     document.getElementById("route").addEventListener("change", updatemodelList);
   })
-  })
   .catch(err => console.error(err));
 
 // areaまたはtypeが変わったら、countryプルダウンを更新
@@ -384,3 +383,4 @@ function setCurrentDateTime() {
   document.getElementById("departing_time").value = localDatetime;
 
 }
+
