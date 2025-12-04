@@ -46,13 +46,18 @@
     #usernameDisplay {
       font-weight: bold;
       font-size: 14px;
-      color: #FFD700; /* 金色で強調 */
+      color: #FFD700;
     }
 
     h2 {
       text-align: center;
       margin-top: 20px;
       color: #004C97;
+    }
+
+    #filterArea {
+      text-align: center;
+      margin: 10px 0 20px;
     }
 
     #postContainer {
@@ -111,6 +116,15 @@
   </header>
 
   <h2>投稿一覧</h2>
+
+  <!-- 追加：月別フィルタ -->
+  <div id="filterArea">
+    <label>月で絞り込み：</label>
+    <select id="monthFilter">
+      <option value="all">すべて表示</option>
+    </select>
+  </div>
+
   <p id="reload">読み込み中...</p>
 
   <div id="postContainer"></div>
@@ -122,49 +136,86 @@
 
     const GAS_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
 
+    let allData = []; // 全投稿データを保持
+
+    // カード生成
+    function renderCards(data) {
+      const container = document.getElementById("postContainer");
+      container.innerHTML = "";
+
+      if (!data || data.length === 0) {
+        document.getElementById("reload").textContent = "該当する投稿がありません。";
+        return;
+      }
+      document.getElementById("reload").textContent = "";
+
+      data.forEach(row => {
+        const card = document.createElement("div");
+        card.classList.add("card");
+        const title = document.createElement("h3");
+        title.textContent = `${row["路線"] || ""}`;
+        card.appendChild(title);
+
+        const info = [
+          ["ユーザー", row["ユーザー名"]],
+          ["発車時刻", row["時刻"]],
+          ["エリア", row["エリア"]],
+          ["区分", row["区分"]],
+          ["乗車駅", row["乗車駅"]],
+          ["種別", row["種別"]],
+          ["行先", row["行先"]],
+          ["車両形式", row["車両形式"]],
+          ["車番", row["車番"]],
+          ["備考", row["メモ"]],
+        ];
+
+        info.forEach(([label, value]) => {
+          if (value && value.trim() !== "") {
+            const p = document.createElement("p");
+            p.innerHTML = `<strong>${label}：</strong>${value}`;
+            card.appendChild(p);
+          }
+        });
+
+        container.appendChild(card);
+      });
+    }
+
+    // 月フィルタ処理
+    function applyMonthFilter() {
+      const selected = document.getElementById("monthFilter").value;
+
+      if (selected === "all") {
+        renderCards(allData);
+        return;
+      }
+
+      const filtered = allData.filter(row => row["時刻"].startsWith(selected));
+      renderCards(filtered);
+    }
+
     fetch(GAS_URL)
       .then(res => res.json())
       .then(data => {
-        const container = document.getElementById("postContainer");
-        const reloadMsg = document.getElementById("reload");
+        // 新しい順に並び替え
+        data.reverse();
 
-        if (!data || data.length === 0) {
-          reloadMsg.textContent = "投稿がまだありません。";
-          return;
-        }
+        allData = data;
 
-        reloadMsg.textContent = "";
-
-        data.forEach(row => {
-          const card = document.createElement("div");
-          card.classList.add("card");
-          const title = document.createElement("h3");
-          title.textContent = `${row["路線"] || ""}`;
-          card.appendChild(title);
-
-          const info = [
-            ["ユーザー", row["ユーザー名"]],
-            ["発車時刻", row["時刻"]],
-            ["エリア", row["エリア"]],
-            ["区分", row["区分"]],
-            ["乗車駅", row["乗車駅"]],
-            ["種別", row["種別"]],
-            ["行先", row["行先"]],
-            ["車両形式", row["車両形式"]],
-            ["車番", row["車番"]],
-            ["備考", row["メモ"]],
-          ];
-
-          info.forEach(([label, value]) => {
-            if (value && value.trim() !== "") {
-              const p = document.createElement("p");
-              p.innerHTML = `<strong>${label}：</strong>${value}`;
-              card.appendChild(p);
-            }
-          });
-
-          container.appendChild(card);
+        // 月リスト生成
+        const months = [...new Set(data.map(d => d["時刻"].slice(0, 7)))];
+        const monthSelect = document.getElementById("monthFilter");
+        months.forEach(m => {
+          const option = document.createElement("option");
+          option.value = m;
+          option.textContent = m;
+          monthSelect.appendChild(option);
         });
+
+        monthSelect.addEventListener("change", applyMonthFilter);
+
+        // 初回表示
+        renderCards(data);
       })
       .catch(err => {
         console.error(err);
@@ -173,5 +224,3 @@
   </script>
 </body>
 </html>
-
-
