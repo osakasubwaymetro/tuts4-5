@@ -382,3 +382,40 @@ function setCurrentDateTime() {
 }
 
 
+/* ----------------------------------------
+   備考（remark）データの取得
+---------------------------------------- */
+fetch("https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/desc")
+  .then(res => res.json())
+  .then(data => {
+    allRemarkData = data;
+  })
+  .catch(err => console.error(err));
+
+// 路線が変わったら備考を更新
+document.getElementById("route").addEventListener("change", updateRemarkList);
+
+function updateRemarkList() {
+  const routeVal = document.getElementById("route").value;
+  const descmsg = document.getElementById("desc");
+
+  // メモ欄は input → select に変える必要がある
+  // index.html のメモ欄を書き換えておいてね
+  // <select id="desc"></select>
+
+  //descmsg.innerHTML = '<option value="">選択してください</option>';
+
+  if (!routeVal) return;
+
+  // スプレッドシートの remark シート構成が:
+  // 路線 | 備考
+  const filtered = allRemarkData.filter(row =>
+    row["路線"] === routeVal
+  );
+
+  const items = [...new Set(filtered.map(r => r["備考"]))];
+
+  items.forEach(c => {
+    descmsg.textContent = c;
+  });
+}
