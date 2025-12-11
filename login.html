@@ -73,10 +73,11 @@
   </main>
 
   <script>
+/* ▼ ここを新しい Web アプリのURLに置き換える ▼ */
 const GAS_LOG_URL = "https://script.google.com/macros/s/AKfycbwDjgFbOxG6K22TdgbVZ1FJvEtpjZPAI1KArnvLgitFH3lS7yGb_JaQ-LpcgaFTiac7/exec";
-const VALID_KEYS = ["00002025"];
+const AUTH_GAS_URL = "https://script.google.com/macros/s/AKfycbyV3coI-PSnncCUWCmEOQgrvxDaAtTJiGxK_A9PTovDD_v1jPecjQsy_t2iog3-fZTzig/exec";
 
-function login() {
+async function login() {
   const username = document.getElementById("username").value.trim();
   const key = document.getElementById("accessKey").value.trim();
   const msg = document.getElementById("msg");
@@ -87,16 +88,25 @@ function login() {
     return;
   }
 
-  if (VALID_KEYS.includes(key)) {
+  // ▼ 認証リクエスト
+  const res = await fetch(AUTH_GAS_URL, {
+    method: "POST",
+    body: JSON.stringify({ username, key })
+  });
+
+  const result = await res.json();
+
+  if (result.ok) {
+    // 認証成功
     localStorage.setItem("username", username);
     localStorage.setItem("accessKey", key);
 
-    // ✅ ログ送信
+    // ログにも送信
     fetch(GAS_LOG_URL, {
       method: "POST",
       body: JSON.stringify({
         action: "login",
-        username: username,
+        username,
         details: "ログイン成功"
       }),
     });
@@ -104,11 +114,13 @@ function login() {
     msg.style.color = "green";
     msg.textContent = "ログイン成功！";
     setTimeout(() => window.location.href = "index.html", 800);
+
   } else {
-    msg.textContent = "アクセスキーが間違っています。";
+    msg.textContent = "ユーザー名またはアクセスキーが間違っています。";
     msg.style.color = "red";
   }
 }
+
   </script>
 
 </body>
