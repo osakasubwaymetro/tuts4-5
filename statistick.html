@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>統計情報 | tuts4</title>
+<style>
+  body {
+    font-family: "Hiragino Sans", "Segoe UI", sans-serif;
+    background-color: #F7F8FA;
+    margin: 0;
+    padding: 20px;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 25px;
+  }
+
+  h2 {
+    color: #004C97;
+  }
+
+  #container {
+    background: #fff;
+    border-radius: 15px;
+    padding: 20px 25px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+    max-width: 600px;
+    margin: 0 auto;
+  }
+
+  .rank-item {
+    padding: 12px 10px;
+    border-bottom: 1px solid #eee;
+    font-size: 16px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .rank-item:last-child {
+    border-bottom: none;
+  }
+
+  .rank-num {
+    font-weight: bold;
+    color: #004C97;
+  }
+
+  .back-btn {
+    display: block;
+    margin: 25px auto 0;
+    width: 200px;
+    padding: 10px;
+    text-align: center;
+    background-color: #004C97;
+    color: #fff;
+    text-decoration: none;
+    border-radius: 6px;
+    transition: 0.2s;
+  }
+
+  .back-btn:hover {
+    background-color: #E60012;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h2>📊 利用路線ランキング</h2>
+  <p>（あなたの投稿履歴から自動集計）</p>
+</header>
+
+<div id="container">
+  <p>読み込み中…</p>
+</div>
+
+<a class="back-btn" href="index.html">← 戻る</a>
+
+<script>
+// --- あなたの既存仕様に合わせた GAS API URL ---
+const GAS_URL = "https://script.google.com/macros/s/AKfycbwDjgFbOxG6K22TdgbVZ1FJvEtpjZPAI1KArnvLgitFH3lS7yGb_JaQ-LpcgaFTiac7/exec";
+
+// ログインユーザー名
+const username = localStorage.getItem("username");
+
+// --- 履歴取得（自分が投稿した分だけ） ---
+async function loadMyHistory() {
+  const res = await fetch(`${GAS_URL}?action=getHistory&username=${encodeURIComponent(username)}`);
+  return await res.json();  // [{ route:"谷町線", ... }, ...]
+}
+
+// --- 路線ランキングを作成 ---
+async function makeRanking() {
+  const container = document.getElementById("container");
+  container.innerHTML = "読み込み中…";
+
+  const history = await loadMyHistory();
+
+  if (!history || history.length === 0) {
+    container.innerHTML = "<p>データがありません。</p>";
+    return;
+  }
+
+  // 路線ごとの回数集計
+  const countMap = {};
+  history.forEach(row => {
+    const r = row.route;
+    if (!r) return;
+    countMap[r] = (countMap[r] || 0) + 1;
+  });
+
+  // ソート
+  const ranking = Object.entries(countMap)
+    .sort((a, b) => b[1] - a[1]);  // [[路線, 回数], ...]
+
+  // 表示
+  container.innerHTML = "";
+  ranking.forEach((item, i) => {
+    const div = document.createElement("div");
+    div.className = "rank-item";
+    div.innerHTML = `
+      <span class="rank-num">${i+1} 位</span>
+      <span>${item[0]}</span>
+      <span>${item[1]} 回</span>
+    `;
+    container.appendChild(div);
+  });
+}
+
+makeRanking();
+</script>
+
+</body>
+</html>
