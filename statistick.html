@@ -86,7 +86,7 @@ const username = localStorage.getItem("username");
 
 // --- 履歴取得（自分が投稿した分だけ） ---
 async function loadMyHistory() {
-  const res = await fetch(`${GAS_URL}?action=getHistory&username=${encodeURIComponent(username)}`);
+  const res = await fetch(`${GAS_URL}?action=getHistory&username=ABC&alloworigin=*`);
   return await res.json();  // [{ route:"谷町線", ... }, ...]
 }
 
@@ -133,3 +133,4 @@ makeRanking();
 
 </body>
 </html>
+
