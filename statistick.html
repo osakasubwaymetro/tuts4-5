@@ -104,7 +104,7 @@ async function makeRanking() {
   const all = await getAllHistory();
 
   // 自分の投稿のみ
-  const mine = all.filter(r => r["名前"] === myName);
+  const mine = all.filter(r => r["ユーザー名"] === myName);
 
   if (mine.length === 0) {
     container.innerHTML = "<p>あなたの投稿データがありません。</p>";
@@ -142,5 +142,6 @@ makeRanking();
 
 </body>
 </html>
+
 
 
