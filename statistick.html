@@ -9,175 +9,245 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 <style>
-  body { font-family:"Hiragino Sans","Segoe UI",sans-serif; background:#F7F8FA; margin:0; padding:18px; color:#222 }
-  header { text-align:center; margin-bottom:18px }
-  h1 { color:#004C97; margin:0 0 6px 0 }
-  p.lead { margin:0 0 18px 0; color:#666 }
+  /* index と揃えたヘッダー含むスタイル */
+  body {
+    font-family: "Hiragino Sans","Segoe UI",sans-serif;
+    background:#F7F8FA;
+    margin:0;
+    padding:0;
+    color:#222;
+  }
+  header {
+    background-color: #004C97; /* ミャクミャクブルー */
+    color: white;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 18px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  }
+  .header-left, .header-right {
+    display:flex;
+    align-items:center;
+    gap:10px;
+  }
+  header a {
+    color:#E60012;
+    background:white;
+    text-decoration:none;
+    font-size:14px;
+    padding:6px 10px;
+    border-radius:6px;
+    transition:0.2s;
+  }
+  header a:hover { background-color:#E60012; color:white; }
 
-  .wrap { max-width:1100px; margin:0 auto; display:grid; grid-template-columns: 1fr; gap:18px; }
-  .card { background:#fff; border-radius:12px; padding:14px; box-shadow:0 4px 12px rgba(0,0,0,0.06) }
+  #usernameDisplay { font-weight:bold; font-size:14px; color:#FFD700; }
+
+  main {
+    max-width:1100px;
+    margin: 20px auto;
+    padding: 18px;
+  }
+
+  h1 { color:#004C97; margin:8px 0 4px 0; font-size:20px; }
+  p.lead { color:#666; margin:0 0 12px 0; }
+
+  .wrap { display:grid; gap:14px; grid-template-columns: 1fr; padding-bottom:40px; }
+
+  .card {
+    background:#fff;
+    border-radius:12px;
+    padding:14px;
+    box-shadow:0 4px 12px rgba(0,0,0,0.06);
+  }
 
   .grid-2 { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
   .stat { font-size:20px; font-weight:600; color:#004C97 }
-  .sub { color:#666; font-size:13px }
+  .small { font-size:13px; color:#666 }
 
   .chart-wrap { height:300px }
   canvas { width:100% !important; height:300px !important }
 
-  table { width:100%; border-collapse:collapse; }
-  th,td { padding:6px 8px; text-align:left; border-bottom:1px solid #eee; font-size:14px }
-  th { background:#fafafa; color:#333; font-weight:700 }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th,td { padding:6px 8px; text-align:left; border-bottom:1px solid #eee; }
+  th { background:#fafafa; font-weight:700; color:#333; }
 
-  .heat-grid { display:grid; gap:2px; grid-template-columns: repeat(31, 1fr); }
-  .heat-cell { width:100%; padding-top:100%; position:relative; border-radius:4px; }
-  .heat-cell > span { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:11px; color:rgba(0,0,0,0.6) }
+  .heat-small { display:flex; gap:6px; align-items:center; font-size:13px; color:#666; margin-bottom:6px; }
+  .back-btn { display:inline-block; margin-top:10px; background:#004C97;color:#fff;padding:8px 12px;border-radius:8px;text-decoration:none }
 
-  .small { font-size:13px; color:#666 }
-  .back { display:inline-block; margin-top:10px; background:#004C97;color:#fff;padding:8px 12px;border-radius:8px;text-decoration:none }
-  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap }
-  @media (max-width:900px){ .grid-2{ grid-template-columns: 1fr } canvas{ height:260px !important } .heat-grid{ grid-template-columns: repeat(14,1fr) } }
+  @media (max-width:900px) {
+    .grid-2 { grid-template-columns: 1fr; }
+    canvas { height:260px !important; }
+  }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>📊 あなたの乗車統計（フル版）</h1>
-  <p class="lead">あなたが投稿したデータだけを使って各種ランキング・グラフ・ヒートマップを生成します。</p>
+  <div class="header-left">
+    <a href="show.html">📜 投稿履歴</a>
+    <a href="index.html">✍ 新規投稿</a>
+    <a href="statistics.html">📊 統計情報</a>
+  </div>
+
+  <div><strong>統計ダッシュボード</strong></div>
+
+  <div class="header-right">
+    <span id="usernameDisplay">未ログイン</span>
+    <a href="#" id="logoutBtn">🚪 ログアウト</a>
+  </div>
 </header>
 
-<div class="wrap">
+<main>
+  <h1>📊 あなたの乗車統計（フル版）</h1>
+  <p class="lead">あなたが投稿したデータを使って各種ランキング・グラフ・ヒートマップを生成します。</p>
 
-  <!-- 概要 -->
-  <div class="card" id="overview">
-    <div class="row">
-      <div>
-        <div class="stat" id="totalCount">0</div>
-        <div class="small">総投稿数</div>
+  <div class="wrap">
+
+    <!-- 概要 -->
+    <div class="card" id="overview">
+      <div style="display:flex;gap:20px;flex-wrap:wrap">
+        <div>
+          <div class="stat" id="totalCount">0</div>
+          <div class="small">総投稿数</div>
+        </div>
+
+        <div>
+          <div class="stat" id="topRoute">—</div>
+          <div class="small">最多路線</div>
+        </div>
+
+        <div>
+          <div class="stat" id="topDest">—</div>
+          <div class="small">最多行先</div>
+        </div>
+
+        <div>
+          <div class="stat" id="topModel">—</div>
+          <div class="small">最多車両形式</div>
+        </div>
       </div>
+    </div>
 
+    <!-- ランキング -->
+    <div class="card grid-2">
       <div>
-        <div class="stat" id="topRoute">—</div>
-        <div class="small">最多路線</div>
+        <h3>路線ランキング</h3>
+        <div id="routeList"><p class="small">読み込み中…</p></div>
       </div>
-
       <div>
-        <div class="stat" id="topDest">—</div>
-        <div class="small">最多行先</div>
-      </div>
-
-      <div>
-        <div class="stat" id="topModel">—</div>
-        <div class="small">最多車両形式</div>
+        <h3>駅ランキング（乗車駅）</h3>
+        <div id="stationList"><p class="small">読み込み中…</p></div>
       </div>
     </div>
-  </div>
 
-  <!-- ランキング -->
-  <div class="card grid-2">
-    <div>
-      <h3>路線ランキング</h3>
-      <div id="routeList"><p class="small">読み込み中…</p></div>
+    <!-- 時間帯と曜日 -->
+    <div class="card grid-2">
+      <div>
+        <h3>時間帯割合（早朝/朝/昼/夕方/夜/深夜）</h3>
+        <div class="chart-wrap"><canvas id="timeChart"></canvas></div>
+      </div>
+      <div>
+        <h3>曜日ごとの利用頻度</h3>
+        <div class="chart-wrap"><canvas id="weekdayChart"></canvas></div>
+      </div>
     </div>
-    <div>
-      <h3>駅ランキング（乗車駅）</h3>
-      <div id="stationList"><p class="small">読み込み中…</p></div>
+
+    <!-- 会社・形式 -->
+    <div class="card grid-2">
+      <div>
+        <h3>会社別ランキング</h3>
+        <div id="companyList"><p class="small">読み込み中…</p></div>
+      </div>
+      <div>
+        <h3>車両形式ランキング</h3>
+        <div id="modelList"><p class="small">読み込み中…</p></div>
+      </div>
     </div>
-  </div>
 
-  <!-- 時間帯と曜日 -->
-  <div class="card grid-2">
-    <div>
-      <h3>時間帯割合（朝/昼/夕/夜）</h3>
-      <div class="chart-wrap"><canvas id="timeChart"></canvas></div>
+    <!-- 月別推移 -->
+    <div class="card">
+      <h3>月別投稿推移</h3>
+      <div class="chart-wrap"><canvas id="monthlyChart"></canvas></div>
     </div>
-    <div>
-      <h3>曜日ごとの利用頻度</h3>
-      <div class="chart-wrap"><canvas id="weekdayChart"></canvas></div>
+
+    <!-- カレンダーヒートマップ -->
+    <div class="card">
+      <h3>年間カレンダーヒート（投稿日の密度）</h3>
+      <div class="heat-small"><span class="small">日付別投稿数（色が濃いほど多い）</span></div>
+      <div id="heatCalendar" style="display:flex;flex-direction:column;gap:6px;"></div>
     </div>
-  </div>
 
-  <!-- 会社・形式 -->
-  <div class="card grid-2">
-    <div>
-      <h3>会社別ランキング</h3>
-      <div id="companyList"><p class="small">読み込み中…</p></div>
+    <!-- マトリクス -->
+    <div class="card">
+      <h3>車両形式 × 路線 の相性（件数マトリクス）</h3>
+      <div id="matrixWrap"><p class="small">読み込み中…</p></div>
     </div>
-    <div>
-      <h3>車両形式ランキング</h3>
-      <div id="modelList"><p class="small">読み込み中…</p></div>
+
+    <!-- レア体験・行先 -->
+    <div class="card grid-2">
+      <div>
+        <h3>レア体験（出現1回の項目）</h3>
+        <div id="rareList"><p class="small">読み込み中…</p></div>
+      </div>
+      <div>
+        <h3>行先ランキング</h3>
+        <div id="destList"><p class="small">読み込み中…</p></div>
+      </div>
     </div>
-  </div>
 
-  <!-- 月別推移と曜日ヒートマップ -->
-  <div class="card">
-    <h3>月別投稿推移</h3>
-    <div class="chart-wrap"><canvas id="monthlyChart"></canvas></div>
-  </div>
-
-  <!-- カレンダーヒートマップ -->
-  <div class="card">
-    <h3>年間カレンダーヒート（投稿日の密度）</h3>
-    <div id="heatDesc" class="small">日付別投稿数（色が濃いほど多い）</div>
-    <div id="heatCalendar" style="margin-top:8px;"></div>
-  </div>
-
-  <!-- 形式×路線行列 -->
-  <div class="card">
-    <h3>車両形式 × 路線 の相性（件数マトリクス）</h3>
-    <div id="matrixWrap"><p class="small">読み込み中…</p></div>
-  </div>
-
-  <!-- レア体験・その他 -->
-  <div class="card grid-2">
-    <div>
-      <h3>レア体験（出現1回の項目）</h3>
-      <div id="rareList"><p class="small">読み込み中…</p></div>
+    <div class="card">
+      <h3>生データプレビュー（最新 20 件）</h3>
+      <div id="preview"><p class="small">読み込み中…</p></div>
     </div>
-    <div>
-      <h3>行先ランキング</h3>
-      <div id="destList"><p class="small">読み込み中…</p></div>
+
+    <div style="text-align:right">
+      <a class="back-btn" href="index.html">← 戻る</a>
     </div>
-  </div>
 
-  <div class="card">
-    <h3>生データプレビュー（最新 20 件）</h3>
-    <div id="preview"><p class="small">読み込み中…</p></div>
   </div>
-
-  <a class="back" href="index.html">← 戻る</a>
-</div>
+</main>
 
 <script>
 /* ==========================
-   設定（必ず確認）
+   設定：ここを必ず確認して置き換えてください
    ========================== */
-
 /* あなたの GAS の公開 URL をここに入れてください（全データを JSON で返すもの） */
-const GAS_URL = "https://script.googleusercontent.com/macros/echo?user_content_key=AehSKLjpe1sdvDkmU92PLELfU1Z6qGpkz3JtNzZMWQ5iZ79DE7Qwur0fbT5slCeCmWRosaBka8Eb4ywmBoVXpTHgpNp7UDqWLeTcej8TJTHn_weTFxVNyU20A8NwFwn3qBQOjxriuJeNDvooL6ZyjaahhF0LHthfOsPkDrszUpzMOQG7CXLz-80GQV1_yJoNdqKf8ESkiCm1uGwenkXBbjez9OvKe7BxISLzvazxu5ZrOAKxcGwV30ubCJG-dgmOCsaYXgmfAtyNOkiF1ZfRLDgoxhbGayrm8w&lib=MRswRzEmnRmsQ67EMIpHjkR6HlHeBI2fu"; // 例: https://script.google.com/macros/s/XXXXX/exec
+const GAS_URL = "https://script.googleusercontent.com/macros/echo?user_content_key=AehSKLjpe1sdvDkmU92PLELfU1Z6qGpkz3JtNzZMWQ5iZ79DE7Qwur0fbT5slCeCmWRosaBka8Eb4ywmBoVXpTHgpNp7UDqWLeTcej8TJTHn_weTFxVNyU20A8NwFwn3qBQOjxriuJeNDvooL6ZyjaahhF0LHthfOsPkDrszUpzMOQG7CXLz-80GQV1_yJoNdqKf8ESkiCm1uGwenkXBbjez9OvKe7BxISLzvazxu5ZrOAKxcGwV30ubCJG-dgmOCsaYXgmfAtyNOkiF1ZfRLDgoxhbGayrm8w&lib=MRswRzEmnRmsQ67EMIpHjkR6HlHeBI2fu"; // 例: https://script.google.com/macros/s/XXXXX/exec";
 
 /* ログイン済みのユーザー（localStorage のキーを使ってください） */
-const MY_NAME = localStorage.getItem("username"); // 既存の login.html に合わせている想定
+const MY_NAME = localStorage.getItem("username");
 
-if (!MY_NAME) {
-  alert("ログインしてください。");
-  location.href = "login.html";
+/* show username in header */
+const usernameDisplay = document.getElementById("usernameDisplay");
+if (MY_NAME) {
+  usernameDisplay.textContent = `👤 ${MY_NAME} さん`;
+} else {
+  usernameDisplay.textContent = "未ログイン";
 }
 
-/* スプレッドシートの列名（ヘッダー）を複数候補で指定しておく（自由に追加可） */
+/* logout button */
+document.getElementById("logoutBtn").addEventListener("click", (e) => {
+  e.preventDefault();
+  localStorage.removeItem("username");
+  localStorage.removeItem("accessKey");
+  location.href = "login.html";
+});
+
+/* ==========================
+   フィールドマッピング（ヘッダー名がばらついても拾えるように）
+   ========================== */
 const FIELD_KEYS = {
-  username: ["ユーザー名","コーザー名","名前","username","user","ユーザー"],   // 投稿者
-  time: ["時刻","日時","date","time","timestamp"],
+  username: ["ユーザー名","コーザー名","名前","username","user","ユーザー","名前（ニックネーム）"],
+  time: ["時刻","日時","date","time","timestamp","発車時刻","日付","departing_time"],
   route: ["路線","路線名","route"],
   station: ["乗車駅","駅名","駅","station"],
-  dest: ["行先","Destination","行き先","着"],
+  dest: ["行先","Destination","行き先","着","bound"],
   company: ["会社","会社名"],
   model: ["車両形式","形式","編成","車両"],
   type: ["区分","種別"]
 };
-
-/* ==========================
-   ユーティリティ
-   ========================== */
 
 function pickField(obj, candidates) {
   for (const k of candidates) {
@@ -185,30 +255,20 @@ function pickField(obj, candidates) {
   }
   return "";
 }
-
-function safeNum(v){ return (v===undefined||v===null||v==="")?0: Number(v) || 0; }
-
 function parseDateFlexible(str) {
   if (!str) return null;
   if (str instanceof Date) return str;
-  // まず ISO っぽい変換
   const s = String(str).trim();
-  // いくつかの形式に対応： "2025-10-14 7:25", "2025/10/14 07:25", "2025-10-14T07:25"
   let t = s.replace(/\//g,"-").replace(/年|月/g,"-").replace(/日/g,"").replace("T"," ").trim();
-  // ensure zero padded hour if needed not necessary
   const tryIso = new Date(t);
   if (!isNaN(tryIso.getTime())) return tryIso;
-  // fallback Date.parse
   const alt = Date.parse(s);
   if (!isNaN(alt)) return new Date(alt);
   return null;
 }
-
-/* カラースケール（heat） */
 function heatColor(value, max) {
   if (max === 0) return "#f0f0f0";
   const ratio = value / max;
-  // from very light -> deep orange
   const r = Math.floor(255 * ratio);
   const g = Math.floor(240 - 120 * ratio);
   const b = Math.floor(230 - 200 * ratio);
@@ -216,17 +276,15 @@ function heatColor(value, max) {
 }
 
 /* ==========================
-   データ取得 & 前処理
+   データ取得・正規化
    ========================== */
-
 async function fetchAllData() {
   const res = await fetch(GAS_URL);
+  if (!res.ok) throw new Error("GAS fetch failed: " + res.status);
   const j = await res.json();
   return j;
 }
-
 function normalizeRow(row) {
-  // returns normalized object with canonical keys
   const obj = {};
   obj.username = pickField(row, FIELD_KEYS.username);
   obj.timeRaw = pickField(row, FIELD_KEYS.time);
@@ -242,48 +300,49 @@ function normalizeRow(row) {
 }
 
 /* ==========================
-   集計ロジック
+   集計・表示
    ========================== */
-
 async function buildStats() {
+  // guard
+  if (!MY_NAME) {
+    alert("ログインしてください。");
+    location.href = "login.html";
+    return;
+  }
+
+  // fetch & normalize
   const all = await fetchAllData();
-
-  // normalize all rows
   const norm = all.map(normalizeRow);
-
-  // filter my posts
   const mine = norm.filter(r => String(r.username) === String(MY_NAME));
 
-  // early return if empty
   if (!mine || mine.length === 0) {
-    document.getElementById("container").innerHTML = "<p>あなたの投稿データがありません。</p>";
+    document.querySelector(".wrap").innerHTML = '<div class="card"><p class="small">あなたの投稿データがありません。</p></div>';
     return;
   }
 
   // total
-  const total = mine.length;
-  document.getElementById("totalCount").innerText = total;
+  document.getElementById("totalCount").innerText = mine.length;
 
-  // route counts
-  const routeCount = {};
-  mine.forEach(r => { const k = r.route || "（不明）"; routeCount[k] = (routeCount[k]||0)+1; });
+  // counts
+  const countBy = (arr, keyFn) => {
+    const m = {};
+    arr.forEach(it => {
+      const k = keyFn(it) || "（不明）";
+      m[k] = (m[k] || 0) + 1;
+    });
+    return Object.entries(m).sort((a,b)=>b[1]-a[1]);
+  };
 
-  const sortedRoutes = Object.entries(routeCount).sort((a,b)=>b[1]-a[1]);
+  const sortedRoutes = countBy(mine, r=>r.route);
+  const sortedStations = countBy(mine, r=>r.station);
+  const sortedDest = countBy(mine, r=>r.dest);
+  const sortedModel = countBy(mine, r=>r.model);
+  const sortedCompany = countBy(mine, r=>r.company);
+
   document.getElementById("topRoute").innerText = sortedRoutes[0] ? `${sortedRoutes[0][0]} (${sortedRoutes[0][1]}回)` : "—";
-
-  // destination counts
-  const destCount = {};
-  mine.forEach(r => { const k = r.dest || "（不明）"; destCount[k] = (destCount[k]||0)+1; });
-  const sortedDest = Object.entries(destCount).sort((a,b)=>b[1]-a[1]);
   document.getElementById("topDest").innerText = sortedDest[0] ? `${sortedDest[0][0]} (${sortedDest[0][1]}回)` : "—";
-
-  // model counts
-  const modelCount = {};
-  mine.forEach(r => { const k = r.model || "（不明）"; modelCount[k] = (modelCount[k]||0)+1; });
-  const sortedModel = Object.entries(modelCount).sort((a,b)=>b[1]-a[1]);
   document.getElementById("topModel").innerText = sortedModel[0] ? `${sortedModel[0][0]} (${sortedModel[0][1]}回)` : "—";
 
-  // render top lists (top 10)
   function renderList(containerId, entries) {
     const wrap = document.getElementById(containerId);
     const top = entries.slice(0,10);
@@ -303,22 +362,12 @@ async function buildStats() {
   }
 
   renderList("routeList", sortedRoutes);
+  renderList("stationList", sortedStations);
   renderList("destList", sortedDest);
-
-  // station ranking
-  const stationCount = {};
-  mine.forEach(r => { const k = r.station || "（不明）"; stationCount[k] = (stationCount[k]||0)+1; });
-  const sortedStation = Object.entries(stationCount).sort((a,b)=>b[1]-a[1]);
-  renderList("stationList", sortedStation);
-
-  // company & model lists
-  const companyCount = {};
-  mine.forEach(r => { const k = r.company || "（不明）"; companyCount[k] = (companyCount[k]||0)+1; });
-  const sortedCompany = Object.entries(companyCount).sort((a,b)=>b[1]-a[1]);
   renderList("companyList", sortedCompany);
   renderList("modelList", sortedModel);
 
-  // time-of-day buckets
+  // 時間帯 buckets
   const buckets = { "早朝":0, "朝":0, "昼":0, "夕方":0, "夜":0, "深夜":0 };
   mine.forEach(r=>{
     if (!r.time) return;
@@ -328,18 +377,15 @@ async function buildStats() {
     else if (h < 12) buckets["昼"]++;
     else if (h < 17) buckets["昼"]++;
     else if (h < 20) buckets["夕方"]++;
-    else if (h < 24) buckets["夜"]++;
+    else buckets["夜"]++;
   });
 
-  // weekday counts (0=Sun..6=Sat)
-  const weekdays = [ "日","月","火","水","木","金","土" ];
+  // weekday
+  const weekdays = ["日","月","火","水","木","金","土"];
   const weekdayCount = [0,0,0,0,0,0,0];
-  mine.forEach(r => {
-    if (!r.time) return;
-    weekdayCount[r.time.getDay()]++;
-  });
+  mine.forEach(r=>{ if (r.time) weekdayCount[r.time.getDay()]++; });
 
-  // monthly trend (by YYYY-MM)
+  // monthly trend
   const monthMap = {};
   mine.forEach(r=>{
     if (!r.time) return;
@@ -349,10 +395,9 @@ async function buildStats() {
   const months = Object.keys(monthMap).sort();
   const monthCounts = months.map(m=>monthMap[m]);
 
-  // draw charts with Chart.js
-  // timeChart
+  // charts
   const timeCtx = document.getElementById("timeChart").getContext("2d");
-  const timeChart = new Chart(timeCtx, {
+  new Chart(timeCtx, {
     type: 'pie',
     data: {
       labels: Object.keys(buckets),
@@ -362,33 +407,29 @@ async function buildStats() {
   });
 
   const weekdayCtx = document.getElementById("weekdayChart").getContext("2d");
-  const weekdayChart = new Chart(weekdayCtx, {
+  new Chart(weekdayCtx, {
     type:'bar',
     data:{ labels:weekdays, datasets:[{ label:'投稿数', data:weekdayCount, backgroundColor:'#4CC9F0' }]},
     options:{ plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true}}}
   });
 
   const monthlyCtx = document.getElementById("monthlyChart").getContext("2d");
-  const monthlyChart = new Chart(monthlyCtx, {
+  new Chart(monthlyCtx, {
     type:'line',
     data:{ labels: months, datasets:[{ label:'投稿数', data: monthCounts, fill:true, backgroundColor:'rgba(4,120,255,0.12)', borderColor:'#007bff' }]},
     options:{ plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true}}}
   });
 
-  // calendar heatmap (simple: current year)
+  // calendar heatmap (last 365 days)
   const datesCount = {};
   mine.forEach(r => {
     if (!r.time) return;
-    const d = new Date(r.time.getFullYear(), r.time.getMonth(), r.time.getDate());
-    const key = d.toISOString().slice(0,10);
+    const key = r.time.toISOString().slice(0,10);
     datesCount[key] = (datesCount[key]||0)+1;
   });
-
-  // build calendar for the last 365 days (or current year)
   const today = new Date();
   const start = new Date(today);
   start.setDate(start.getDate() - 364);
-  // aggregate by date keys
   const days = [];
   let maxDayCount = 0;
   for (let d = new Date(start); d <= today; d.setDate(d.getDate()+1)) {
@@ -398,44 +439,44 @@ async function buildStats() {
     if (c > maxDayCount) maxDayCount = c;
   }
 
-  // render heat calendar: group by month rows for simple layout
+  // render heatCalendar in month blocks
   const heatWrap = document.getElementById("heatCalendar");
   heatWrap.innerHTML = "";
-  // create weekly rows visually: we'll render a simple horizontal sequence with day labels above months
-  const monthsMap = {};
-  days.forEach(d=> {
-    const m = d.date.getMonth();
-    monthsMap[m] = monthsMap[m] || [];
-    monthsMap[m].push(d);
+  const monthGroups = {};
+  days.forEach(d => {
+    const mKey = `${d.date.getFullYear()}-${String(d.date.getMonth()+1).padStart(2,"0")}`;
+    (monthGroups[mKey] = monthGroups[mKey]||[]).push(d);
   });
-
-  // Simple layout: months as rows of days
-  Object.keys(monthsMap).forEach(m=> {
-    const monthRows = monthsMap[m];
+  Object.keys(monthGroups).forEach(mKey => {
+    const monthRows = monthGroups[mKey];
     const monthCard = document.createElement("div");
-    monthCard.style.marginBottom = "8px";
+    monthCard.style.display = "flex";
+    monthCard.style.alignItems = "center";
+    monthCard.style.gap = "8px";
     const monthLabel = document.createElement("div");
+    monthLabel.style.minWidth = "100px";
     monthLabel.style.fontSize = "13px";
-    monthLabel.style.marginBottom = "6px";
-    monthLabel.innerText = `${monthRows[0].date.getFullYear()}-${String(monthRows[0].date.getMonth()+1).padStart(2,"0")}`;
-    monthCard.appendChild(monthLabel);
-    const grid = document.createElement("div");
-    grid.style.display = "flex";
-    grid.style.gap = "4px";
+    monthLabel.style.color = "#333";
+    monthLabel.innerText = mKey;
+    const daysWrap = document.createElement("div");
+    daysWrap.style.display = "flex";
+    daysWrap.style.gap = "4px";
     monthRows.forEach(day => {
       const cell = document.createElement("div");
-      cell.className = "heat-cell";
       const color = heatColor(day.count, maxDayCount);
-      cell.style.width = "18px";
-      cell.style.height = "18px";
+      cell.style.width = "14px";
+      cell.style.height = "14px";
       cell.style.background = color;
       cell.title = `${day.key}：${day.count} 回`;
-      monthCard.appendChild(cell);
+      cell.style.borderRadius = "3px";
+      daysWrap.appendChild(cell);
     });
+    monthCard.appendChild(monthLabel);
+    monthCard.appendChild(daysWrap);
     heatWrap.appendChild(monthCard);
   });
 
-  // matrix: model x route
+  // matrix model x route
   const matrix = {};
   const models = new Set();
   const routesSet = new Set();
@@ -446,10 +487,9 @@ async function buildStats() {
     matrix[m] = matrix[m] || {};
     matrix[m][ro] = (matrix[m][ro]||0) + 1;
   });
-  const modelsArr = Array.from(models);
-  const routesArr = Array.from(routesSet);
+  const modelsArr = Array.from(models).sort();
+  const routesArr = Array.from(routesSet).sort();
 
-  // build table
   const matrixWrap = document.getElementById("matrixWrap");
   const tbl = document.createElement("table");
   const thead = document.createElement("thead");
@@ -458,7 +498,7 @@ async function buildStats() {
   thead.appendChild(trh);
   tbl.appendChild(thead);
   const tbody = document.createElement("tbody");
-  modelsArr.forEach(m=>{
+  modelsArr.forEach(m=> {
     const tr = document.createElement("tr");
     let rowHtml = `<td>${m}</td>`;
     routesArr.forEach(ro=>{
@@ -472,7 +512,11 @@ async function buildStats() {
   matrixWrap.innerHTML = "";
   matrixWrap.appendChild(tbl);
 
-  // rare items (count == 1) for route/station/model/dest
+  // rare items (count == 1)
+  const routeCount = Object.fromEntries(sortedRoutes);
+  const stationCount = Object.fromEntries(sortedStations);
+  const modelCount = Object.fromEntries(sortedModel);
+  const destCount = Object.fromEntries(sortedDest);
   const rare = { route:[], station:[], model:[], dest:[] };
   Object.entries(routeCount).forEach(([k,v])=>{ if (v===1) rare.route.push(k) });
   Object.entries(stationCount).forEach(([k,v])=>{ if (v===1) rare.station.push(k) });
@@ -489,18 +533,18 @@ async function buildStats() {
   const previewWrap = document.getElementById("preview");
   const previewTbl = document.createElement("table");
   const ph = document.createElement("thead");
-  // choose a few columns to show: 時刻, 路線, 乗車駅, 行先, 車両形式, メモ if present in raw keys
+  // choose columns present in raw (try common ones)
   const rawKeys = Object.keys(mine[0].raw);
-  const showKeys = ["時刻","路線","乗車駅","行先","車車両形式","車両形式","メモ","ユーザー名"].filter(k=>rawKeys.includes(k));
-  // if none matched, just use all raw keys (first 6)
-  const headerKeys = showKeys.length ? showKeys.slice(0,6) : rawKeys.slice(0,6);
-  ph.innerHTML = "<tr>" + headerKeys.map(h=>`<th>${h}</th>`).join("") + "</tr>";
+  const candidateHeaders = ["発車時刻","時刻","日時","路線","乗車駅","行先","車両形式","会社","メモ","ユーザー名"];
+  const headerKeys = candidateHeaders.filter(k=>rawKeys.includes(k)).slice(0,6);
+  const finalHeaders = headerKeys.length ? headerKeys : rawKeys.slice(0,6);
+  ph.innerHTML = "<tr>" + finalHeaders.map(h=>`<th>${h}</th>`).join("") + "</tr>";
   previewTbl.appendChild(ph);
   const pb = document.createElement("tbody");
   const latest = mine.slice(-20).reverse();
-  latest.forEach(r=>{
+  latest.forEach(r=> {
     const tr = document.createElement("tr");
-    const cols = headerKeys.map(k=>`<td>${(r.raw[k] !== undefined && r.raw[k] !== null) ? r.raw[k] : ""}</td>`).join("");
+    const cols = finalHeaders.map(k=>`<td>${(r.raw[k] !== undefined && r.raw[k] !== null) ? r.raw[k] : ""}</td>`).join("");
     tr.innerHTML = cols;
     pb.appendChild(tr);
   });
@@ -508,19 +552,14 @@ async function buildStats() {
   previewWrap.innerHTML = "";
   previewWrap.appendChild(previewTbl);
 
-  // set top lists displayed earlier (short)
-  // routeList already rendered table; we can also keep them as is
-
-  // finished
   console.log("統計生成完了");
 }
 
 /* start */
 buildStats().catch(err=>{
   console.error(err);
-  document.getElementById("container").innerHTML = "<p>読み込みエラーが発生しました。コンソールを確認してください。</p>";
+  document.querySelector(".wrap").innerHTML = '<div class="card"><p class="small">読み込みエラーが発生しました。コンソールを確認してください。</p></div>';
 });
-
 </script>
 </body>
 </html>
