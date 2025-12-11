@@ -1,147 +1,526 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>統計情報 | tuts4</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>統計情報 | tuts4 — フル版</title>
+
+<!-- Chart.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
 <style>
-  body {
-    font-family: "Hiragino Sans", "Segoe UI", sans-serif;
-    background-color: #F7F8FA;
-    margin: 0;
-    padding: 20px;
-  }
+  body { font-family:"Hiragino Sans","Segoe UI",sans-serif; background:#F7F8FA; margin:0; padding:18px; color:#222 }
+  header { text-align:center; margin-bottom:18px }
+  h1 { color:#004C97; margin:0 0 6px 0 }
+  p.lead { margin:0 0 18px 0; color:#666 }
 
-  header {
-    text-align: center;
-    margin-bottom: 25px;
-  }
+  .wrap { max-width:1100px; margin:0 auto; display:grid; grid-template-columns: 1fr; gap:18px; }
+  .card { background:#fff; border-radius:12px; padding:14px; box-shadow:0 4px 12px rgba(0,0,0,0.06) }
 
-  h2 {
-    color: #004C97;
-  }
+  .grid-2 { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+  .stat { font-size:20px; font-weight:600; color:#004C97 }
+  .sub { color:#666; font-size:13px }
 
-  #container {
-    background: #fff;
-    border-radius: 15px;
-    padding: 20px 25px;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.15);
-    max-width: 600px;
-    margin: 0 auto;
-  }
+  .chart-wrap { height:300px }
+  canvas { width:100% !important; height:300px !important }
 
-  .rank-item {
-    padding: 12px 10px;
-    border-bottom: 1px solid #eee;
-    font-size: 16px;
-    display: flex;
-    justify-content: space-between;
-  }
-  .rank-item:last-child {
-    border-bottom: none;
-  }
+  table { width:100%; border-collapse:collapse; }
+  th,td { padding:6px 8px; text-align:left; border-bottom:1px solid #eee; font-size:14px }
+  th { background:#fafafa; color:#333; font-weight:700 }
 
-  .rank-num {
-    font-weight: bold;
-    color: #004C97;
-  }
+  .heat-grid { display:grid; gap:2px; grid-template-columns: repeat(31, 1fr); }
+  .heat-cell { width:100%; padding-top:100%; position:relative; border-radius:4px; }
+  .heat-cell > span { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:11px; color:rgba(0,0,0,0.6) }
 
-  .back-btn {
-    display: block;
-    margin: 25px auto 0;
-    width: 200px;
-    padding: 10px;
-    text-align: center;
-    background-color: #004C97;
-    color: #fff;
-    text-decoration: none;
-    border-radius: 6px;
-    transition: 0.2s;
-  }
-
-  .back-btn:hover {
-    background-color: #E60012;
-  }
+  .small { font-size:13px; color:#666 }
+  .back { display:inline-block; margin-top:10px; background:#004C97;color:#fff;padding:8px 12px;border-radius:8px;text-decoration:none }
+  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap }
+  @media (max-width:900px){ .grid-2{ grid-template-columns: 1fr } canvas{ height:260px !important } .heat-grid{ grid-template-columns: repeat(14,1fr) } }
 </style>
 </head>
 <body>
 
 <header>
-  <h2>📊 利用路線ランキング</h2>
-  <p>（あなたの投稿履歴から自動集計）</p>
+  <h1>📊 あなたの乗車統計（フル版）</h1>
+  <p class="lead">あなたが投稿したデータだけを使って各種ランキング・グラフ・ヒートマップを生成します。</p>
 </header>
 
-<div id="container">
-  <p>読み込み中…</p>
+<div class="wrap">
+
+  <!-- 概要 -->
+  <div class="card" id="overview">
+    <div class="row">
+      <div>
+        <div class="stat" id="totalCount">0</div>
+        <div class="small">総投稿数</div>
+      </div>
+
+      <div>
+        <div class="stat" id="topRoute">—</div>
+        <div class="small">最多路線</div>
+      </div>
+
+      <div>
+        <div class="stat" id="topDest">—</div>
+        <div class="small">最多行先</div>
+      </div>
+
+      <div>
+        <div class="stat" id="topModel">—</div>
+        <div class="small">最多車両形式</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ランキング -->
+  <div class="card grid-2">
+    <div>
+      <h3>路線ランキング</h3>
+      <div id="routeList"><p class="small">読み込み中…</p></div>
+    </div>
+    <div>
+      <h3>駅ランキング（乗車駅）</h3>
+      <div id="stationList"><p class="small">読み込み中…</p></div>
+    </div>
+  </div>
+
+  <!-- 時間帯と曜日 -->
+  <div class="card grid-2">
+    <div>
+      <h3>時間帯割合（朝/昼/夕/夜）</h3>
+      <div class="chart-wrap"><canvas id="timeChart"></canvas></div>
+    </div>
+    <div>
+      <h3>曜日ごとの利用頻度</h3>
+      <div class="chart-wrap"><canvas id="weekdayChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- 会社・形式 -->
+  <div class="card grid-2">
+    <div>
+      <h3>会社別ランキング</h3>
+      <div id="companyList"><p class="small">読み込み中…</p></div>
+    </div>
+    <div>
+      <h3>車両形式ランキング</h3>
+      <div id="modelList"><p class="small">読み込み中…</p></div>
+    </div>
+  </div>
+
+  <!-- 月別推移と曜日ヒートマップ -->
+  <div class="card">
+    <h3>月別投稿推移</h3>
+    <div class="chart-wrap"><canvas id="monthlyChart"></canvas></div>
+  </div>
+
+  <!-- カレンダーヒートマップ -->
+  <div class="card">
+    <h3>年間カレンダーヒート（投稿日の密度）</h3>
+    <div id="heatDesc" class="small">日付別投稿数（色が濃いほど多い）</div>
+    <div id="heatCalendar" style="margin-top:8px;"></div>
+  </div>
+
+  <!-- 形式×路線行列 -->
+  <div class="card">
+    <h3>車両形式 × 路線 の相性（件数マトリクス）</h3>
+    <div id="matrixWrap"><p class="small">読み込み中…</p></div>
+  </div>
+
+  <!-- レア体験・その他 -->
+  <div class="card grid-2">
+    <div>
+      <h3>レア体験（出現1回の項目）</h3>
+      <div id="rareList"><p class="small">読み込み中…</p></div>
+    </div>
+    <div>
+      <h3>行先ランキング</h3>
+      <div id="destList"><p class="small">読み込み中…</p></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>生データプレビュー（最新 20 件）</h3>
+    <div id="preview"><p class="small">読み込み中…</p></div>
+  </div>
+
+  <a class="back" href="index.html">← 戻る</a>
 </div>
 
-<a class="back-btn" href="index.html">← 戻る</a>
-
 <script>
-/* あなたの GAS（全データ取得API） */
-const GAS_URL = "https://script.googleusercontent.com/macros/echo?user_content_key=AehSKLjpe1sdvDkmU92PLELfU1Z6qGpkz3JtNzZMWQ5iZ79DE7Qwur0fbT5slCeCmWRosaBka8Eb4ywmBoVXpTHgpNp7UDqWLeTcej8TJTHn_weTFxVNyU20A8NwFwn3qBQOjxriuJeNDvooL6ZyjaahhF0LHthfOsPkDrszUpzMOQG7CXLz-80GQV1_yJoNdqKf8ESkiCm1uGwenkXBbjez9OvKe7BxISLzvazxu5ZrOAKxcGwV30ubCJG-dgmOCsaYXgmfAtyNOkiF1ZfRLDgoxhbGayrm8w&lib=MRswRzEmnRmsQ67EMIpHjkR6HlHeBI2fu";
+/* ==========================
+   設定（必ず確認）
+   ========================== */
 
-/* ログインユーザー名 */
-const myName = localStorage.getItem("username");
+/* あなたの GAS の公開 URL をここに入れてください（全データを JSON で返すもの） */
+const GAS_URL = "https://script.googleusercontent.com/macros/echo?user_content_key=AehSKLjpe1sdvDkmU92PLELfU1Z6qGpkz3JtNzZMWQ5iZ79DE7Qwur0fbT5slCeCmWRosaBka8Eb4ywmBoVXpTHgpNp7UDqWLeTcej8TJTHn_weTFxVNyU20A8NwFwn3qBQOjxriuJeNDvooL6ZyjaahhF0LHthfOsPkDrszUpzMOQG7CXLz-80GQV1_yJoNdqKf8ESkiCm1uGwenkXBbjez9OvKe7BxISLzvazxu5ZrOAKxcGwV30ubCJG-dgmOCsaYXgmfAtyNOkiF1ZfRLDgoxhbGayrm8w&lib=MRswRzEmnRmsQ67EMIpHjkR6HlHeBI2fu"; // 例: https://script.google.com/macros/s/XXXXX/exec
 
-/* 未ログインならトップへ */
-if (!myName) {
+/* ログイン済みのユーザー（localStorage のキーを使ってください） */
+const MY_NAME = localStorage.getItem("username"); // 既存の login.html に合わせている想定
+
+if (!MY_NAME) {
   alert("ログインしてください。");
   location.href = "login.html";
 }
 
-/* すべての履歴を取得 */
-async function getAllHistory() {
-  const res = await fetch(GAS_URL);
-  return await res.json();  // [{ route:"谷町線", username:"aaa", ...}, ...]
+/* スプレッドシートの列名（ヘッダー）を複数候補で指定しておく（自由に追加可） */
+const FIELD_KEYS = {
+  username: ["ユーザー名","コーザー名","名前","username","user","ユーザー"],   // 投稿者
+  time: ["時刻","日時","date","time","timestamp"],
+  route: ["路線","路線名","route"],
+  station: ["乗車駅","駅名","駅","station"],
+  dest: ["行先","Destination","行き先","着"],
+  company: ["会社","会社名"],
+  model: ["車両形式","形式","編成","車両"],
+  type: ["区分","種別"]
+};
+
+/* ==========================
+   ユーティリティ
+   ========================== */
+
+function pickField(obj, candidates) {
+  for (const k of candidates) {
+    if (obj.hasOwnProperty(k)) return obj[k];
+  }
+  return "";
 }
 
-/* 自分の投稿だけ抽出 → 路線ランキング作成 */
-async function makeRanking() {
-  const container = document.getElementById("container");
-  container.innerHTML = "読み込み中…";
+function safeNum(v){ return (v===undefined||v===null||v==="")?0: Number(v) || 0; }
 
-  const all = await getAllHistory();
+function parseDateFlexible(str) {
+  if (!str) return null;
+  if (str instanceof Date) return str;
+  // まず ISO っぽい変換
+  const s = String(str).trim();
+  // いくつかの形式に対応： "2025-10-14 7:25", "2025/10/14 07:25", "2025-10-14T07:25"
+  let t = s.replace(/\//g,"-").replace(/年|月/g,"-").replace(/日/g,"").replace("T"," ").trim();
+  // ensure zero padded hour if needed not necessary
+  const tryIso = new Date(t);
+  if (!isNaN(tryIso.getTime())) return tryIso;
+  // fallback Date.parse
+  const alt = Date.parse(s);
+  if (!isNaN(alt)) return new Date(alt);
+  return null;
+}
 
-  // 自分の投稿のみ
-  const mine = all.filter(r => r["ユーザー名"] === myName);
+/* カラースケール（heat） */
+function heatColor(value, max) {
+  if (max === 0) return "#f0f0f0";
+  const ratio = value / max;
+  // from very light -> deep orange
+  const r = Math.floor(255 * ratio);
+  const g = Math.floor(240 - 120 * ratio);
+  const b = Math.floor(230 - 200 * ratio);
+  return `rgb(${r},${g},${b})`;
+}
 
-  if (mine.length === 0) {
-    container.innerHTML = "<p>あなたの投稿データがありません。</p>";
+/* ==========================
+   データ取得 & 前処理
+   ========================== */
+
+async function fetchAllData() {
+  const res = await fetch(GAS_URL);
+  const j = await res.json();
+  return j;
+}
+
+function normalizeRow(row) {
+  // returns normalized object with canonical keys
+  const obj = {};
+  obj.username = pickField(row, FIELD_KEYS.username);
+  obj.timeRaw = pickField(row, FIELD_KEYS.time);
+  obj.time = parseDateFlexible(obj.timeRaw);
+  obj.route = pickField(row, FIELD_KEYS.route);
+  obj.station = pickField(row, FIELD_KEYS.station);
+  obj.dest = pickField(row, FIELD_KEYS.dest);
+  obj.company = pickField(row, FIELD_KEYS.company);
+  obj.model = pickField(row, FIELD_KEYS.model);
+  obj.type = pickField(row, FIELD_KEYS.type);
+  obj.raw = row;
+  return obj;
+}
+
+/* ==========================
+   集計ロジック
+   ========================== */
+
+async function buildStats() {
+  const all = await fetchAllData();
+
+  // normalize all rows
+  const norm = all.map(normalizeRow);
+
+  // filter my posts
+  const mine = norm.filter(r => String(r.username) === String(MY_NAME));
+
+  // early return if empty
+  if (!mine || mine.length === 0) {
+    document.getElementById("container").innerHTML = "<p>あなたの投稿データがありません。</p>";
     return;
   }
 
-  /* 路線ごとに集計 */
-  const count = {};
-  mine.forEach(row => {
-    const r = row["路線"];
-    if (!r) return;
-    count[r] = (count[r] || 0) + 1;
+  // total
+  const total = mine.length;
+  document.getElementById("totalCount").innerText = total;
+
+  // route counts
+  const routeCount = {};
+  mine.forEach(r => { const k = r.route || "（不明）"; routeCount[k] = (routeCount[k]||0)+1; });
+
+  const sortedRoutes = Object.entries(routeCount).sort((a,b)=>b[1]-a[1]);
+  document.getElementById("topRoute").innerText = sortedRoutes[0] ? `${sortedRoutes[0][0]} (${sortedRoutes[0][1]}回)` : "—";
+
+  // destination counts
+  const destCount = {};
+  mine.forEach(r => { const k = r.dest || "（不明）"; destCount[k] = (destCount[k]||0)+1; });
+  const sortedDest = Object.entries(destCount).sort((a,b)=>b[1]-a[1]);
+  document.getElementById("topDest").innerText = sortedDest[0] ? `${sortedDest[0][0]} (${sortedDest[0][1]}回)` : "—";
+
+  // model counts
+  const modelCount = {};
+  mine.forEach(r => { const k = r.model || "（不明）"; modelCount[k] = (modelCount[k]||0)+1; });
+  const sortedModel = Object.entries(modelCount).sort((a,b)=>b[1]-a[1]);
+  document.getElementById("topModel").innerText = sortedModel[0] ? `${sortedModel[0][0]} (${sortedModel[0][1]}回)` : "—";
+
+  // render top lists (top 10)
+  function renderList(containerId, entries) {
+    const wrap = document.getElementById(containerId);
+    const top = entries.slice(0,10);
+    const tbl = document.createElement("table");
+    const h = document.createElement("thead");
+    h.innerHTML = "<tr><th>順位</th><th>項目</th><th>回数</th></tr>";
+    tbl.appendChild(h);
+    const b = document.createElement("tbody");
+    top.forEach((it,i) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${i+1}</td><td>${it[0]}</td><td>${it[1]}</td>`;
+      b.appendChild(tr);
+    });
+    tbl.appendChild(b);
+    wrap.innerHTML = "";
+    wrap.appendChild(tbl);
+  }
+
+  renderList("routeList", sortedRoutes);
+  renderList("destList", sortedDest);
+
+  // station ranking
+  const stationCount = {};
+  mine.forEach(r => { const k = r.station || "（不明）"; stationCount[k] = (stationCount[k]||0)+1; });
+  const sortedStation = Object.entries(stationCount).sort((a,b)=>b[1]-a[1]);
+  renderList("stationList", sortedStation);
+
+  // company & model lists
+  const companyCount = {};
+  mine.forEach(r => { const k = r.company || "（不明）"; companyCount[k] = (companyCount[k]||0)+1; });
+  const sortedCompany = Object.entries(companyCount).sort((a,b)=>b[1]-a[1]);
+  renderList("companyList", sortedCompany);
+  renderList("modelList", sortedModel);
+
+  // time-of-day buckets
+  const buckets = { "早朝":0, "朝":0, "昼":0, "夕方":0, "夜":0, "深夜":0 };
+  mine.forEach(r=>{
+    if (!r.time) return;
+    const h = r.time.getHours();
+    if (h < 5) buckets["深夜"]++;
+    else if (h < 9) buckets["朝"]++;
+    else if (h < 12) buckets["昼"]++;
+    else if (h < 17) buckets["昼"]++;
+    else if (h < 20) buckets["夕方"]++;
+    else if (h < 24) buckets["夜"]++;
   });
 
-  /* ソート */
-  const ranking = Object.entries(count)
-    .sort((a, b) => b[1] - a[1]);
-
-  /* 表示 */
-  container.innerHTML = "";
-  ranking.forEach((item, i) => {
-    const div = document.createElement("div");
-    div.className = "rank-item";
-    div.innerHTML = `
-      <span class="rank-num">${i+1} 位</span>
-      <span>${item[0]}</span>
-      <span>${item[1]} 回</span>
-    `;
-    container.appendChild(div);
+  // weekday counts (0=Sun..6=Sat)
+  const weekdays = [ "日","月","火","水","木","金","土" ];
+  const weekdayCount = [0,0,0,0,0,0,0];
+  mine.forEach(r => {
+    if (!r.time) return;
+    weekdayCount[r.time.getDay()]++;
   });
+
+  // monthly trend (by YYYY-MM)
+  const monthMap = {};
+  mine.forEach(r=>{
+    if (!r.time) return;
+    const key = `${r.time.getFullYear()}-${String(r.time.getMonth()+1).padStart(2,"0")}`;
+    monthMap[key] = (monthMap[key]||0)+1;
+  });
+  const months = Object.keys(monthMap).sort();
+  const monthCounts = months.map(m=>monthMap[m]);
+
+  // draw charts with Chart.js
+  // timeChart
+  const timeCtx = document.getElementById("timeChart").getContext("2d");
+  const timeChart = new Chart(timeCtx, {
+    type: 'pie',
+    data: {
+      labels: Object.keys(buckets),
+      datasets: [{ data: Object.values(buckets), backgroundColor: ["#FFB4A2","#FFD166","#90E0EF","#A0C4FF","#BDB2FF","#E9C46A"] }]
+    },
+    options: { plugins:{legend:{position:'bottom'}} }
+  });
+
+  const weekdayCtx = document.getElementById("weekdayChart").getContext("2d");
+  const weekdayChart = new Chart(weekdayCtx, {
+    type:'bar',
+    data:{ labels:weekdays, datasets:[{ label:'投稿数', data:weekdayCount, backgroundColor:'#4CC9F0' }]},
+    options:{ plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true}}}
+  });
+
+  const monthlyCtx = document.getElementById("monthlyChart").getContext("2d");
+  const monthlyChart = new Chart(monthlyCtx, {
+    type:'line',
+    data:{ labels: months, datasets:[{ label:'投稿数', data: monthCounts, fill:true, backgroundColor:'rgba(4,120,255,0.12)', borderColor:'#007bff' }]},
+    options:{ plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true}}}
+  });
+
+  // calendar heatmap (simple: current year)
+  const datesCount = {};
+  mine.forEach(r => {
+    if (!r.time) return;
+    const d = new Date(r.time.getFullYear(), r.time.getMonth(), r.time.getDate());
+    const key = d.toISOString().slice(0,10);
+    datesCount[key] = (datesCount[key]||0)+1;
+  });
+
+  // build calendar for the last 365 days (or current year)
+  const today = new Date();
+  const start = new Date(today);
+  start.setDate(start.getDate() - 364);
+  // aggregate by date keys
+  const days = [];
+  let maxDayCount = 0;
+  for (let d = new Date(start); d <= today; d.setDate(d.getDate()+1)) {
+    const key = d.toISOString().slice(0,10);
+    const c = datesCount[key] || 0;
+    days.push({ key, count:c, date: new Date(d) });
+    if (c > maxDayCount) maxDayCount = c;
+  }
+
+  // render heat calendar: group by month rows for simple layout
+  const heatWrap = document.getElementById("heatCalendar");
+  heatWrap.innerHTML = "";
+  // create weekly rows visually: we'll render a simple horizontal sequence with day labels above months
+  const monthsMap = {};
+  days.forEach(d=> {
+    const m = d.date.getMonth();
+    monthsMap[m] = monthsMap[m] || [];
+    monthsMap[m].push(d);
+  });
+
+  // Simple layout: months as rows of days
+  Object.keys(monthsMap).forEach(m=> {
+    const monthRows = monthsMap[m];
+    const monthCard = document.createElement("div");
+    monthCard.style.marginBottom = "8px";
+    const monthLabel = document.createElement("div");
+    monthLabel.style.fontSize = "13px";
+    monthLabel.style.marginBottom = "6px";
+    monthLabel.innerText = `${monthRows[0].date.getFullYear()}-${String(monthRows[0].date.getMonth()+1).padStart(2,"0")}`;
+    monthCard.appendChild(monthLabel);
+    const grid = document.createElement("div");
+    grid.style.display = "flex";
+    grid.style.gap = "4px";
+    monthRows.forEach(day => {
+      const cell = document.createElement("div");
+      cell.className = "heat-cell";
+      const color = heatColor(day.count, maxDayCount);
+      cell.style.width = "18px";
+      cell.style.height = "18px";
+      cell.style.background = color;
+      cell.title = `${day.key}：${day.count} 回`;
+      monthCard.appendChild(cell);
+    });
+    heatWrap.appendChild(monthCard);
+  });
+
+  // matrix: model x route
+  const matrix = {};
+  const models = new Set();
+  const routesSet = new Set();
+  mine.forEach(r => {
+    const m = r.model || "（不明）";
+    const ro = r.route || "（不明）";
+    models.add(m); routesSet.add(ro);
+    matrix[m] = matrix[m] || {};
+    matrix[m][ro] = (matrix[m][ro]||0) + 1;
+  });
+  const modelsArr = Array.from(models);
+  const routesArr = Array.from(routesSet);
+
+  // build table
+  const matrixWrap = document.getElementById("matrixWrap");
+  const tbl = document.createElement("table");
+  const thead = document.createElement("thead");
+  const trh = document.createElement("tr");
+  trh.innerHTML = `<th>形式 \\ 路線</th>` + routesArr.map(r=>`<th>${r}</th>`).join("");
+  thead.appendChild(trh);
+  tbl.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  modelsArr.forEach(m=>{
+    const tr = document.createElement("tr");
+    let rowHtml = `<td>${m}</td>`;
+    routesArr.forEach(ro=>{
+      const v = matrix[m] && matrix[m][ro] ? matrix[m][ro] : 0;
+      rowHtml += `<td>${v}</td>`;
+    });
+    tr.innerHTML = rowHtml;
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+  matrixWrap.innerHTML = "";
+  matrixWrap.appendChild(tbl);
+
+  // rare items (count == 1) for route/station/model/dest
+  const rare = { route:[], station:[], model:[], dest:[] };
+  Object.entries(routeCount).forEach(([k,v])=>{ if (v===1) rare.route.push(k) });
+  Object.entries(stationCount).forEach(([k,v])=>{ if (v===1) rare.station.push(k) });
+  Object.entries(modelCount).forEach(([k,v])=>{ if (v===1) rare.model.push(k) });
+  Object.entries(destCount).forEach(([k,v])=>{ if (v===1) rare.dest.push(k) });
+
+  const rareWrap = document.getElementById("rareList");
+  rareWrap.innerHTML = `<div class="small"><b>路線（1回のみ）:</b> ${rare.route.join(", ") || "なし"}</div>
+                       <div class="small"><b>駅（1回のみ）:</b> ${rare.station.join(", ") || "なし"}</div>
+                       <div class="small"><b>形式（1回のみ）:</b> ${rare.model.join(", ") || "なし"}</div>
+                       <div class="small"><b>行先（1回のみ）:</b> ${rare.dest.join(", ") || "なし"}</div>`;
+
+  // preview latest 20
+  const previewWrap = document.getElementById("preview");
+  const previewTbl = document.createElement("table");
+  const ph = document.createElement("thead");
+  // choose a few columns to show: 時刻, 路線, 乗車駅, 行先, 車両形式, メモ if present in raw keys
+  const rawKeys = Object.keys(mine[0].raw);
+  const showKeys = ["時刻","路線","乗車駅","行先","車車両形式","車両形式","メモ","ユーザー名"].filter(k=>rawKeys.includes(k));
+  // if none matched, just use all raw keys (first 6)
+  const headerKeys = showKeys.length ? showKeys.slice(0,6) : rawKeys.slice(0,6);
+  ph.innerHTML = "<tr>" + headerKeys.map(h=>`<th>${h}</th>`).join("") + "</tr>";
+  previewTbl.appendChild(ph);
+  const pb = document.createElement("tbody");
+  const latest = mine.slice(-20).reverse();
+  latest.forEach(r=>{
+    const tr = document.createElement("tr");
+    const cols = headerKeys.map(k=>`<td>${(r.raw[k] !== undefined && r.raw[k] !== null) ? r.raw[k] : ""}</td>`).join("");
+    tr.innerHTML = cols;
+    pb.appendChild(tr);
+  });
+  previewTbl.appendChild(pb);
+  previewWrap.innerHTML = "";
+  previewWrap.appendChild(previewTbl);
+
+  // set top lists displayed earlier (short)
+  // routeList already rendered table; we can also keep them as is
+
+  // finished
+  console.log("統計生成完了");
 }
 
-makeRanking();
-</script>
+/* start */
+buildStats().catch(err=>{
+  console.error(err);
+  document.getElementById("container").innerHTML = "<p>読み込みエラーが発生しました。コンソールを確認してください。</p>";
+});
 
+</script>
 </body>
 </html>
-
-
-
