@@ -104,7 +104,7 @@ async function makeRanking() {
   const all = await getAllHistory();
 
   // 自分の投稿のみ
-  const mine = all.filter(r => r.username === myName);
+  const mine = all.filter(r => r["名前"] === myName);
 
   if (mine.length === 0) {
     container.innerHTML = "<p>あなたの投稿データがありません。</p>";
@@ -114,7 +114,7 @@ async function makeRanking() {
   /* 路線ごとに集計 */
   const count = {};
   mine.forEach(row => {
-    const r = row.route;
+    const r = row["路線"];
     if (!r) return;
     count[r] = (count[r] || 0) + 1;
   });
@@ -142,4 +142,5 @@ makeRanking();
 
 </body>
 </html>
+
 
