@@ -72,56 +72,49 @@
     <p id="msg"></p>
   </main>
 
-  <script>
-/* ▼ ここを新しい Web アプリのURLに置き換える ▼ */
-const GAS_LOG_URL = "https://script.google.com/macros/s/AKfycbwDjgFbOxG6K22TdgbVZ1FJvEtpjZPAI1KArnvLgitFH3lS7yGb_JaQ-LpcgaFTiac7/exec";
-const AUTH_GAS_URL = "https://script.google.com/macros/s/AKfycbyV3coI-PSnncCUWCmEOQgrvxDaAtTJiGxK_A9PTovDD_v1jPecjQsy_t2iog3-fZTzig/exec";
+ <script>
+/* ▼ あなたの GAS の URL に差し替えてください */
+const AUTH_GAS_URL = "https://script.google.com/macros/s/★ここにURL★/exec";
 
 async function login() {
   const username = document.getElementById("username").value.trim();
-  const key = document.getElementById("accessKey").value.trim();
+  const accessKey = document.getElementById("accessKey").value.trim();
   const msg = document.getElementById("msg");
 
-  if (!username || !key) {
+  if (!username || !accessKey) {
     msg.textContent = "ユーザー名とアクセスキーを入力してください。";
     msg.style.color = "red";
     return;
   }
 
-  // ▼ 認証リクエスト
+  // ▼ GAS の仕様に合わせて URLエンコード形式で送信する
+  const params = new URLSearchParams();
+  params.append("action", "login");
+  params.append("username", username);
+  params.append("accessKey", accessKey);
+
   const res = await fetch(AUTH_GAS_URL, {
     method: "POST",
-    body: JSON.stringify({ username, key })
+    body: params
   });
 
-  const result = await res.json();
+  const json = await res.json();
 
-  if (result.ok) {
-    // 認証成功
+  if (json.success) {
+    // 成功時
     localStorage.setItem("username", username);
-    localStorage.setItem("accessKey", key);
-
-    // ログにも送信
-    fetch(GAS_LOG_URL, {
-      method: "POST",
-      body: JSON.stringify({
-        action: "login",
-        username,
-        details: "ログイン成功"
-      }),
-    });
+    localStorage.setItem("accessKey", accessKey);
 
     msg.style.color = "green";
     msg.textContent = "ログイン成功！";
     setTimeout(() => window.location.href = "index.html", 800);
-
   } else {
-    msg.textContent = "ユーザー名またはアクセスキーが間違っています。";
+    msg.textContent = "ユーザー名またはアクセスキーが違います。";
     msg.style.color = "red";
   }
 }
-
   </script>
 
 </body>
 </html>
+
