@@ -72,9 +72,8 @@
     <p id="msg"></p>
   </main>
 
- <script>
-/* ▼ あなたの GAS の URL に差し替えてください */
-const AUTH_GAS_URL = "https://script.google.com/macros/s/AKfycbyV3coI-PSnncCUWCmEOQgrvxDaAtTJiGxK_A9PTovDD_v1jPecjQsy_t2iog3-fZTzig/exec";
+  <script>
+const GAS_LOGIN_URL = "https://script.google.com/macros/s/AKfycbyV3coI-PSnncCUWCmEOQgrvxDaAtTJiGxK_A9PTovDD_v1jPecjQsy_t2iog3-fZTzig/exec"; // ←必ず差し替え
 
 async function login() {
   const username = document.getElementById("username").value.trim();
@@ -87,29 +86,31 @@ async function login() {
     return;
   }
 
-  // ▼ GAS の仕様に合わせて URLエンコード形式で送信する
-  const params = new URLSearchParams();
-  params.append("action", "login");
-  params.append("username", username);
-  params.append("accessKey", accessKey);
+  try {
+    const res = await fetch(GAS_LOGIN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username,
+        accessKey
+      })
+    });
 
-  const res = await fetch(AUTH_GAS_URL, {
-    method: "POST",
-    body: params
-  });
+    const json = await res.json();
 
-  const json = await res.json();
+    if (json.success) {
+      localStorage.setItem("username", username);
+      localStorage.setItem("accessKey", accessKey);
 
-  if (json.success) {
-    // 成功時
-    localStorage.setItem("username", username);
-    localStorage.setItem("accessKey", accessKey);
-
-    msg.style.color = "green";
-    msg.textContent = "ログイン成功！";
-    setTimeout(() => window.location.href = "index.html", 800);
-  } else {
-    msg.textContent = "ユーザー名またはアクセスキーが違います。";
+      msg.style.color = "green";
+      msg.textContent = "ログイン成功！";
+      setTimeout(() => window.location.href = "index.html", 800);
+    } else {
+      msg.textContent = "ユーザー名またはアクセスキーが違います。";
+      msg.style.color = "red";
+    }
+  } catch (error) {
+    msg.textContent = "通信エラーが発生しました。";
     msg.style.color = "red";
   }
 }
@@ -117,5 +118,3 @@ async function login() {
 
 </body>
 </html>
-
-
