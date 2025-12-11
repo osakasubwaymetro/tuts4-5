@@ -72,49 +72,42 @@
     <p id="msg"></p>
   </main>
 
-  <script>
-const GAS_LOGIN_URL = "https://script.google.com/macros/s/AKfycbyV3coI-PSnncCUWCmEOQgrvxDaAtTJiGxK_A9PTovDD_v1jPecjQsy_t2iog3-fZTzig/exec"; // ←必ず差し替え
+<script>
+  const GAS_URL = "https://script.google.com/macros/s/AKfycbyV3coI-PSnncCUWCmEOQgrvxDaAtTJiGxK_A9PTovDD_v1jPecjQsy_t2iog3-fZTzig/exec";
 
-async function login() {
-  const username = document.getElementById("username").value.trim();
-  const accessKey = document.getElementById("accessKey").value.trim();
-  const msg = document.getElementById("msg");
+  async function login() {
+    const username = document.getElementById("username").value;
+    const accessKey = document.getElementById("accessKey").value;
 
-  if (!username || !accessKey) {
-    msg.textContent = "ユーザー名とアクセスキーを入力してください。";
-    msg.style.color = "red";
-    return;
-  }
+    try {
+      const response = await fetch(GAS_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({
+          action: "login",
+          username: username,
+          accessKey: accessKey
+        })
+      });
 
-  try {
-    const res = await fetch(GAS_LOGIN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username,
-        accessKey
-      })
-    });
+      const result = await response.json();
 
-    const json = await res.json();
+      if (result.success) {
+        alert("ログイン成功！");
+      } else {
+        alert("ユーザー名またはアクセスキーが違います");
+      }
 
-    if (json.success) {
-      localStorage.setItem("username", username);
-      localStorage.setItem("accessKey", accessKey);
-
-      msg.style.color = "green";
-      msg.textContent = "ログイン成功！";
-      setTimeout(() => window.location.href = "index.html", 800);
-    } else {
-      msg.textContent = "ユーザー名またはアクセスキーが違います。";
-      msg.style.color = "red";
+    } catch (error) {
+      alert("通信エラーが発生しました");
+      console.error(error);
     }
-  } catch (error) {
-    msg.textContent = "通信エラーが発生しました。";
-    msg.style.color = "red";
   }
-}
-  </script>
+</script>
+
 
 </body>
 </html>
+
