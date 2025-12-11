@@ -76,8 +76,8 @@
   const GAS_URL = "https://script.google.com/macros/s/AKfycbyV3coI-PSnncCUWCmEOQgrvxDaAtTJiGxK_A9PTovDD_v1jPecjQsy_t2iog3-fZTzig/exec";
 
   async function login() {
-    const username = document.getElementById("username").value;
-    const accessKey = document.getElementById("accessKey").value;
+    const username = document.getElementById("username").value.trim();
+    const accessKey = document.getElementById("accessKey").value.trim();
 
     try {
       const response = await fetch(GAS_URL, {
@@ -85,17 +85,15 @@
         headers: {
           "Content-Type": "application/x-www-form-urlencoded"
         },
-        body: new URLSearchParams({
-          action: "login",
-          username: username,
-          accessKey: accessKey
-        })
+        body: `action=login&username=${encodeURIComponent(username)}&accessKey=${encodeURIComponent(accessKey)}`
       });
 
       const result = await response.json();
 
       if (result.success) {
         alert("ログイン成功！");
+        // ここでページ遷移させたいなら ↓
+        window.location.href = "index.html";
       } else {
         alert("ユーザー名またはアクセスキーが違います");
       }
@@ -108,6 +106,8 @@
 </script>
 
 
+
 </body>
 </html>
+
 
