@@ -399,27 +399,27 @@ function updateRemarkList() {
   const routeVal = document.getElementById("route").value;
   const descmsg = document.getElementById("desc");
 
+  // 必ず最初に空にする
   descmsg.textContent = "";
-
-  // メモ欄は input → select に変える必要がある
-  // index.html のメモ欄を書き換えておいてね
-  // <select id="desc"></select>
-
-  //descmsg.innerHTML = '<option value="">選択してください</option>';
 
   if (!routeVal) return;
 
-  // スプレッドシートの remark シート構成が:
-  // 路線 | 備考
+  // 路線が一致し、備考が存在するものだけに絞る
   const filtered = allRemarkData.filter(row =>
-    row["路線"] === routeVal
+    row["路線"] === routeVal && row["備考"]
   );
 
+  // 該当路線がスプレッドシートに存在しない場合
+  if (filtered.length === 0) {
+    descmsg.textContent = "";
+    return;
+  }
+
+  // 備考の重複を除去
   const items = [...new Set(filtered.map(r => r["備考"]))];
 
-  items.forEach(c => {
-    descmsg.textContent = c;
-  });
-
+  // p要素なので文字列として結合して表示
+  descmsg.textContent = items.join(" / ");
 }
+
 
