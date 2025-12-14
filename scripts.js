@@ -399,6 +399,8 @@ function updateRemarkList() {
   const routeVal = document.getElementById("route").value;
   const descmsg = document.getElementById("desc");
 
+  descmsg.innerHTML = "";
+
   // メモ欄は input → select に変える必要がある
   // index.html のメモ欄を書き換えておいてね
   // <select id="desc"></select>
@@ -418,4 +420,5 @@ function updateRemarkList() {
   items.forEach(c => {
     descmsg.textContent = c;
   });
+
 }
