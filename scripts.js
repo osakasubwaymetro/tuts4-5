@@ -399,7 +399,7 @@ function updateRemarkList() {
   const routeVal = document.getElementById("route").value;
   const descmsg = document.getElementById("desc");
 
-  descmsg.innerHTML = "";
+  descmsg.textContent = "";
 
   // メモ欄は input → select に変える必要がある
   // index.html のメモ欄を書き換えておいてね
@@ -422,3 +422,4 @@ function updateRemarkList() {
   });
 
 }
+
