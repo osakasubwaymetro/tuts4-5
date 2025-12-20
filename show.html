@@ -1,226 +1,213 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>投稿履歴</title>
-  <style>
-    body {
-      font-family: "Hiragino Sans", "Segoe UI", sans-serif;
-      background-color: #F7F8FA;
-      margin: 0;
-      padding: 0;
-    }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>投稿履歴</title>
+<style>
+  body {
+    font-family: "Hiragino Sans", "Segoe UI", sans-serif;
+    background-color: #F7F8FA;
+    margin: 0;
+    padding: 0;
+  }
 
-    header {
-      background-color: #004C97;
-      color: white;
-      text-align: center;
-      padding: 15px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
+  header {
+    background-color: #004C97;
+    color: white;
+    text-align: center;
+    padding: 15px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
 
-    .header-left, .header-right {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
+  .header-left, .header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
 
-    header a {
-      color: #E60012;
-      background: white;
-      text-decoration: none;
-      font-size: 14px;
-      padding: 5px 10px;
-      border-radius: 6px;
-      transition: 0.2s;
-    }
-    header a:hover {
-      background-color: #E60012;
-      color: white;
-    }
+  header a {
+    color: #E60012;
+    background: white;
+    text-decoration: none;
+    font-size: 14px;
+    padding: 5px 10px;
+    border-radius: 6px;
+    transition: 0.2s;
+  }
+  header a:hover {
+    background-color: #E60012;
+    color: white;
+  }
 
-    #usernameDisplay {
-      font-weight: bold;
-      font-size: 14px;
-      color: #FFD700;
-    }
+  #usernameDisplay {
+    font-weight: bold;
+    font-size: 14px;
+    color: #FFD700;
+  }
 
-    h2 {
-      text-align: center;
-      margin-top: 20px;
-      color: #004C97;
-    }
+  h2 {
+    text-align: center;
+    margin-top: 20px;
+    color: #004C97;
+  }
 
-    #filterArea {
-      text-align: center;
-      margin: 10px 0 20px;
-    }
+  #filterArea {
+    text-align: center;
+    margin: 10px 0 20px;
+  }
 
-    #postContainer {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-      gap: 20px;
-      padding: 20px;
-      width: 90%;
-      max-width: 1000px;
-      margin: auto;
-    }
+  #postContainer {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+    padding: 20px;
+    width: 90%;
+    max-width: 1000px;
+    margin: auto;
+  }
 
-    .card {
-      background-color: #fff;
-      border-radius: 15px;
-      padding: 20px;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-      border-left: 6px solid #E60012;
-      transition: transform 0.15s ease;
-    }
+  .card {
+    background-color: #fff;
+    border-radius: 15px;
+    padding: 20px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    border-left: 6px solid #E60012;
+  }
 
-    .card:hover {
-      transform: translateY(-3px);
-    }
+  .card h3 {
+    margin: 0 0 8px;
+    color: #004C97;
+    font-size: 18px;
+  }
 
-    .card h3 {
-      margin: 0 0 8px;
-      color: #004C97;
-      font-size: 18px;
-    }
+  .card p {
+    margin: 4px 0;
+    color: #333;
+    font-size: 14px;
+  }
 
-    .card p {
-      margin: 4px 0;
-      color: #333;
-      font-size: 14px;
-    }
-
-    #reload {
-      text-align: center;
-      color: #555;
-    }
-  </style>
+  #reload {
+    text-align: center;
+    color: #555;
+  }
+</style>
 </head>
 <body>
-  <header>
-    <div class="header-left">
-      <a href="index.html">📝 新規投稿</a>
-    </div>
 
-    <div><strong>投稿履歴</strong></div>
-
-    <div class="header-right">
-      <span id="usernameDisplay"></span>
-      <a href="#" onclick="logout()">🚪 ログアウト</a>
-    </div>
-  </header>
-
-  <h2>投稿一覧</h2>
-
-  <!-- 追加：月別フィルタ -->
-  <div id="filterArea">
-    <label>月で絞り込み：</label>
-    <select id="monthFilter">
-      <option value="all">すべて表示</option>
-    </select>
+<header>
+  <div class="header-left">
+    <a href="index.html">📝 新規投稿</a>
   </div>
 
-  <p id="reload">読み込み中...</p>
+  <div><strong>投稿履歴</strong></div>
 
-  <div id="postContainer"></div>
+  <div class="header-right">
+    <span id="usernameDisplay"></span>
+    <a href="#" onclick="logout()">🚪 ログアウト</a>
+  </div>
+</header>
 
-  <script src="logs.js"></script>
-  <script>
-    const username = checkLogin();
-    document.getElementById("usernameDisplay").textContent = `👤 ${username} さん`;
+<h2>投稿一覧</h2>
 
-    const GAS_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
+<div id="filterArea">
+  <label>月で絞り込み：</label>
+  <select id="monthFilter">
+    <option value="all">すべて表示</option>
+  </select>
+</div>
 
-    let allData = []; // 全投稿データを保持
+<p id="reload">読み込み中...</p>
+<div id="postContainer"></div>
 
-    // カード生成
-    function renderCards(data) {
-      const container = document.getElementById("postContainer");
-      container.innerHTML = "";
+<script src="logs.js"></script>
+<script>
+const username = checkLogin();
+document.getElementById("usernameDisplay").textContent = `👤 ${username} さん`;
 
-      if (!data || data.length === 0) {
-        document.getElementById("reload").textContent = "該当する投稿がありません。";
-        return;
+const GAS_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
+
+let allData = [];
+
+function renderCards(data) {
+  const container = document.getElementById("postContainer");
+  container.innerHTML = "";
+
+  if (!data || data.length === 0) {
+    document.getElementById("reload").textContent = "該当する投稿がありません。";
+    return;
+  }
+
+  document.getElementById("reload").textContent = "";
+
+  data.forEach(row => {
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const title = document.createElement("h3");
+    title.textContent = String(row["路線"] || "");
+    card.appendChild(title);
+
+    const info = [
+      ["ユーザー", row["ユーザー名"]],
+      ["発車時刻", row["時刻"]],
+      ["エリア", row["エリア"]],
+      ["区分", row["区分"]],
+      ["乗車駅", row["乗車駅"]],
+      ["種別", row["種別"]],
+      ["行先", row["行先"]],
+      ["車両形式", row["車両形式"]],
+      ["車番", row["車番"]],
+      ["備考", row["メモ"]],
+    ];
+
+    info.forEach(([label, value]) => {
+      if (value !== null && value !== undefined && String(value) !== "") {
+        const p = document.createElement("p");
+        p.innerHTML = `<strong>${label}：</strong>${String(value)}`;
+        card.appendChild(p);
       }
-      document.getElementById("reload").textContent = "";
+    });
 
-      data.forEach(row => {
-        const card = document.createElement("div");
-        card.classList.add("card");
-        const title = document.createElement("h3");
-        title.textContent = `${row["路線"] || ""}`;
-        card.appendChild(title);
+    container.appendChild(card);
+  });
+}
 
-        const info = [
-          ["ユーザー", row["ユーザー名"]],
-          ["発車時刻", row["時刻"]],
-          ["エリア", row["エリア"]],
-          ["区分", row["区分"]],
-          ["乗車駅", row["乗車駅"]],
-          ["種別", row["種別"]],
-          ["行先", row["行先"]],
-          ["車両形式", row["車両形式"]],
-          ["車番", row["車番"]],
-          ["備考", row["メモ"]],
-        ];
+function applyMonthFilter() {
+  const selected = document.getElementById("monthFilter").value;
+  if (selected === "all") {
+    renderCards(allData);
+    return;
+  }
+  renderCards(allData.filter(r => String(r["時刻"]).startsWith(selected)));
+}
 
-        info.forEach(([label, value]) => {
-          if (value && value.trim() !== "") {
-            const p = document.createElement("p");
-            p.innerHTML = `<strong>${label}：</strong>${value}`;
-            card.appendChild(p);
-          }
-        });
+fetch(GAS_URL)
+  .then(res => res.json())
+  .then(data => {
+    data.reverse();
+    allData = data;
 
-        container.appendChild(card);
-      });
-    }
+    const months = [...new Set(data.map(d => String(d["時刻"]).slice(0, 7)))];
+    const select = document.getElementById("monthFilter");
 
-    // 月フィルタ処理
-    function applyMonthFilter() {
-      const selected = document.getElementById("monthFilter").value;
+    months.forEach(m => {
+      const o = document.createElement("option");
+      o.value = m;
+      o.textContent = m;
+      select.appendChild(o);
+    });
 
-      if (selected === "all") {
-        renderCards(allData);
-        return;
-      }
+    select.addEventListener("change", applyMonthFilter);
+    renderCards(data);
+  })
+  .catch(() => {
+    document.getElementById("reload").textContent = "データ取得エラーが発生しました。";
+  });
+</script>
 
-      const filtered = allData.filter(row => row["時刻"].startsWith(selected));
-      renderCards(filtered);
-    }
-
-    fetch(GAS_URL)
-      .then(res => res.json())
-      .then(data => {
-        // 新しい順に並び替え
-        data.reverse();
-
-        allData = data;
-
-        // 月リスト生成
-        const months = [...new Set(data.map(d => d["時刻"].slice(0, 7)))];
-        const monthSelect = document.getElementById("monthFilter");
-        months.forEach(m => {
-          const option = document.createElement("option");
-          option.value = m;
-          option.textContent = m;
-          monthSelect.appendChild(option);
-        });
-
-        monthSelect.addEventListener("change", applyMonthFilter);
-
-        // 初回表示
-        renderCards(data);
-      })
-      .catch(err => {
-        console.error(err);
-        document.getElementById("reload").textContent = "データ取得エラーが発生しました。";
-      });
-  </script>
 </body>
 </html>
