@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>スタンプ帳</title>
+
+<style>
+body {
+  font-family: "Hiragino Sans", "Segoe UI", sans-serif;
+  background-color: #F7F8FA;
+  margin: 0;
+}
+
+header {
+  background-color: #004C97;
+  color: white;
+  padding: 15px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+header a {
+  color: #E60012;
+  background: white;
+  text-decoration: none;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+#usernameDisplay {
+  color: #FFD700;
+  font-weight: bold;
+}
+
+main {
+  max-width: 1000px;
+  margin: 20px auto;
+  padding: 10px;
+}
+
+.model-card {
+  background: white;
+  border-radius: 15px;
+  padding: 15px;
+  margin-bottom: 25px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+}
+
+.model-title {
+  font-size: 20px;
+  color: #004C97;
+  margin-bottom: 10px;
+}
+
+.stamp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  gap: 10px;
+}
+
+.stamp {
+  border-radius: 10px;
+  padding: 10px;
+  text-align: center;
+  font-size: 13px;
+  background: #eee;
+}
+
+.stamp.done {
+  background: #E60012;
+  color: white;
+  font-weight: bold;
+}
+
+.complete {
+  margin-top: 10px;
+  color: #E60012;
+  font-weight: bold;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <a href="index.html">📝 投稿</a>
+  <strong>🚆 スタンプ帳</strong>
+  <span id="usernameDisplay"></span>
+</header>
+
+<main id="container">
+  読み込み中...
+</main>
+
+<script src="logs.js"></script>
+<script>
+const username = checkLogin();
+document.getElementById("usernameDisplay").textContent = `👤 ${username} さん`;
+
+// 投稿履歴（GAS）
+const HISTORY_URL = "https://script.google.com/macros/s/AKfycbwWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
+
+// マスタ（編成一覧）
+const MODEL_URL  = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
+const NUMBER_URL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/number";
+
+Promise.all([
+  fetch(HISTORY_URL).then(r => r.json()),
+  fetch(MODEL_URL).then(r => r.json()),
+  fetch(NUMBER_URL).then(r => r.json())
+]).then(([history, models, numbers]) => {
+
+  // 自分の投稿だけ
+  const myHistory = history.filter(r => r["ユーザー名"] === username);
+
+  // 乗った編成セット
+  const ridden = new Set(
+    myHistory.map(r => `${r["車両形式"]}_${r["車番"]}`)
+  );
+
+  // 車両形式一覧
+  const modelList = [...new Set(models.map(m => m["車両形式"]))];
+
+  const container = document.getElementById("container");
+  container.innerHTML = "";
+
+  modelList.forEach(model => {
+    const card = document.createElement("div");
+    card.className = "model-card";
+
+    const title = document.createElement("div");
+    title.className = "model-title";
+    title.textContent = model;
+    card.appendChild(title);
+
+    const grid = document.createElement("div");
+    grid.className = "stamp-grid";
+
+    const list = numbers.filter(n => n["車両形式"] === model);
+
+    let completed = true;
+
+    list.forEach(n => {
+      const key = `${model}_${n["車番"]}`;
+      const stamp = document.createElement("div");
+      stamp.className = "stamp";
+
+      if (ridden.has(key)) {
+        stamp.classList.add("done");
+        stamp.textContent = `✔ ${n["車番"]}`;
+      } else {
+        stamp.textContent = n["車番"];
+        completed = false;
+      }
+
+      grid.appendChild(stamp);
+    });
+
+    card.appendChild(grid);
+
+    if (completed && list.length > 0) {
+      const comp = document.createElement("div");
+      comp.className = "complete";
+      comp.textContent = "🎉 全編成制覇！おめでとう！";
+      card.appendChild(comp);
+    }
+
+    container.appendChild(card);
+  });
+
+}).catch(err => {
+  console.error(err);
+  document.getElementById("container").textContent = "読み込みエラー";
+});
+</script>
+
+</body>
+</html>
