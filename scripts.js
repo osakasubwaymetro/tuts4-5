@@ -423,3 +423,37 @@ function updateRemarkList() {
 }
 
 
+
+let myRideLogs = [];
+
+fetch("https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec")
+  .then(res => res.json())
+  .then(data => {
+    const username = localStorage.getItem("username");
+    myRideLogs = data.filter(row => row["ユーザー名"] === username);
+  });
+
+document.getElementById("number").addEventListener("change", checkRideHistory);
+
+
+function checkRideHistory() {
+  const model = document.getElementById("model").value;
+  const number = document.getElementById("number").value;
+  const result = document.getElementById("rideCheckResult");
+
+  if (!model || !number) {
+    result.textContent = "";
+    return;
+  }
+
+  const sameRides = myRideLogs.filter(row =>
+    row["車両形式"] === model &&
+    row["車番"] === number
+  );
+
+  if (sameRides.length === 0) {
+    result.textContent = "🎉 初乗車です！";
+  } else {
+    result.textContent = `🚆 ${sameRides.length + 1} 回目の乗車です`;
+  }
+}
