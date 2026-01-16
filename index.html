@@ -140,10 +140,7 @@
 
 <main>
   <h2>投稿フォーム</h2>
-
-  <label><h3>ユーザー名</h3></label>
-  <input type="text" id="username" readonly>
-
+  
   <label><h3>発車時刻</h3></label>
   <input type="datetime-local" id="departing_time">
   <button type="button" onclick="setCurrentDateTime()">🕓 現在時刻を入力</button>
@@ -160,9 +157,6 @@
   <label><h3>路線</h3></label>
   <select id="route"></select>
 
-  <label><h3>車両形式</h3></label>
-  <select id="model"></select>
-
   <label><h3>乗車駅</h3></label>
   <select id="station"></select>
 
@@ -171,6 +165,9 @@
 
   <label><h3>行先</h3></label>
   <select id="bound"></select>
+
+  <label><h3>車両形式</h3></label>
+  <select id="model"></select>
 
   <label><h3>車番</h3></label>
   <select id="number"></select>
@@ -255,6 +252,7 @@
 
 </body>
 </html>
+
 
 
 
