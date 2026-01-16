@@ -453,7 +453,10 @@ function checkRideHistory() {
 
   if (sameRides.length === 0) {
     result.textContent = "🎉 初乗車です！";
+    alart("初乗車");
   } else {
     result.textContent = `🚆 ${sameRides.length + 1} 回目の乗車です`;
+    alart("乗ったことあ");
   }
 }
+
