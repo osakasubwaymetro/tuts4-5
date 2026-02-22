@@ -349,18 +349,22 @@ function upload() {
   // ▼ここにGASのデプロイURLを入れる
   const scriptURL = "https://script.google.com/macros/s/AKfycbzuhYRx9gyb5J1a-6ZuxmcCepIU1hIMnuBo58wh5CTYMWE785YAnuJY4ckm_13-ZHc7/exec";
 
+  showLoadingPopup();
+
   fetch(scriptURL, {
     method: "POST",
-    mode: "no-cors", // GASを匿名アクセス可能にしているため
+    mode: "no-cors",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
   })
   .then(() => {
-    alert("送信しました！");
+    hideLoadingPopup();
+    showStampPopup(modelValue, numberValue);
   })
   .catch(err => {
+    hideLoadingPopup();
     console.error("送信エラー:", err);
     alert("送信に失敗しました");
   });

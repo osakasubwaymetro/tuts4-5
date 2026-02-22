@@ -188,6 +188,158 @@
       color: #666;
     }
 
+    /* ===== LOADING POPUP ===== */
+    .loading-popup-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 10001;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(3px);
+    }
+    .loading-popup-overlay.show { display: flex; }
+    .loading-popup {
+      background: white;
+      border-radius: 20px;
+      padding: 36px 40px;
+      text-align: center;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.2);
+      animation: popupIn 0.3s ease both;
+    }
+    .loading-train {
+      font-size: 48px;
+      display: block;
+      margin-bottom: 12px;
+      animation: trainRun 0.8s ease-in-out infinite alternate;
+    }
+    @keyframes trainRun {
+      from { transform: translateX(-8px); }
+      to   { transform: translateX(8px); }
+    }
+    .loading-track {
+      width: 120px;
+      height: 4px;
+      background: #eee;
+      border-radius: 2px;
+      margin: 0 auto 16px;
+      overflow: hidden;
+      position: relative;
+    }
+    .loading-track::after {
+      content: '';
+      position: absolute;
+      left: -40%;
+      width: 40%;
+      height: 100%;
+      background: #004C97;
+      border-radius: 2px;
+      animation: trackSlide 0.8s ease-in-out infinite;
+    }
+    @keyframes trackSlide {
+      from { left: -40%; }
+      to   { left: 100%; }
+    }
+    .loading-text {
+      font-size: 14px;
+      color: #555;
+      font-family: "Hiragino Sans", sans-serif;
+    }
+
+    /* ===== STAMP POPUP ===== */
+    .stamp-popup-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      z-index: 10000;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(3px);
+    }
+    .stamp-popup-overlay.show {
+      display: flex;
+    }
+    .stamp-popup {
+      background: #FAF6EF;
+      border-radius: 20px;
+      padding: 32px 28px 24px;
+      max-width: 360px;
+      width: 90%;
+      text-align: center;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.25);
+      animation: popupIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+      position: relative;
+      font-family: "Hiragino Sans", "Segoe UI", sans-serif;
+    }
+    @keyframes popupIn {
+      from { transform: scale(0.7) translateY(40px); opacity: 0; }
+      to   { transform: scale(1) translateY(0); opacity: 1; }
+    }
+    .stamp-popup-label {
+      font-size: 13px;
+      color: #999;
+      letter-spacing: 0.08em;
+      margin-bottom: 4px;
+    }
+    .stamp-popup-model {
+      font-size: 22px;
+      font-weight: bold;
+      color: #004C97;
+      margin-bottom: 20px;
+    }
+    .stamp-popup-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: center;
+      margin-bottom: 20px;
+      max-height: 320px;
+      overflow-y: auto;
+      padding: 4px;
+    }
+    .stamp-popup-cell {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+    }
+    .stamp-popup-cell .sp-label {
+      font-size: 11px;
+      color: #555;
+    }
+    .stamp-popup-cell.highlight .sp-label {
+      color: #004C97;
+      font-weight: bold;
+    }
+    .stamp-popup-cell.highlight .sp-circle {
+      animation: stampBounce 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s both;
+    }
+    @keyframes stampBounce {
+      from { transform: scale(0) rotate(-20deg); opacity: 0; }
+      to   { transform: scale(1) rotate(0deg); opacity: 1; }
+    }
+    .stamp-popup-btn {
+      background: #004C97;
+      color: white;
+      border: none;
+      padding: 10px 32px;
+      border-radius: 20px;
+      font-size: 14px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 0.2s;
+    }
+    .stamp-popup-btn:hover { background: #E60012; }
+    .stamp-popup-msg {
+      font-size: 15px;
+      font-weight: bold;
+      margin-bottom: 16px;
+    }
+    .stamp-popup-msg.first { color: #E60012; }
+    .stamp-popup-msg.again { color: #004C97; }
+
     .notice-card {
       background: #ffffff;
       border-radius: 12px;
@@ -303,18 +455,125 @@ function closeNavMenu() {
     <p class="desc" id="desc"></p>
   </div>
 
-  <div class="notice-card">
-    <h2 class="notice-title">乗車履歴チェック</h2>
-    <p id="rideCheckResult"></p>
-  </div>
-
   <button onclick="upload()">🚆 投稿する</button>
 </main>
+
+<!-- ===== LOADING POPUP ===== -->
+<div class="loading-popup-overlay" id="loadingPopupOverlay">
+  <div class="loading-popup">
+    <span class="loading-train">🚆</span>
+    <div class="loading-track"></div>
+    <div class="loading-text">送信中...</div>
+  </div>
+</div>
+
+<!-- ===== STAMP POPUP ===== -->
+<div class="stamp-popup-overlay" id="stampPopupOverlay">
+  <div class="stamp-popup">
+    <div class="stamp-popup-label">投稿完了 🚆</div>
+    <div class="stamp-popup-model" id="spModelName"></div>
+    <div class="stamp-popup-msg" id="spMsg"></div>
+    <div class="stamp-popup-grid" id="spGrid"></div>
+    <button class="stamp-popup-btn" onclick="closeStampPopup()">とじる</button>
+  </div>
+</div>
 
 <script src="logs.js"></script>
 <script src="scripts.js"></script>
 <script>
   const username = checkLogin();
+
+  function showLoadingPopup() {
+    document.getElementById("loadingPopupOverlay").classList.add("show");
+  }
+  function hideLoadingPopup() {
+    document.getElementById("loadingPopupOverlay").classList.remove("show");
+  }
+
+  function closeStampPopup() {
+    document.getElementById("stampPopupOverlay").classList.remove("show");
+  }
+
+  // Close on overlay click
+  document.getElementById("stampPopupOverlay").addEventListener("click", function(e) {
+    if (e.target === this) closeStampPopup();
+  });
+
+  const NUMBER_URL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/number";
+  const RIDES_URL  = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
+
+  const STAMP_COLORS = [
+    "#C0392B","#1a5276","#1e8449","#7d3c98","#b7950b","#784212"
+  ];
+
+  function stampSVGSmall(color, ridden) {
+    if (!ridden) {
+      return `<svg width="56" height="56" viewBox="0 0 56 56">
+        <circle cx="28" cy="28" r="22" fill="none" stroke="#d0c8be" stroke-width="2" stroke-dasharray="5 3"/>
+      </svg>`;
+    }
+    return `<svg width="56" height="56" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="40" cy="40" r="36" fill="none" stroke="${color}" stroke-width="4" opacity="0.9"/>
+      <circle cx="40" cy="40" r="29" fill="none" stroke="${color}" stroke-width="1.5" opacity="0.7"/>
+      <circle cx="40" cy="40" r="27" fill="${color}" opacity="0.12"/>
+      <text x="40" y="47" text-anchor="middle" font-family="serif" font-size="22" fill="${color}" font-weight="700" opacity="0.9">乗</text>
+    </svg>`;
+  }
+
+  async function showStampPopup(modelValue, postedNumber) {
+    if (!modelValue) return;
+
+    const [numberData, rideData] = await Promise.all([
+      fetch(NUMBER_URL).then(r => r.json()),
+      fetch(RIDES_URL).then(r => r.json())
+    ]);
+
+    // All formations for this model (exclude ***)
+    const formations = numberData
+      .filter(r => r["車両形式"] === modelValue && !String(r["車番"] || "").includes("*"))
+      .map(r => r["車番"]);
+
+    // My rides for this model (including the just-posted one)
+    const myRides = rideData.filter(r =>
+      r["ユーザー名"] === username && r["車両形式"] === modelValue
+    );
+    const riddenSet = new Set(myRides.map(r => r["車番"]));
+    // Also count the just-posted one as ridden
+    riddenSet.add(postedNumber);
+
+    // Check if first time riding this number
+    const prevRides = myRides.filter(r => r["車番"] === postedNumber);
+    const isFirst = prevRides.length === 0;
+
+    // Get color index based on model order in full number data
+    const allModels = [...new Set(numberData.map(r => r["車両形式"]))];
+    const colorIdx = allModels.indexOf(modelValue) % STAMP_COLORS.length;
+    const color = STAMP_COLORS[colorIdx];
+
+    // Render
+    document.getElementById("spModelName").textContent = modelValue;
+    document.getElementById("spMsg").textContent = isFirst
+      ? `🎉 ${postedNumber} は初乗車！`
+      : `🚆 ${postedNumber}編成の乗車回数：${prevRides.length} 回`;
+    document.getElementById("spMsg").className = "stamp-popup-msg " + (isFirst ? "first" : "again");
+
+    const grid = document.getElementById("spGrid");
+    grid.innerHTML = "";
+
+    formations.forEach(num => {
+      const isRidden = riddenSet.has(num);
+      const isNew = num === postedNumber;
+      const cell = document.createElement("div");
+      cell.className = "stamp-popup-cell" + (isNew ? " highlight" : "");
+      cell.innerHTML = `
+        <div class="sp-circle">${stampSVGSmall(color, isRidden)}</div>
+        <div class="sp-label">${num}</div>
+      `;
+      grid.appendChild(cell);
+    });
+
+    document.getElementById("stampPopupOverlay").classList.add("show");
+  }
 
   function setCurrentDateTime() {
     const now = new Date();
