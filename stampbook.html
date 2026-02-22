@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>スタンプ帳 | tuts4</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;700&family=Zen+Old+Mincho:wght@400;700&display=swap');
+
+  :root {
+    --navy: #004C97;
+    --red: #E60012;
+    --cream: #FAF6EF;
+    --ink: #1a1a2e;
+    --gold: #C9A84C;
+    --stamp-red: #C0392B;
+    --stamp-shadow: #922b21;
+    --paper: #F5EFE0;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: "Noto Serif JP", serif;
+    background-color: var(--cream);
+    color: var(--ink);
+    min-height: 100vh;
+    background-image:
+      radial-gradient(circle at 10% 20%, rgba(0,76,151,0.04) 0%, transparent 50%),
+      radial-gradient(circle at 90% 80%, rgba(230,0,18,0.04) 0%, transparent 50%);
+  }
+
+  /* Subtle paper texture overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 0;
+  }
+
+
+
+
+
+
+
+
+
+
+  .page-title-area {
+    text-align: center;
+    padding: 40px 20px 20px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .page-title-area h1 {
+    font-family: "Zen Old Mincho", serif;
+    font-size: clamp(28px, 5vw, 42px);
+    color: var(--navy);
+    letter-spacing: 0.15em;
+    text-shadow: 1px 1px 0 rgba(0,76,151,0.1);
+    position: relative;
+    display: inline-block;
+  }
+
+  .page-title-area h1::before,
+  .page-title-area h1::after {
+    content: '◆';
+    font-size: 0.4em;
+    color: var(--gold);
+    vertical-align: middle;
+    margin: 0 12px;
+    opacity: 0.8;
+  }
+
+  .subtitle {
+    margin-top: 8px;
+    color: #888;
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    font-family: sans-serif;
+  }
+
+  /* Stats bar */
+  .stats-bar {
+    display: flex;
+    justify-content: center;
+    gap: 30px;
+    padding: 16px 20px;
+    background: white;
+    border-top: 1px solid #e8dcc8;
+    border-bottom: 1px solid #e8dcc8;
+    margin-bottom: 30px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    position: relative;
+    z-index: 1;
+  }
+
+  .stat-item {
+    text-align: center;
+  }
+
+  .stat-num {
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--navy);
+    font-family: "Zen Old Mincho", serif;
+    line-height: 1;
+  }
+
+  .stat-num span {
+    font-size: 13px;
+    color: var(--red);
+  }
+
+  .stat-label {
+    font-size: 11px;
+    color: #999;
+    margin-top: 4px;
+    font-family: sans-serif;
+    letter-spacing: 0.05em;
+  }
+
+  /* Controls */
+  .controls {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    padding: 0 20px 24px;
+    flex-wrap: wrap;
+    position: relative;
+    z-index: 1;
+  }
+
+  .filter-btn {
+    padding: 7px 18px;
+    border: 1.5px solid var(--navy);
+    background: transparent;
+    color: var(--navy);
+    border-radius: 20px;
+    cursor: pointer;
+    font-family: "Noto Serif JP", serif;
+    font-size: 13px;
+    transition: 0.2s;
+    letter-spacing: 0.05em;
+  }
+
+  .filter-btn.active, .filter-btn:hover {
+    background: var(--navy);
+    color: white;
+  }
+
+  .search-box {
+    padding: 7px 16px;
+    border: 1.5px solid #ccc;
+    border-radius: 20px;
+    font-family: "Noto Serif JP", serif;
+    font-size: 13px;
+    outline: none;
+    width: 200px;
+    transition: 0.2s;
+  }
+  .search-box:focus { border-color: var(--navy); }
+
+  /* Main content */
+  #content {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 20px 60px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Model group */
+  .model-section {
+    margin-bottom: 12px;
+    background: white;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+    border: 1px solid #e8dcc8;
+    transition: box-shadow 0.2s, margin-bottom 0.2s;
+  }
+
+  .model-section.open {
+    box-shadow: 0 6px 24px rgba(0,76,151,0.15);
+    margin-bottom: 20px;
+  }
+
+  .model-header {
+    background: linear-gradient(135deg, var(--navy) 0%, #00336b 100%);
+    color: white;
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.2s;
+  }
+
+  .model-header:hover {
+    background: linear-gradient(135deg, #005db8 0%, #004080 100%);
+  }
+
+  .model-header-left {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .accordion-icon {
+    font-size: 18px;
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    display: inline-block;
+    color: rgba(255,255,255,0.8);
+    margin-left: 16px;
+  }
+
+  .model-section.open .accordion-icon {
+    transform: rotate(180deg);
+  }
+
+  /* Formation grid accordion */
+  .formation-grid-wrap {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 0.35s ease;
+  }
+
+  .model-section.open .formation-grid-wrap {
+    grid-template-rows: 1fr;
+  }
+
+  .formation-grid-inner {
+    overflow: hidden;
+  }
+
+  .model-name {
+    font-family: "Zen Old Mincho", serif;
+    font-size: 20px;
+    letter-spacing: 0.1em;
+  }
+
+  .model-progress {
+    font-family: sans-serif;
+    font-size: 13px;
+    color: rgba(255,255,255,0.8);
+  }
+
+  .model-progress strong {
+    color: #FFD700;
+    font-size: 16px;
+  }
+
+  .progress-bar-wrap {
+    height: 4px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 2px;
+    margin-top: 6px;
+    width: 120px;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    background: var(--gold);
+    border-radius: 2px;
+    transition: width 0.8s ease;
+  }
+
+  /* Formation grid */
+  .formation-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 16px;
+    padding: 24px;
+  }
+
+  /* Each formation cell */
+  .formation-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    cursor: default;
+    transition: transform 0.15s;
+  }
+
+  .formation-cell:hover { transform: translateY(-2px); }
+
+  .stamp-circle {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    transition: all 0.3s;
+  }
+
+  /* Unridden: dashed outline circle */
+  .stamp-circle.empty {
+    border: 2.5px dashed #c8bfaf;
+    background: transparent;
+  }
+
+  /* Ridden: stamp look */
+  .stamp-circle.stamped {
+    background: transparent;
+  }
+
+  /* SVG stamp */
+  .stamp-svg {
+    width: 80px;
+    height: 80px;
+  }
+
+  .formation-number {
+    font-family: "Zen Old Mincho", serif;
+    font-size: 13px;
+    color: var(--ink);
+    text-align: center;
+    letter-spacing: 0.05em;
+    line-height: 1.3;
+  }
+
+  .formation-date {
+    font-family: sans-serif;
+    font-size: 10px;
+    color: #aaa;
+    text-align: center;
+    letter-spacing: 0.03em;
+  }
+
+  /* Loading / error */
+  #loadingMsg {
+    text-align: center;
+    padding: 60px;
+    color: #999;
+    font-size: 16px;
+    font-family: sans-serif;
+  }
+
+  .loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid #e8dcc8;
+    border-top-color: var(--navy);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 16px;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Stamp animation on reveal */
+  @keyframes stampIn {
+    0% { transform: scale(1.5) rotate(-15deg); opacity: 0; }
+    60% { transform: scale(0.9) rotate(3deg); opacity: 1; }
+    100% { transform: scale(1) rotate(0deg); opacity: 1; }
+  }
+
+  .stamp-svg.animate { animation: stampIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+
+  .hidden { display: none !important; }
+
+  /* Legend */
+  .legend {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    padding: 0 0 20px;
+    font-family: sans-serif;
+    font-size: 12px;
+    color: #888;
+  }
+
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot {
+    width: 16px; height: 16px; border-radius: 50%;
+  }
+  .legend-dot.stamped-dot { background: var(--stamp-red); opacity: 0.85; }
+  .legend-dot.empty-dot { border: 2px dashed #c8bfaf; }
+
+
+  /* NAV MENU */
+  .nav-header {
+    background-color: #004C97;
+    color: white;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 16px;
+    height: 54px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+    position: sticky;
+    top: 0;
+    z-index: 9999;
+  }
+  .nav-title {
+    font-weight: bold;
+    font-size: 15px;
+    letter-spacing: 0.05em;
+    color: white;
+  }
+  .nav-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  #navUsernameDisplay {
+    font-weight: bold;
+    font-size: 13px;
+    color: #FFD700;
+  }
+  .nav-menu-btn {
+    background: white;
+    border: none;
+    color: #004C97;
+    font-size: 20px;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, color 0.2s;
+    line-height: 1;
+  }
+  .nav-menu-btn:hover { background: #E60012; color: white; }
+  .nav-dropdown {
+    position: fixed;
+    top: 54px;
+    right: 16px;
+    background: white;
+    border-radius: 14px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+    min-width: 220px;
+    padding: 10px 0;
+    z-index: 9998;
+    transform: translateY(-8px) scale(0.97);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+  }
+  .nav-dropdown.open {
+    opacity: 1;
+    pointer-events: all;
+    transform: translateY(0) scale(1);
+  }
+  .nav-dropdown a, .nav-dropdown button.nav-logout {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 20px;
+    font-size: 14px;
+    color: #222;
+    text-decoration: none;
+    background: none;
+    border: none;
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s;
+  }
+  .nav-dropdown a:hover, .nav-dropdown button.nav-logout:hover {
+    background: #F0F4FA;
+  }
+  .nav-dropdown a.active-page {
+    color: #004C97;
+    font-weight: bold;
+    background: #EEF4FF;
+  }
+  .nav-dropdown .nav-divider {
+    height: 1px;
+    background: #eee;
+    margin: 6px 0;
+  }
+  .nav-dropdown .nav-user-row {
+    padding: 10px 20px 8px;
+    font-size: 12px;
+    color: #999;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .nav-dropdown .nav-user-name {
+    font-weight: bold;
+    color: #004C97;
+    font-size: 14px;
+  }
+  .nav-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 9997;
+  }
+  .nav-backdrop.open { display: block; }
+
+</style>
+</head>
+<body>
+
+<header class="nav-header">
+  <div class="nav-title">スタンプ帳</div>
+  <div class="nav-right">
+    <span id="navUsernameDisplay"></span>
+    <button class="nav-menu-btn" onclick="toggleNavMenu()" aria-label="メニュー">☰</button>
+  </div>
+</header>
+
+<div class="nav-backdrop" id="navBackdrop" onclick="closeNavMenu()"></div>
+<div class="nav-dropdown" id="navDropdown">
+  <div class="nav-user-row">
+    👤 <span class="nav-user-name" id="navMenuUsername"></span> さん
+  </div>
+  <div class="nav-divider"></div>
+  <a href="index.html" >📝 新規投稿</a>
+  <a href="show.html" >📜 投稿履歴</a>
+  <a href="statistick.html" >📊 統計情報</a>
+  <a href="stampbook.html" class="active-page">🎫 スタンプ帳</a>
+  <div class="nav-divider"></div>
+  <button class="nav-logout" onclick="logout()">🚪 ログアウト</button>
+</div>
+
+<script>
+function toggleNavMenu() {
+  document.getElementById("navDropdown").classList.toggle("open");
+  document.getElementById("navBackdrop").classList.toggle("open");
+}
+function closeNavMenu() {
+  document.getElementById("navDropdown").classList.remove("open");
+  document.getElementById("navBackdrop").classList.remove("open");
+}
+(function() {
+  const u = localStorage.getItem("username") || "";
+  if (u) {
+    const d1 = document.getElementById("navUsernameDisplay");
+    const d2 = document.getElementById("navMenuUsername");
+    if (d1) d1.textContent = u;
+    if (d2) d2.textContent = u;
+  }
+})();
+</script>
+
+<div class="page-title-area">
+  <h1>乗車スタンプ帳</h1>
+  <div class="subtitle">乗車した編成にスタンプが押されます</div>
+</div>
+
+<div class="stats-bar">
+  <div class="stat-item">
+    <div class="stat-num" id="totalCount">-</div>
+    <div class="stat-label">総編成数</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-num" id="riddenCount" style="color:var(--red);">-</div>
+    <div class="stat-label">乗車済み</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-num" id="percentCount">-<span>%</span></div>
+    <div class="stat-label">達成率</div>
+  </div>
+</div>
+
+<div class="controls">
+  <button class="filter-btn active" onclick="setFilter('all', this)">すべて</button>
+  <button class="filter-btn" onclick="setFilter('ridden', this)">乗車済み</button>
+  <button class="filter-btn" onclick="setFilter('unridden', this)">未乗車</button>
+  <input class="search-box" type="text" id="searchBox" placeholder="🔍 形式・編成で検索…" oninput="applySearch()">
+</div>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot stamped-dot"></div>乗車済み</div>
+  <div class="legend-item"><div class="legend-dot empty-dot"></div>未乗車</div>
+</div>
+
+<div id="loadingMsg">
+  <div class="loading-spinner"></div>
+  データを読み込み中...
+</div>
+
+<div id="content"></div>
+
+<script>
+// ===== logs.js (inlined) =====
+const GAS_LOG_URL = "https://script.google.com/macros/s/AKfycbzly7vRlMrEqI0D156pHJMaAlcYmiQM98n0N9rKpfDt_UKFQsA5kcGyHjpQx5uwJyD3/exec";
+const VALID_KEYS = ["00002025"];
+
+function checkLogin() {
+  const username = localStorage.getItem("username");
+  const accessKey = localStorage.getItem("accessKey");
+  if (!username || !VALID_KEYS.includes(accessKey)) {
+    alert("ログインが必要です。");
+    window.location.href = "login.html";
+    return null;
+  }
+  return username;
+}
+
+function logAction(action, details = "") {
+  const username = localStorage.getItem("username") || "未ログイン";
+  fetch(GAS_LOG_URL, {
+    method: "POST",
+    mode: "no-cors",
+    body: JSON.stringify({ action, username, details, timestamp: new Date().toISOString(), userAgent: navigator.userAgent })
+  }).catch(err => console.error("ログ送信エラー:", err));
+}
+
+function logout() {
+  logAction("logout", `${localStorage.getItem("username")} がログアウトしました`);
+  localStorage.removeItem("username");
+  localStorage.removeItem("accessKey");
+  alert("ログアウトしました。");
+  window.location.href = "login.html";
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const page = location.pathname.split("/").pop() || "stampbook.html";
+  logAction("view", `ページ閲覧: ${page}`);
+});
+</script>
+
+<script>
+// ===== CONFIG =====
+const NUMBER_URL  = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/number";
+const RIDES_URL   = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
+
+let currentFilter = 'all';
+let allSections = [];
+
+// ===== INIT =====
+const username = checkLogin();
+
+Promise.all([
+  fetch(NUMBER_URL).then(r => r.json()),
+  fetch(RIDES_URL).then(r => r.json())
+]).then(([numberData, rideData]) => {
+
+  // Filter out rows with *** in vehicle number
+  const cleanNumbers = numberData.filter(row => {
+    const num = String(row["車番"] || "");
+    return !num.includes("*");
+  });
+
+  // Filter rides for this user
+  const myRides = rideData.filter(r => r["ユーザー名"] === username);
+
+  // Build a set of ridden formations: "model|number" -> earliest date
+  const riddenMap = {};
+  myRides.forEach(r => {
+    const key = `${r["車両形式"]}|${r["車番"]}`;
+    if (!riddenMap[key]) {
+      riddenMap[key] = r["時刻"] ? String(r["時刻"]).slice(0, 10) : "乗車済";
+    }
+  });
+
+  // Group by 車両形式
+  const grouped = {};
+  cleanNumbers.forEach(row => {
+    const model = row["車両形式"] || "不明";
+    const num = row["車番"] || "";
+    if (!grouped[model]) grouped[model] = [];
+    grouped[model].push(num);
+  });
+
+  // Stats
+  const totalFormations = cleanNumbers.length;
+  const riddenCount = cleanNumbers.filter(r => riddenMap[`${r["車両形式"]}|${r["車番"]}`]).length;
+  document.getElementById("totalCount").textContent = totalFormations;
+  document.getElementById("riddenCount").textContent = riddenCount;
+  const pct = totalFormations > 0 ? Math.round(riddenCount / totalFormations * 100) : 0;
+  document.getElementById("percentCount").innerHTML = `${pct}<span>%</span>`;
+
+  document.getElementById("loadingMsg").style.display = "none";
+
+  // Render
+  const content = document.getElementById("content");
+  allSections = [];
+
+  Object.entries(grouped).forEach(([model, numbers], gi) => {
+    const riddenInModel = numbers.filter(n => riddenMap[`${model}|${n}`]).length;
+    const section = document.createElement("div");
+    section.className = "model-section";
+    section.dataset.model = model;
+
+    const pctModel = numbers.length > 0 ? Math.round(riddenInModel / numbers.length * 100) : 0;
+
+    section.innerHTML = `
+      <div class="model-header" onclick="toggleSection(this)">
+        <div class="model-header-left">
+          <div class="model-name">${model}</div>
+          <div class="progress-bar-wrap">
+            <div class="progress-bar-fill" style="width:${pctModel}%"></div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:16px;">
+          <div class="model-progress">${riddenInModel} / ${numbers.length} 編成　<strong>${pctModel}%</strong></div>
+          <span class="accordion-icon">▼</span>
+        </div>
+      </div>
+      <div class="formation-grid-wrap">
+        <div class="formation-grid-inner">
+          <div class="formation-grid"></div>
+        </div>
+      </div>
+    `;
+
+    const grid = section.querySelector(".formation-grid");
+
+    numbers.forEach((num, i) => {
+      const key = `${model}|${num}`;
+      const isRidden = !!riddenMap[key];
+      const rideDate = riddenMap[key] || null;
+
+      const cell = document.createElement("div");
+      cell.className = "formation-cell";
+      cell.dataset.ridden = isRidden ? "1" : "0";
+      cell.dataset.model = model;
+      cell.dataset.number = num;
+
+      if (isRidden) {
+        cell.innerHTML = `
+          <div class="stamp-circle stamped">
+            ${stampSVG(gi)}
+          </div>
+          <div class="formation-number">${num}</div>
+          <div class="formation-date">${rideDate}</div>
+        `;
+        // Animate with delay
+        setTimeout(() => {
+          const svg = cell.querySelector(".stamp-svg");
+          if (svg) svg.classList.add("animate");
+        }, i * 30 + gi * 80);
+      } else {
+        cell.innerHTML = `
+          <div class="stamp-circle empty">
+            <svg width="44" height="44" viewBox="0 0 44 44">
+              <circle cx="22" cy="22" r="18" fill="none" stroke="#d0c8be" stroke-width="1.5" stroke-dasharray="4 3"/>
+            </svg>
+          </div>
+          <div class="formation-number" style="color:#bbb;">${num}</div>
+          <div class="formation-date"></div>
+        `;
+      }
+
+      grid.appendChild(cell);
+    });
+
+    content.appendChild(section);
+    allSections.push(section);
+
+    // Auto-open if any ridden
+    if (riddenInModel > 0) section.classList.add("open");
+
+  });  // end forEach
+
+  applyFilter();
+
+}).catch(err => {
+  document.getElementById("loadingMsg").textContent = "データ取得エラーが発生しました。";
+  console.error(err);
+});
+
+// ===== Stamp SVG generator =====
+const STAMP_COLORS = [
+  { outer: "#C0392B", inner: "#E74C3C", text: "#fff" },
+  { outer: "#1a5276", inner: "#2980B9", text: "#fff" },
+  { outer: "#1e8449", inner: "#27AE60", text: "#fff" },
+  { outer: "#7d3c98", inner: "#8E44AD", text: "#fff" },
+  { outer: "#b7950b", inner: "#D4AC0D", text: "#fff" },
+  { outer: "#784212", inner: "#A04000", text: "#fff" },
+];
+
+function stampSVG(colorIdx) {
+  const c = STAMP_COLORS[colorIdx % STAMP_COLORS.length];
+  return `
+  <svg class="stamp-svg" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <filter id="roughen${colorIdx}" x="-5%" y="-5%" width="110%" height="110%">
+        <feTurbulence type="turbulence" baseFrequency="0.05" numOctaves="2" seed="${colorIdx+3}" result="noise"/>
+        <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.5" xChannelSelector="R" yChannelSelector="G"/>
+      </filter>
+    </defs>
+    <!-- Outer ring -->
+    <circle cx="40" cy="40" r="36" fill="none" stroke="${c.outer}" stroke-width="4" filter="url(#roughen${colorIdx})" opacity="0.9"/>
+    <!-- Inner ring -->
+    <circle cx="40" cy="40" r="29" fill="none" stroke="${c.outer}" stroke-width="1.5" filter="url(#roughen${colorIdx})" opacity="0.7"/>
+    <!-- Fill -->
+    <circle cx="40" cy="40" r="27" fill="${c.inner}" filter="url(#roughen${colorIdx})" opacity="0.15"/>
+    <!-- 乗 character -->
+    <text x="40" y="47" text-anchor="middle" font-family="'Noto Serif JP',serif" font-size="22" fill="${c.outer}" font-weight="700" filter="url(#roughen${colorIdx})" opacity="0.9">乗</text>
+    <!-- Bottom arc text -->
+    <path id="arc${colorIdx}" d="M 14 55 A 30 30 0 0 0 66 55" fill="none"/>
+    <text font-family="sans-serif" font-size="8" fill="${c.outer}" opacity="0.8">
+      <textPath href="#arc${colorIdx}" startOffset="15%">RIDE  STAMP</textPath>
+    </text>
+  </svg>`;
+}
+
+// ===== Accordion =====
+function toggleSection(header) {
+  const section = header.closest(".model-section");
+  section.classList.toggle("open");
+}
+
+// ===== Filter =====
+function setFilter(type, btn) {
+  currentFilter = type;
+  document.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  applyFilter();
+}
+
+function applyFilter() {
+  const query = document.getElementById("searchBox").value.trim().toLowerCase();
+  allSections.forEach(section => {
+    const model = section.dataset.model.toLowerCase();
+    const grid = section.querySelector(".formation-grid");
+    let visibleCount = 0;
+
+    grid.querySelectorAll(".formation-cell").forEach(cell => {
+      const isRidden = cell.dataset.ridden === "1";
+      const numText = cell.dataset.number.toLowerCase();
+      const modelText = cell.dataset.model.toLowerCase();
+
+      const passFilter =
+        currentFilter === "all" ||
+        (currentFilter === "ridden" && isRidden) ||
+        (currentFilter === "unridden" && !isRidden);
+
+      const passSearch =
+        !query || modelText.includes(query) || numText.includes(query);
+
+      if (passFilter && passSearch) {
+        cell.classList.remove("hidden");
+        visibleCount++;
+      } else {
+        cell.classList.add("hidden");
+      }
+    });
+
+    section.classList.toggle("hidden", visibleCount === 0);
+  });
+}
+
+function applySearch() { applyFilter(); }
+</script>
+</body>
+</html>
