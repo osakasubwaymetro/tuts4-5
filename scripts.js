@@ -361,6 +361,7 @@ function upload() {
   })
   .then(() => {
     hideLoadingPopup();
+    logAction("post", `投稿: ${routeValue} / ${modelValue} ${numberValue} / ${stationValue} → ${boundValue}`);
     showStampPopup(modelValue, numberValue);
   })
   .catch(err => {

@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>アクセスログ | tuts4</title>
+<style>
+  body {
+    font-family: "Hiragino Sans", "Segoe UI", sans-serif;
+    background: #F7F8FA;
+    margin: 0;
+    color: #222;
+  }
+
+  main {
+    max-width: 1100px;
+    margin: 24px auto;
+    padding: 0 16px 60px;
+  }
+
+  /* サマリーカード */
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .summary-card {
+    background: white;
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+    text-align: center;
+  }
+
+  .summary-num {
+    font-size: 28px;
+    font-weight: bold;
+    color: #004C97;
+    line-height: 1;
+  }
+
+  .summary-label {
+    font-size: 12px;
+    color: #888;
+    margin-top: 6px;
+  }
+
+  /* フィルターバー */
+  .filter-bar {
+    background: white;
+    border-radius: 12px;
+    padding: 14px 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+    margin-bottom: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .filter-bar label {
+    font-size: 12px;
+    font-weight: bold;
+    color: #555;
+  }
+
+  .filter-bar select,
+  .filter-bar input {
+    padding: 7px 10px;
+    border: 1.5px solid #ddd;
+    border-radius: 7px;
+    font-size: 13px;
+    font-family: inherit;
+    background: #fafafa;
+    transition: border-color 0.2s;
+  }
+
+  .filter-bar select:focus,
+  .filter-bar input:focus {
+    border-color: #004C97;
+    outline: none;
+  }
+
+  .filter-bar input[type="text"] { width: 180px; }
+
+  /* テーブル */
+  .table-wrap {
+    background: white;
+    border-radius: 14px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    overflow: hidden;
+  }
+
+  .table-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 18px;
+    border-bottom: 1px solid #f0f0f0;
+  }
+
+  .table-title {
+    font-weight: bold;
+    font-size: 15px;
+    color: #004C97;
+  }
+
+  .record-count {
+    font-size: 13px;
+    color: #888;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  thead th {
+    background: #F7F8FA;
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: bold;
+    color: #555;
+    border-bottom: 1px solid #eee;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  thead th:hover { background: #EEF4FF; color: #004C97; }
+  thead th.sorted { color: #004C97; }
+
+  tbody tr {
+    border-bottom: 1px solid #f5f5f5;
+    transition: background 0.1s;
+  }
+
+  tbody tr:hover { background: #FAFCFF; }
+  tbody tr:last-child { border-bottom: none; }
+
+  td {
+    padding: 10px 14px;
+    vertical-align: middle;
+  }
+
+  .td-time { white-space: nowrap; color: #888; font-size: 12px; }
+  .td-user { font-weight: bold; color: #004C97; }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: bold;
+  }
+
+  .badge-view    { background: #EEF4FF; color: #004C97; }
+  .badge-login   { background: #EDFFF4; color: #1e8449; }
+  .badge-logout  { background: #FFF0F0; color: #E60012; }
+  .badge-post    { background: #FFF8E0; color: #b7950b; }
+  .badge-other   { background: #F5F5F5; color: #888; }
+
+  .td-detail { color: #555; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .td-ua     { color: #bbb; font-size: 11px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ページネーション */
+  .pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    padding: 16px;
+    border-top: 1px solid #f0f0f0;
+  }
+
+  .page-btn {
+    border: 1.5px solid #ddd;
+    background: white;
+    color: #555;
+    padding: 6px 12px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+    transition: 0.15s;
+  }
+
+  .page-btn:hover:not(:disabled) { border-color: #004C97; color: #004C97; }
+  .page-btn.active { background: #004C97; color: white; border-color: #004C97; }
+  .page-btn:disabled { opacity: 0.35; cursor: default; }
+
+  .page-info { font-size: 13px; color: #888; }
+
+  /* ローディング */
+  #loadingMsg {
+    text-align: center;
+    padding: 48px;
+    color: #aaa;
+    font-size: 15px;
+  }
+
+  .spinner {
+    width: 36px; height: 36px;
+    border: 3px solid #eee;
+    border-top-color: #004C97;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    margin: 0 auto 12px;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<main>
+  <div id="loadingMsg">
+    <div class="spinner"></div>
+    ログデータを読み込み中...
+  </div>
+
+  <div id="mainContent" style="display:none">
+
+    <!-- サマリー -->
+    <div class="summary-grid">
+      <div class="summary-card">
+        <div class="summary-num" id="sumTotal">—</div>
+        <div class="summary-label">総ログ件数</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-num" id="sumUsers">—</div>
+        <div class="summary-label">ユニークユーザー</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-num" id="sumToday">—</div>
+        <div class="summary-label">今日のアクセス</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-num" id="sumLogins">—</div>
+        <div class="summary-label">ログイン回数</div>
+      </div>
+    </div>
+
+    <!-- フィルター -->
+    <div class="filter-bar">
+      <label>ユーザー</label>
+      <select id="filterUser"><option value="">すべて</option></select>
+      <label>アクション</label>
+      <select id="filterAction">
+        <option value="">すべて</option>
+        <option value="view">view</option>
+        <option value="login">login</option>
+        <option value="logout">logout</option>
+        <option value="post">post</option>
+      </select>
+      <label>キーワード</label>
+      <input type="text" id="filterKeyword" placeholder="内容で検索…" oninput="applyFilter()">
+      <label>日付</label>
+      <input type="date" id="filterDate" onchange="applyFilter()">
+    </div>
+
+    <!-- テーブル -->
+    <div class="table-wrap">
+      <div class="table-header-row">
+        <div class="table-title">📋 アクセスログ</div>
+        <div class="record-count" id="recordCount"></div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th onclick="sortBy('時刻')">時刻 ↕</th>
+            <th onclick="sortBy('ユーザー名')">ユーザー ↕</th>
+            <th>アクション</th>
+            <th>内容</th>
+            <th>UserAgent</th>
+          </tr>
+        </thead>
+        <tbody id="logTableBody"></tbody>
+      </table>
+      <div class="pagination" id="pagination"></div>
+    </div>
+
+  </div>
+</main>
+
+<script src="nav.js"></script>
+<script>initNav("アクセスログ");</script>
+<script>
+// ===== logs.js (inlined) =====
+const GAS_LOG_URL = "https://script.google.com/macros/s/AKfycbzly7vRlMrEqI0D156pHJMaAlcYmiQM98n0N9rKpfDt_UKFQsA5kcGyHjpQx5uwJyD3/exec";
+const VALID_KEYS = ["00002025"];
+
+function checkLogin() {
+  const username = localStorage.getItem("username");
+  const accessKey = localStorage.getItem("accessKey");
+  if (!username || !VALID_KEYS.includes(accessKey)) {
+    alert("ログインが必要です。");
+    window.location.href = "login.html";
+    return null;
+  }
+  return username;
+}
+
+function logAction(action, details = "") {
+  const u = localStorage.getItem("username") || "未ログイン";
+  fetch(GAS_LOG_URL, {
+    method: "POST", mode: "no-cors",
+    body: JSON.stringify({ action, username: u, details, timestamp: new Date().toISOString(), userAgent: navigator.userAgent })
+  }).catch(() => {});
+}
+
+function logout() {
+  logAction("logout", `${localStorage.getItem("username")} がログアウトしました`);
+  localStorage.removeItem("username");
+  localStorage.removeItem("accessKey");
+  alert("ログアウトしました。");
+  window.location.href = "login.html";
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  logAction("view", "ページ閲覧: log.html");
+});
+</script>
+<script>
+// ===== 管理者チェック =====
+const ADMIN_USER = "ぴなお";
+const currentUser = checkLogin();
+if (currentUser !== ADMIN_USER) {
+  alert("このページは管理者専用です。");
+  window.location.href = "index.html";
+}
+
+// ===== データ取得 =====
+const SHEET_ID = "1QqGx4FFH5cI_Z-p6mqn3yuro3HBID-3iIKkHQrAUxBI";
+const SHEET_NAMES = ["シート1", "Sheet1", "ログ", "log", "Logs", "sheet1"];
+
+async function fetchLogs() {
+  for (const name of SHEET_NAMES) {
+    try {
+      const res = await fetch(`https://opensheet.elk.sh/${SHEET_ID}/${encodeURIComponent(name)}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) return data;
+    } catch(e) { continue; }
+  }
+  throw new Error("シートが見つかりませんでした");
+}
+
+let allLogs = [];
+let filteredLogs = [];
+let currentPage = 1;
+const PAGE_SIZE = 50;
+let sortKey = "時刻";
+let sortAsc = false;
+
+fetchLogs()
+  .then(data => {
+    // 列名の前後にある「| 」や空白を除去して正規化
+    allLogs = data.map(row => {
+      const normalized = {};
+      Object.entries(row).forEach(([k, v]) => {
+        const cleanKey = k.replace(/^\|?\s*/, "").replace(/\s*\|?$/, "").trim();
+        normalized[cleanKey] = v;
+      });
+      return normalized;
+    }).reverse();
+
+    // サマリー計算
+    const today = new Date().toISOString().slice(0, 10);
+    const todayLogs   = allLogs.filter(r => String(r["時刻"] || "").startsWith(today));
+    const uniqueUsers = new Set(allLogs.map(r => r["ユーザー名"])).size;
+    const logins = allLogs.filter(r =>
+      r["アクショイン"] === "login" || r["アクション"] === "login"
+    ).length;
+
+    document.getElementById("sumTotal").textContent  = allLogs.length.toLocaleString();
+    document.getElementById("sumUsers").textContent  = uniqueUsers;
+    document.getElementById("sumToday").textContent  = todayLogs.length;
+    document.getElementById("sumLogins").textContent = logins;
+
+    // ユーザーフィルター選択肢
+    const users = [...new Set(allLogs.map(r => r["ユーザー名"]).filter(Boolean))].sort();
+    const sel = document.getElementById("filterUser");
+    users.forEach(u => {
+      const o = document.createElement("option");
+      o.value = o.textContent = u;
+      sel.appendChild(o);
+    });
+    sel.addEventListener("change", applyFilter);
+    document.getElementById("filterAction").addEventListener("change", applyFilter);
+
+    document.getElementById("loadingMsg").style.display = "none";
+    document.getElementById("mainContent").style.display = "block";
+
+    applyFilter();
+  })
+  .catch(err => {
+    document.getElementById("loadingMsg").innerHTML = `⚠️ データの取得に失敗しました<br><small style="color:#aaa">${err.message}</small>`;
+    console.error(err);
+  });
+
+// ===== フィルター =====
+function applyFilter() {
+  const user    = document.getElementById("filterUser").value;
+  const action  = document.getElementById("filterAction").value;
+  const keyword = document.getElementById("filterKeyword").value.trim().toLowerCase();
+  const date    = document.getElementById("filterDate").value;
+
+  filteredLogs = allLogs.filter(r => {
+    if (user    && r["ユーザー名"]    !== user)                          return false;
+    if (action  && (r["アクショイン"] !== action && r["アクション"] !== action)) return false;
+    if (keyword && !String(r["内容"] || "").toLowerCase().includes(keyword)) return false;
+    if (date    && !String(r["時刻"] || "").startsWith(date))            return false;
+    return true;
+  });
+
+  currentPage = 1;
+  render();
+}
+
+// ===== ソート =====
+function sortBy(key) {
+  if (sortKey === key) sortAsc = !sortAsc;
+  else { sortKey = key; sortAsc = false; }
+  filteredLogs.sort((a, b) => {
+    const av = String(a[key] || "");
+    const bv = String(b[key] || "");
+    return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+  });
+  render();
+}
+
+// ===== アクションバッジ =====
+function actionBadge(action) {
+  const map = {
+    view:   ["badge-view",   "👁 view"],
+    login:  ["badge-login",  "🔑 login"],
+    logout: ["badge-logout", "🚪 logout"],
+    post:   ["badge-post",   "🚆 post"],
+  };
+  const [cls, label] = map[action] || ["badge-other", action || "—"];
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+
+// ===== 描画 =====
+function render() {
+  const total = filteredLogs.length;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  currentPage = Math.min(currentPage, totalPages);
+
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const slice = filteredLogs.slice(start, start + PAGE_SIZE);
+
+  document.getElementById("recordCount").textContent = `${total.toLocaleString()} 件`;
+
+  const tbody = document.getElementById("logTableBody");
+  tbody.innerHTML = "";
+
+  if (slice.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#bbb;padding:30px">該当するログがありません</td></tr>`;
+  } else {
+    slice.forEach(r => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="td-time">${r["時刻"] || "—"}</td>
+        <td class="td-user">${r["ユーザー名"] || "—"}</td>
+        <td>${actionBadge(r["アクショイン"] || r["アクション"])}</td>
+        <td class="td-detail" title="${r["内容"] || ""}">${r["内容"] || "—"}</td>
+        <td class="td-ua"    title="${r["UserAgent"] || ""}">${r["UserAgent"] || "—"}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  renderPagination(totalPages);
+}
+
+// ===== ページネーション =====
+function renderPagination(totalPages) {
+  const pg = document.getElementById("pagination");
+  pg.innerHTML = "";
+
+  if (totalPages <= 1) return;
+
+  const prev = document.createElement("button");
+  prev.className = "page-btn";
+  prev.textContent = "← 前";
+  prev.disabled = currentPage === 1;
+  prev.onclick = () => { currentPage--; render(); };
+  pg.appendChild(prev);
+
+  // 前後2ページ分のボタンを表示
+  const range = [];
+  for (let i = Math.max(1, currentPage - 2); i <= Math.min(totalPages, currentPage + 2); i++) {
+    range.push(i);
+  }
+
+  if (range[0] > 1) {
+    const btn = makePageBtn(1, totalPages);
+    pg.appendChild(btn);
+    if (range[0] > 2) pg.insertAdjacentHTML("beforeend", `<span class="page-info">…</span>`);
+  }
+
+  range.forEach(i => pg.appendChild(makePageBtn(i, totalPages)));
+
+  if (range[range.length - 1] < totalPages) {
+    if (range[range.length - 1] < totalPages - 1) pg.insertAdjacentHTML("beforeend", `<span class="page-info">…</span>`);
+    pg.appendChild(makePageBtn(totalPages, totalPages));
+  }
+
+  const next = document.createElement("button");
+  next.className = "page-btn";
+  next.textContent = "次 →";
+  next.disabled = currentPage === totalPages;
+  next.onclick = () => { currentPage++; render(); };
+  pg.appendChild(next);
+
+  const info = document.createElement("span");
+  info.className = "page-info";
+  info.textContent = `${currentPage} / ${totalPages} ページ`;
+  pg.appendChild(info);
+}
+
+function makePageBtn(i) {
+  const btn = document.createElement("button");
+  btn.className = "page-btn" + (i === currentPage ? " active" : "");
+  btn.textContent = i;
+  btn.onclick = () => { currentPage = i; render(); };
+  return btn;
+}
+</script>
+</body>
+</html>

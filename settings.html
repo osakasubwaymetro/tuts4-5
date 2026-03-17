@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>設定 | tuts4</title>
+<style>
+  body {
+    font-family: "Hiragino Sans", "Segoe UI", sans-serif;
+    background-color: #F7F8FA;
+    margin: 0;
+    color: #222;
+  }
+
+  main {
+    max-width: 620px;
+    margin: 30px auto;
+    padding: 0 16px 60px;
+  }
+
+  h2 {
+    color: #004C97;
+    font-size: 20px;
+    margin: 28px 0 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .section-desc {
+    font-size: 13px;
+    color: #888;
+    margin-bottom: 16px;
+  }
+
+  /* ショートカット入力フォームカード */
+  .shortcut-form {
+    background: white;
+    border-radius: 14px;
+    padding: 20px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    margin-bottom: 24px;
+  }
+
+  .form-row {
+    margin-bottom: 14px;
+  }
+
+  .form-row label {
+    display: block;
+    font-size: 12px;
+    font-weight: bold;
+    color: #555;
+    margin-bottom: 4px;
+    letter-spacing: 0.04em;
+  }
+
+  .form-row input,
+  .form-row select {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1.5px solid #ddd;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+    background: #fafafa;
+    transition: border-color 0.2s;
+    box-sizing: border-box;
+  }
+
+  .form-row input:focus,
+  .form-row select:focus {
+    border-color: #004C97;
+    outline: none;
+    background: white;
+  }
+
+  .form-row input.highlight {
+    border-color: #004C97;
+    background: #EEF4FF;
+  }
+
+  .btn-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 18px;
+  }
+
+  .btn-primary {
+    flex: 1;
+    background: #004C97;
+    color: white;
+    border: none;
+    padding: 11px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.2s;
+  }
+  .btn-primary:hover { background: #E60012; }
+
+  .btn-secondary {
+    background: #f0f0f0;
+    color: #555;
+    border: none;
+    padding: 11px 18px;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.2s;
+  }
+  .btn-secondary:hover { background: #ddd; }
+
+  /* ショートカット一覧 */
+  .shortcut-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .shortcut-card {
+    background: white;
+    border-radius: 12px;
+    padding: 14px 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-left: 4px solid #004C97;
+    transition: box-shadow 0.2s;
+  }
+  .shortcut-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.12); }
+
+  .shortcut-card-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .shortcut-name {
+    font-weight: bold;
+    font-size: 15px;
+    color: #004C97;
+    margin-bottom: 4px;
+  }
+
+  .shortcut-detail {
+    font-size: 12px;
+    color: #888;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .shortcut-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .btn-edit, .btn-delete {
+    border: none;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.2s;
+  }
+  .btn-edit   { background: #EEF4FF; color: #004C97; }
+  .btn-edit:hover { background: #004C97; color: white; }
+  .btn-delete { background: #FFF0F0; color: #E60012; }
+  .btn-delete:hover { background: #E60012; color: white; }
+
+  .empty-msg {
+    text-align: center;
+    color: #bbb;
+    font-size: 14px;
+    padding: 30px 0;
+  }
+
+  .save-toast {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: #004C97;
+    color: white;
+    padding: 12px 28px;
+    border-radius: 30px;
+    font-size: 14px;
+    opacity: 0;
+    transition: opacity 0.3s, transform 0.3s;
+    pointer-events: none;
+    z-index: 10000;
+  }
+  .save-toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+</style>
+</head>
+<body>
+
+<main>
+  <h2>⚡ 入力ショートカット</h2>
+  <p class="section-desc">よく使う入力内容をショートカットとして登録すると、投稿フォームでワンタップで入力できます。</p>
+
+  <!-- 新規追加フォーム -->
+  <div class="shortcut-form">
+    <div class="form-row">
+      <label>ショートカット名 <span style="color:#E60012">*</span></label>
+      <input type="text" id="sc_name" placeholder="例：阪急京都線 特急">
+    </div>
+    <div class="form-row">
+      <label>エリア</label>
+      <select id="sc_area">
+        <option value="">選択してください</option>
+        <option>北海道</option><option>東北</option><option>関東</option>
+        <option>北陸</option><option>東海</option><option>関西</option>
+        <option>中国</option><option>四国</option><option>九州</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>区分</label>
+      <select id="sc_type">
+        <option value="">選択してください</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>会社</label>
+      <select id="sc_company">
+        <option value="">選択してください</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>路線</label>
+      <select id="sc_route">
+        <option value="">選択してください</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>乗車駅</label>
+      <select id="sc_station">
+        <option value="">選択してください</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>種別</label>
+      <select id="sc_sujitype">
+        <option value="">選択してください</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>行先</label>
+      <select id="sc_bound">
+        <option value="">選択してください</option>
+      </select>
+    </div>
+    <div class="btn-row">
+      <button class="btn-primary" onclick="saveShortcut()">💾 保存する</button>
+      <button class="btn-secondary" onclick="clearForm()">クリア</button>
+    </div>
+  </div>
+
+  <!-- 登録済みショートカット一覧 -->
+  <h2>📋 登録済みショートカット</h2>
+  <div class="shortcut-list" id="shortcutList"></div>
+</main>
+
+<div class="save-toast" id="saveToast"></div>
+
+<script src="nav.js"></script>
+<script>initNav("設定");</script>
+<script>
+// ===== logs.js (inlined) =====
+const GAS_LOG_URL = "https://script.google.com/macros/s/AKfycbzly7vRlMrEqI0D156pHJMaAlcYmiQM98n0N9rKpfDt_UKFQsA5kcGyHjpQx5uwJyD3/exec";
+const VALID_KEYS = ["00002025"];
+
+function checkLogin() {
+  const username = localStorage.getItem("username");
+  const accessKey = localStorage.getItem("accessKey");
+  if (!username || !VALID_KEYS.includes(accessKey)) {
+    alert("ログインが必要です。");
+    window.location.href = "login.html";
+    return null;
+  }
+  return username;
+}
+
+function logAction(action, details = "") {
+  const username = localStorage.getItem("username") || "未ログイン";
+  fetch(GAS_LOG_URL, {
+    method: "POST", mode: "no-cors",
+    body: JSON.stringify({ action, username, details, timestamp: new Date().toISOString(), userAgent: navigator.userAgent })
+  }).catch(err => console.error("ログ送信エラー:", err));
+}
+
+function logout() {
+  logAction("logout", `${localStorage.getItem("username")} がログアウトしました`);
+  localStorage.removeItem("username");
+  localStorage.removeItem("accessKey");
+  alert("ログアウトしました。");
+  window.location.href = "login.html";
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  logAction("view", `ページ閲覧: settings.html`);
+});
+</script>
+<script>
+checkLogin();
+
+// ===== ショートカットの読み書き（localStorage使用） =====
+const STORAGE_KEY = "tuts4_shortcuts";
+
+function loadShortcuts() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); }
+  catch { return []; }
+}
+
+function saveShortcuts(list) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+}
+
+// ===== スプレッドシートからプルダウンを読み込む =====
+const BASE = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/";
+
+let allTypeData = [], allCountryData = [], allRouteData = [],
+    allStationData = [], allSujitypeData = [], allBoundData = [];
+
+function fillSelect(selectEl, values, currentVal) {
+  selectEl.innerHTML = '<option value="">選択してください</option>';
+  values.forEach(v => {
+    const o = document.createElement("option");
+    o.value = o.textContent = v;
+    if (v === currentVal) o.selected = true;
+    selectEl.appendChild(o);
+  });
+}
+
+// 区分
+fetch(BASE + "type").then(r => r.json()).then(data => {
+  allTypeData = data;
+  fillSelect(document.getElementById("sc_type"), data.map(r => r["区分"]));
+});
+
+// 会社
+fetch(BASE + "country").then(r => r.json()).then(data => { allCountryData = data; });
+fetch(BASE + "route").then(r => r.json()).then(data => { allRouteData = data; });
+fetch(BASE + "station").then(r => r.json()).then(data => { allStationData = data; });
+fetch(BASE + "sujitype").then(r => r.json()).then(data => { allSujitypeData = data; });
+fetch(BASE + "bound").then(r => r.json()).then(data => { allBoundData = data; });
+
+// 連動プルダウン
+document.getElementById("sc_area").addEventListener("change", updateCompany);
+document.getElementById("sc_type").addEventListener("change", updateCompany);
+document.getElementById("sc_company").addEventListener("change", updateRoute);
+document.getElementById("sc_route").addEventListener("change", () => {
+  updateStation(); updateSujitype(); updateBound();
+});
+
+function updateCompany() {
+  const area = document.getElementById("sc_area").value;
+  const type = document.getElementById("sc_type").value;
+  const filtered = allCountryData.filter(r => r["えりあ"] === area && r["区分"] === type);
+  fillSelect(document.getElementById("sc_company"), [...new Set(filtered.map(r => r["会社"]))]);
+  fillSelect(document.getElementById("sc_route"), []);
+  fillSelect(document.getElementById("sc_station"), []);
+  fillSelect(document.getElementById("sc_sujitype"), []);
+  fillSelect(document.getElementById("sc_bound"), []);
+}
+
+function updateRoute() {
+  const type = document.getElementById("sc_type").value;
+  const company = document.getElementById("sc_company").value;
+  const filtered = allRouteData.filter(r => r["区分"] === type && r["会社"] === company);
+  fillSelect(document.getElementById("sc_route"), [...new Set(filtered.map(r => r["路線"]))]);
+  fillSelect(document.getElementById("sc_station"), []);
+  fillSelect(document.getElementById("sc_sujitype"), []);
+  fillSelect(document.getElementById("sc_bound"), []);
+}
+
+function updateStation() {
+  const route = document.getElementById("sc_route").value;
+  const filtered = allStationData.filter(r => r["路線"] === route);
+  fillSelect(document.getElementById("sc_station"), [...new Set(filtered.map(r => r["駅名"]))]);
+}
+
+function updateSujitype() {
+  const route = document.getElementById("sc_route").value;
+  const filtered = allSujitypeData.filter(r => r["路線"] === route);
+  fillSelect(document.getElementById("sc_sujitype"), [...new Set(filtered.map(r => r["種別"]))]);
+}
+
+function updateBound() {
+  const route = document.getElementById("sc_route").value;
+  const filtered = allBoundData.filter(r => r["路線"] === route);
+  fillSelect(document.getElementById("sc_bound"), [...new Set(filtered.map(r => r["行先"]))]);
+}
+
+// ===== 編集中のインデックス =====
+let editingIndex = -1;
+
+// ===== 保存 =====
+function saveShortcut() {
+  const name = document.getElementById("sc_name").value.trim();
+  if (!name) {
+    document.getElementById("sc_name").classList.add("highlight");
+    document.getElementById("sc_name").focus();
+    return;
+  }
+  document.getElementById("sc_name").classList.remove("highlight");
+
+  const entry = {
+    name,
+    area:     document.getElementById("sc_area").value,
+    type:     document.getElementById("sc_type").value,
+    company:  document.getElementById("sc_company").value,
+    route:    document.getElementById("sc_route").value,
+    station:  document.getElementById("sc_station").value,
+    sujitype: document.getElementById("sc_sujitype").value,
+    bound:    document.getElementById("sc_bound").value,
+  };
+
+  const list = loadShortcuts();
+  if (editingIndex >= 0) {
+    list[editingIndex] = entry;
+    editingIndex = -1;
+    document.querySelector(".btn-primary").textContent = "💾 保存する";
+  } else {
+    list.push(entry);
+  }
+  saveShortcuts(list);
+  clearForm();
+  renderList();
+  showToast("✅ 保存しました！");
+}
+
+// ===== フォームクリア =====
+function clearForm() {
+  ["sc_name","sc_area","sc_type","sc_company","sc_route","sc_station","sc_sujitype","sc_bound"]
+    .forEach(id => {
+      const el = document.getElementById(id);
+      el.value = "";
+      el.classList.remove("highlight");
+    });
+  editingIndex = -1;
+  document.querySelector(".btn-primary").textContent = "💾 保存する";
+}
+
+// ===== 編集 =====
+async function editShortcut(index) {
+  const list = loadShortcuts();
+  const sc = list[index];
+  editingIndex = index;
+
+  document.getElementById("sc_name").value = sc.name;
+  document.getElementById("sc_area").value = sc.area;
+
+  // 区分セット → 会社を再ロード → 路線 → ...と順番に
+  document.getElementById("sc_type").value = sc.type;
+  updateCompany();
+
+  // 非同期で連動プルダウンが揃うのを待つ
+  await wait(100);
+  document.getElementById("sc_company").value = sc.company;
+  updateRoute();
+
+  await wait(100);
+  document.getElementById("sc_route").value = sc.route;
+  updateStation(); updateSujitype(); updateBound();
+
+  await wait(100);
+  document.getElementById("sc_station").value  = sc.station;
+  document.getElementById("sc_sujitype").value = sc.sujitype;
+  document.getElementById("sc_bound").value    = sc.bound;
+
+  document.querySelector(".btn-primary").textContent = "✏️ 更新する";
+  document.getElementById("sc_name").scrollIntoView({ behavior: "smooth" });
+}
+
+function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ===== 削除 =====
+function deleteShortcut(index) {
+  if (!confirm("このショートカットを削除しますか？")) return;
+  const list = loadShortcuts();
+  list.splice(index, 1);
+  saveShortcuts(list);
+  renderList();
+  showToast("🗑️ 削除しました");
+}
+
+// ===== 一覧描画 =====
+function renderList() {
+  const list = loadShortcuts();
+  const container = document.getElementById("shortcutList");
+
+  if (list.length === 0) {
+    container.innerHTML = '<div class="empty-msg">ショートカットがまだ登録されていません</div>';
+    return;
+  }
+
+  container.innerHTML = "";
+  list.forEach((sc, i) => {
+    const parts = [sc.route, sc.station, sc.sujitype, sc.bound].filter(Boolean);
+    const detail = parts.join(" / ") || "詳細なし";
+    const card = document.createElement("div");
+    card.className = "shortcut-card";
+    card.innerHTML = `
+      <div class="shortcut-card-info">
+        <div class="shortcut-name">⚡ ${sc.name}</div>
+        <div class="shortcut-detail">${detail}</div>
+      </div>
+      <div class="shortcut-actions">
+        <button class="btn-edit"   onclick="editShortcut(${i})">✏️ 編集</button>
+        <button class="btn-delete" onclick="deleteShortcut(${i})">🗑️</button>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+// ===== トースト通知 =====
+function showToast(msg) {
+  const t = document.getElementById("saveToast");
+  t.textContent = msg;
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 2200);
+}
+
+// ===== 初期化 =====
+renderList();
+</script>
+</body>
+</html>

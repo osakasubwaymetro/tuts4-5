@@ -13,121 +13,7 @@
   }
 
 
-  /* NAV MENU */
-  .nav-header {
-    background-color: #004C97;
-    color: white;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0 16px;
-    height: 54px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
-    position: sticky;
-    top: 0;
-    z-index: 9999;
-  }
-  .nav-title {
-    font-weight: bold;
-    font-size: 15px;
-    letter-spacing: 0.05em;
-    color: white;
-  }
-  .nav-right {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  #navUsernameDisplay {
-    font-weight: bold;
-    font-size: 13px;
-    color: #FFD700;
-  }
-  .nav-menu-btn {
-    background: white;
-    border: none;
-    color: #004C97;
-    font-size: 20px;
-    width: 36px;
-    height: 36px;
-    border-radius: 8px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background 0.2s, color 0.2s;
-    line-height: 1;
-  }
-  .nav-menu-btn:hover { background: #E60012; color: white; }
-  .nav-dropdown {
-    position: fixed;
-    top: 54px;
-    right: 16px;
-    background: white;
-    border-radius: 14px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.18);
-    min-width: 220px;
-    padding: 10px 0;
-    z-index: 9998;
-    transform: translateY(-8px) scale(0.97);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.18s ease, transform 0.18s ease;
-  }
-  .nav-dropdown.open {
-    opacity: 1;
-    pointer-events: all;
-    transform: translateY(0) scale(1);
-  }
-  .nav-dropdown a, .nav-dropdown button.nav-logout {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 11px 20px;
-    font-size: 14px;
-    color: #222;
-    text-decoration: none;
-    background: none;
-    border: none;
-    width: 100%;
-    text-align: left;
-    cursor: pointer;
-    font-family: inherit;
-    transition: background 0.15s;
-  }
-  .nav-dropdown a:hover, .nav-dropdown button.nav-logout:hover {
-    background: #F0F4FA;
-  }
-  .nav-dropdown a.active-page {
-    color: #004C97;
-    font-weight: bold;
-    background: #EEF4FF;
-  }
-  .nav-dropdown .nav-divider {
-    height: 1px;
-    background: #eee;
-    margin: 6px 0;
-  }
-  .nav-dropdown .nav-user-row {
-    padding: 10px 20px 8px;
-    font-size: 12px;
-    color: #999;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .nav-dropdown .nav-user-name {
-    font-weight: bold;
-    color: #004C97;
-    font-size: 14px;
-  }
-  .nav-backdrop {
-    display: none;
-    position: fixed;
-    inset: 0;
-    z-index: 9997;
-  }
-  .nav-backdrop.open { display: block; }
+  
 
   header {
     background-color: #004C97;
@@ -215,47 +101,7 @@
 </head>
 <body>
 
-<header class="nav-header">
-  <div class="nav-title">投稿履歴</div>
-  <div class="nav-right">
-    <span id="navUsernameDisplay"></span>
-    <button class="nav-menu-btn" onclick="toggleNavMenu()" aria-label="メニュー">☰</button>
-  </div>
-</header>
 
-<div class="nav-backdrop" id="navBackdrop" onclick="closeNavMenu()"></div>
-<div class="nav-dropdown" id="navDropdown">
-  <div class="nav-user-row">
-    👤 <span class="nav-user-name" id="navMenuUsername"></span> さん
-  </div>
-  <div class="nav-divider"></div>
-  <a href="index.html" >📝 新規投稿</a>
-  <a href="show.html" class="active-page">📜 投稿履歴</a>
-  <a href="statistick.html" >📊 統計情報</a>
-  <a href="stampbook.html" >🎫 スタンプ帳</a>
-  <div class="nav-divider"></div>
-  <button class="nav-logout" onclick="logout()">🚪 ログアウト</button>
-</div>
-
-<script>
-function toggleNavMenu() {
-  document.getElementById("navDropdown").classList.toggle("open");
-  document.getElementById("navBackdrop").classList.toggle("open");
-}
-function closeNavMenu() {
-  document.getElementById("navDropdown").classList.remove("open");
-  document.getElementById("navBackdrop").classList.remove("open");
-}
-(function() {
-  const u = localStorage.getItem("username") || "";
-  if (u) {
-    const d1 = document.getElementById("navUsernameDisplay");
-    const d2 = document.getElementById("navMenuUsername");
-    if (d1) d1.textContent = u;
-    if (d2) d2.textContent = u;
-  }
-})();
-</script>
 
 <h2>投稿一覧</h2>
 
@@ -269,6 +115,8 @@ function closeNavMenu() {
 <p id="reload">読み込み中...</p>
 <div id="postContainer"></div>
 
+<script src="nav.js"></script>
+<script>initNav("投稿履歴");</script>
 <script src="logs.js"></script>
 <script>
 const username = checkLogin();
