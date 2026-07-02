@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.1.0 -->
+  <!-- version: 1.2.0 -->
+  <!-- 1.2.0: 「現在地から駅を探す」ボタンを追加（近くの駅・路線候補から自動入力） -->
   <!-- 1.1.0: フォームを「まとまり」単位でグループ化し、併結（複数種別・行先）に対応 -->
   <style>
     body {
@@ -365,6 +366,36 @@
       color: #333;
       font-size: 16px;
     }
+
+    /* ===== 現在地から駅を探す ===== */
+    .geo-bar {
+      background: linear-gradient(135deg, #EEFBF3, #f0fff6);
+      border: 1.5px solid #bfe8cf;
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-top: 18px;
+    }
+    .geo-bar button {
+      width: auto;
+      background: #1e8449;
+      margin-top: 0;
+      padding: 8px 16px;
+      font-size: 13px;
+    }
+    .geo-bar button:hover { background: #E60012; }
+    .geo-bar button:disabled { opacity: 0.6; cursor: default; }
+    #geoStationResult {
+      margin-top: 10px;
+      font-size: 13px;
+      color: #333;
+    }
+    .geo-result-label {
+      font-size: 12px;
+      color: #1e8449;
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+    #geoStationResult select { width: 100%; }
   </style>
 </head>
 <body>
@@ -381,6 +412,12 @@
   <label><h3>発車時刻</h3></label>
   <input type="datetime-local" id="departing_time">
   <button type="button" onclick="setCurrentDateTime()">🕓 現在時刻を入力</button>
+
+  <!-- 現在地から駅を探す -->
+  <div class="geo-bar">
+    <button type="button" id="geoStationBtn" onclick="findNearbyStations()">📍 現在地から駅を探す</button>
+    <div id="geoStationResult"></div>
+  </div>
 
   <!-- ショートカット選択 -->
   <div class="shortcut-bar">
