@@ -79,9 +79,41 @@
   .heat-small { display:flex; gap:6px; align-items:center; font-size:13px; color:#666; margin-bottom:6px; }
   .back-btn { display:inline-block; margin-top:10px; background:#004C97;color:#fff;padding:8px 12px;border-radius:8px;text-decoration:none }
 
+  /* 概要スタッツ：折り返し前提のグリッド */
+  .stats-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(100px,1fr)); gap:14px 16px; }
+
+  /* 横に長い表はスマホでスクロールできるように */
+  .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .table-scroll table { min-width:100%; }
+  /* マトリクス表は1列目（形式名）を固定してスクロールしても見失わないように */
+  #matrixWrap table th:first-child,
+  #matrixWrap table td:first-child {
+    position:sticky; left:0; background:#fff; z-index:1;
+    box-shadow:2px 0 4px rgba(0,0,0,0.04);
+  }
+  #matrixWrap table th:first-child { background:#fafafa; z-index:2; }
+  #matrixWrap td, #crossHeat td { text-align:center; white-space:nowrap; }
+
+  .matrix-controls { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; margin-bottom:10px; }
+  .matrix-controls select {
+    font-size:13px; padding:5px 8px; border-radius:6px; border:1px solid #ddd; background:#fff; color:#333;
+  }
+  .matrix-controls .small { color:#666; }
+
   @media (max-width:900px) {
     .grid-2 { grid-template-columns: 1fr; }
     canvas { height:260px !important; }
+  }
+
+  @media (max-width:480px) {
+    main { padding:10px; margin:10px auto; }
+    h1 { font-size:17px; }
+    p.lead { font-size:13px; }
+    .card { padding:10px; border-radius:10px; }
+    .stat { font-size:16px; }
+    .wrap { gap:10px; }
+    table { font-size:12.5px; }
+    th,td { padding:5px 6px; }
   }
 </style>
 </head>
@@ -97,7 +129,7 @@
 
     <!-- 概要 -->
     <div class="card" id="overview">
-      <div style="display:flex;gap:20px;flex-wrap:wrap">
+      <div class="stats-grid">
         <div>
           <div class="stat" id="totalCount">0</div>
           <div class="small">総投稿数</div>
@@ -116,6 +148,16 @@
         <div>
           <div class="stat" id="topModel">—</div>
           <div class="small">最多車両形式</div>
+        </div>
+
+        <div>
+          <div class="stat" id="daysRecorded">—</div>
+          <div class="small">記録日数（のべ）</div>
+        </div>
+
+        <div>
+          <div class="stat" id="streakCount">—</div>
+          <div class="small">連続記録日数</div>
         </div>
       </div>
     </div>
@@ -156,6 +198,12 @@
       </div>
     </div>
 
+    <!-- 区分・種別 -->
+    <div class="card">
+      <h3>区分・種別ランキング</h3>
+      <div id="typeList"><p class="small">読み込み中…</p></div>
+    </div>
+
     <!-- 月別推移 -->
     <div class="card">
       <h3>月別投稿推移</h3>
@@ -172,7 +220,18 @@
     <!-- マトリクス -->
     <div class="card">
       <h3>車両形式 × 路線 の相性（件数マトリクス）</h3>
-      <div id="matrixWrap"><p class="small">読み込み中…</p></div>
+      <div class="matrix-controls">
+        <label class="small">表示件数（件数の多い順）：
+          <select id="matrixLimit">
+            <option value="5">形式5 × 路線5</option>
+            <option value="8" selected>形式8 × 路線8</option>
+            <option value="12">形式12 × 路線12</option>
+            <option value="9999">全件表示</option>
+          </select>
+        </label>
+      </div>
+      <p class="small" id="matrixHint"></p>
+      <div id="matrixWrap" class="table-scroll"><p class="small">読み込み中…</p></div>
     </div>
 
     <!-- レア体験・行先 -->
@@ -187,9 +246,11 @@
       </div>
     </div>
 
+    <!-- 曜日×時間帯 -->
     <div class="card">
-      <h3>生データプレビュー（最新 20 件）</h3>
-      <div id="preview"><p class="small">読み込み中…</p></div>
+      <h3>曜日 × 時間帯 クロス集計</h3>
+      <div class="heat-small"><span class="small">よく乗っている曜日と時間帯の組み合わせ（色が濃いほど多い）</span></div>
+      <div id="crossHeat" class="table-scroll"><p class="small">読み込み中…</p></div>
     </div>
 
     <div style="text-align:right">
@@ -314,10 +375,38 @@ async function buildStats() {
   const sortedDest = countBy(mine, r=>r.dest);
   const sortedModel = countBy(mine, r=>r.model);
   const sortedCompany = countBy(mine, r=>r.company);
+  const sortedType = countBy(mine, r=>r.type);
 
   document.getElementById("topRoute").innerText = sortedRoutes[0] ? `${sortedRoutes[0][0]} (${sortedRoutes[0][1]}回)` : "—";
   document.getElementById("topDest").innerText = sortedDest[0] ? `${sortedDest[0][0]} (${sortedDest[0][1]}回)` : "—";
   document.getElementById("topModel").innerText = sortedModel[0] ? `${sortedModel[0][0]} (${sortedModel[0][1]}回)` : "—";
+
+  // 記録日数（のべ日数）＆ 連続記録日数
+  const uniqueDates = Array.from(new Set(
+    mine.filter(r=>r.time).map(r=>r.time.toISOString().slice(0,10))
+  )).sort();
+
+  document.getElementById("daysRecorded").innerText = uniqueDates.length ? `${uniqueDates.length}日` : "—";
+
+  function calcStreak(datesAsc) {
+    if (!datesAsc.length) return { current:0, longest:0 };
+    const dateObjs = datesAsc.map(d=>new Date(d+"T00:00:00"));
+    let longest = 1, run = 1;
+    for (let i=1;i<dateObjs.length;i++) {
+      const diffDays = Math.round((dateObjs[i]-dateObjs[i-1]) / 86400000);
+      run = (diffDays === 1) ? run+1 : 1;
+      if (run > longest) longest = run;
+    }
+    const today = new Date(); today.setHours(0,0,0,0);
+    const diffToToday = Math.round((today - dateObjs[dateObjs.length-1]) / 86400000);
+    const current = diffToToday <= 1 ? run : 0; // 今日か昨日まで記録があれば継続中とみなす
+    return { current, longest };
+  }
+
+  const streak = calcStreak(uniqueDates);
+  document.getElementById("streakCount").innerText = streak.current > 0
+    ? `${streak.current}日`
+    : `0日（最長${streak.longest}日）`;
 
   function renderList(containerId, entries) {
     const wrap = document.getElementById(containerId);
@@ -342,24 +431,78 @@ async function buildStats() {
   renderList("destList", sortedDest);
   renderList("companyList", sortedCompany);
   renderList("modelList", sortedModel);
+  renderList("typeList", sortedType);
 
-  // 時間帯 buckets
+  // 時間帯 buckets（早朝が使われず「昼」の判定が重複していたのを修正）
+  const timeLabels = ["早朝","朝","昼","夕方","夜","深夜"];
+  function timeBucketOf(h) {
+    if (h < 5) return "深夜";
+    if (h < 7) return "早朝";
+    if (h < 10) return "朝";
+    if (h < 16) return "昼";
+    if (h < 19) return "夕方";
+    return "夜";
+  }
   const buckets = { "早朝":0, "朝":0, "昼":0, "夕方":0, "夜":0, "深夜":0 };
   mine.forEach(r=>{
     if (!r.time) return;
-    const h = r.time.getHours();
-    if (h < 5) buckets["深夜"]++;
-    else if (h < 9) buckets["朝"]++;
-    else if (h < 12) buckets["昼"]++;
-    else if (h < 17) buckets["昼"]++;
-    else if (h < 20) buckets["夕方"]++;
-    else buckets["夜"]++;
+    buckets[timeBucketOf(r.time.getHours())]++;
   });
 
   // weekday
   const weekdays = ["日","月","火","水","木","金","土"];
   const weekdayCount = [0,0,0,0,0,0,0];
   mine.forEach(r=>{ if (r.time) weekdayCount[r.time.getDay()]++; });
+
+  // 曜日 × 時間帯 クロス集計
+  const crossCount = {};
+  weekdays.forEach(wd => {
+    crossCount[wd] = {};
+    timeLabels.forEach(t => crossCount[wd][t] = 0);
+  });
+  mine.forEach(r=>{
+    if (!r.time) return;
+    const wd = weekdays[r.time.getDay()];
+    const tb = timeBucketOf(r.time.getHours());
+    crossCount[wd][tb]++;
+  });
+  let maxCross = 0, bestWd = null, bestT = null, bestV = -1;
+  weekdays.forEach(wd => timeLabels.forEach(t => {
+    const v = crossCount[wd][t];
+    if (v > maxCross) maxCross = v;
+    if (v > bestV) { bestV = v; bestWd = wd; bestT = t; }
+  }));
+
+  const crossWrap = document.getElementById("crossHeat");
+  const ctbl = document.createElement("table");
+  const chead = document.createElement("thead");
+  const chtr = document.createElement("tr");
+  chtr.innerHTML = "<th>曜日＼時間帯</th>" + timeLabels.map(t=>`<th>${t}</th>`).join("");
+  chead.appendChild(chtr);
+  ctbl.appendChild(chead);
+  const cbody = document.createElement("tbody");
+  weekdays.forEach(wd=>{
+    const tr = document.createElement("tr");
+    let rowHtml = `<td>${wd}</td>`;
+    timeLabels.forEach(t=>{
+      const v = crossCount[wd][t];
+      const bg = heatColor(v, maxCross);
+      const fg = (maxCross > 0 && v / maxCross > 0.6) ? "#fff" : "#333";
+      rowHtml += `<td style="background:${bg};color:${fg}">${v || ""}</td>`;
+    });
+    tr.innerHTML = rowHtml;
+    cbody.appendChild(tr);
+  });
+  ctbl.appendChild(cbody);
+  crossWrap.innerHTML = "";
+  crossWrap.appendChild(ctbl);
+  if (bestV > 0) {
+    const bestNote = document.createElement("p");
+    bestNote.className = "small";
+    bestNote.style.marginTop = "8px";
+    bestNote.innerText = `一番多い組み合わせ：${bestWd}曜日の${bestT}（${bestV}回）`;
+    crossWrap.appendChild(bestNote);
+  }
 
   // monthly trend
   const monthMap = {};
@@ -452,41 +595,84 @@ async function buildStats() {
     heatWrap.appendChild(monthCard);
   });
 
-  // matrix model x route
+  // matrix model x route（件数の多い順に上位N件だけ表示し、残りは「その他」に集計）
   const matrix = {};
-  const models = new Set();
-  const routesSet = new Set();
+  const modelTotals = {};
+  const routeTotals = {};
   mine.forEach(r => {
     const m = r.model || "（不明）";
     const ro = r.route || "（不明）";
-    models.add(m); routesSet.add(ro);
     matrix[m] = matrix[m] || {};
     matrix[m][ro] = (matrix[m][ro]||0) + 1;
+    modelTotals[m] = (modelTotals[m]||0) + 1;
+    routeTotals[ro] = (routeTotals[ro]||0) + 1;
   });
-  const modelsArr = Array.from(models).sort();
-  const routesArr = Array.from(routesSet).sort();
+  const allModels = Object.keys(modelTotals).sort((a,b)=>modelTotals[b]-modelTotals[a]);
+  const allRoutes = Object.keys(routeTotals).sort((a,b)=>routeTotals[b]-routeTotals[a]);
 
-  const matrixWrap = document.getElementById("matrixWrap");
-  const tbl = document.createElement("table");
-  const thead = document.createElement("thead");
-  const trh = document.createElement("tr");
-  trh.innerHTML = `<th>形式 \\ 路線</th>` + routesArr.map(r=>`<th>${r}</th>`).join("");
-  thead.appendChild(trh);
-  tbl.appendChild(thead);
-  const tbody = document.createElement("tbody");
-  modelsArr.forEach(m=> {
-    const tr = document.createElement("tr");
-    let rowHtml = `<td>${m}</td>`;
-    routesArr.forEach(ro=>{
-      const v = matrix[m] && matrix[m][ro] ? matrix[m][ro] : 0;
-      rowHtml += `<td>${v}</td>`;
+  function renderMatrix(limitValue) {
+    const lim = Number(limitValue);
+    const showAll = lim >= 9999;
+    const modelsArr = showAll ? allModels : allModels.slice(0, lim);
+    const routesArr = showAll ? allRoutes : allRoutes.slice(0, lim);
+    const restModels = showAll ? [] : allModels.slice(lim);
+    const restRoutes = showAll ? [] : allRoutes.slice(lim);
+
+    const matrixWrap = document.getElementById("matrixWrap");
+    const tbl = document.createElement("table");
+    const thead = document.createElement("thead");
+    const trh = document.createElement("tr");
+    let headHtml = `<th>形式 \\ 路線</th>` + routesArr.map(r=>`<th>${r}</th>`).join("");
+    if (restRoutes.length) headHtml += `<th>その他路線(${restRoutes.length})</th>`;
+    trh.innerHTML = headHtml;
+    thead.appendChild(trh);
+    tbl.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    modelsArr.forEach(m=> {
+      const tr = document.createElement("tr");
+      let rowHtml = `<td>${m}</td>`;
+      routesArr.forEach(ro=>{
+        const v = matrix[m] && matrix[m][ro] ? matrix[m][ro] : 0;
+        rowHtml += `<td>${v || ""}</td>`;
+      });
+      if (restRoutes.length) {
+        const sum = restRoutes.reduce((s,ro)=> s + ((matrix[m] && matrix[m][ro]) || 0), 0);
+        rowHtml += `<td>${sum || ""}</td>`;
+      }
+      tr.innerHTML = rowHtml;
+      tbody.appendChild(tr);
     });
-    tr.innerHTML = rowHtml;
-    tbody.appendChild(tr);
-  });
-  tbl.appendChild(tbody);
-  matrixWrap.innerHTML = "";
-  matrixWrap.appendChild(tbl);
+
+    if (restModels.length) {
+      const tr = document.createElement("tr");
+      tr.style.color = "#888";
+      let rowHtml = `<td>その他形式(${restModels.length})</td>`;
+      routesArr.forEach(ro=>{
+        const sum = restModels.reduce((s,m)=> s + ((matrix[m] && matrix[m][ro]) || 0), 0);
+        rowHtml += `<td>${sum || ""}</td>`;
+      });
+      if (restRoutes.length) {
+        const sum = restModels.reduce((s,m)=> s + restRoutes.reduce((s2,ro)=> s2 + ((matrix[m] && matrix[m][ro]) || 0), 0), 0);
+        rowHtml += `<td>${sum || ""}</td>`;
+      }
+      tr.innerHTML = rowHtml;
+      tbody.appendChild(tr);
+    }
+
+    tbl.appendChild(tbody);
+    matrixWrap.innerHTML = "";
+    matrixWrap.appendChild(tbl);
+
+    const hint = document.getElementById("matrixHint");
+    hint.innerText = showAll
+      ? `全${allModels.length}形式 × 全${allRoutes.length}路線を表示中`
+      : `件数の多い順に 形式${modelsArr.length}/${allModels.length}種・路線${routesArr.length}/${allRoutes.length}路線を表示中（残りは「その他」欄に集計）`;
+  }
+
+  const matrixLimitSelect = document.getElementById("matrixLimit");
+  renderMatrix(matrixLimitSelect.value);
+  matrixLimitSelect.addEventListener("change", (e)=> renderMatrix(e.target.value));
 
   // rare items (count == 1)
   const routeCount = Object.fromEntries(sortedRoutes);
@@ -504,29 +690,6 @@ async function buildStats() {
                        <div class="small"><b>駅（1回のみ）:</b> ${rare.station.join(", ") || "なし"}</div>
                        <div class="small"><b>形式（1回のみ）:</b> ${rare.model.join(", ") || "なし"}</div>
                        <div class="small"><b>行先（1回のみ）:</b> ${rare.dest.join(", ") || "なし"}</div>`;
-
-  // preview latest 20
-  const previewWrap = document.getElementById("preview");
-  const previewTbl = document.createElement("table");
-  const ph = document.createElement("thead");
-  // choose columns present in raw (try common ones)
-  const rawKeys = Object.keys(mine[0].raw);
-  const candidateHeaders = ["発車時刻","時刻","日時","路線","乗車駅","行先","車両形式","会社","メモ","ユーザー名"];
-  const headerKeys = candidateHeaders.filter(k=>rawKeys.includes(k)).slice(0,6);
-  const finalHeaders = headerKeys.length ? headerKeys : rawKeys.slice(0,6);
-  ph.innerHTML = "<tr>" + finalHeaders.map(h=>`<th>${h}</th>`).join("") + "</tr>";
-  previewTbl.appendChild(ph);
-  const pb = document.createElement("tbody");
-  const latest = mine.slice(-20).reverse();
-  latest.forEach(r=> {
-    const tr = document.createElement("tr");
-    const cols = finalHeaders.map(k=>`<td>${(r.raw[k] !== undefined && r.raw[k] !== null) ? r.raw[k] : ""}</td>`).join("");
-    tr.innerHTML = cols;
-    pb.appendChild(tr);
-  });
-  previewTbl.appendChild(pb);
-  previewWrap.innerHTML = "";
-  previewWrap.appendChild(previewTbl);
 
   console.log("統計生成完了");
 }
