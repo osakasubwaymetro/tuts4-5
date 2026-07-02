@@ -1,11 +1,18 @@
-// version: 1.3.0
-// 1.3.0: 「現在地から駅を探す」ボタンを廃止し、「現在時刻を入力」に統合（GPS取得は1回のみ）。
-//        確度の高い候補は自動入力するように改善。投稿成功後にフォーム全体をクリアする機能を追加
+// version: 1.3.1
+// 1.3.1: allstationData等のマスタデータ用変数が宣言されておらず、読み込み完了前に参照すると
+//        ReferenceErrorになる不具合を修正（先頭でlet宣言し初期値[]を持たせた）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
 
 let allCountryData = []; // 全データを保持
+let allrouteData = [];
+let allmodelData = [];
+let allstationData = [];
+let allsujitypeData = [];
+let allboundData = [];
+let allnumberData = [];
+let allRemarkData = [];
 document.getElementById("username").value = localStorage.getItem("username");
 
 
