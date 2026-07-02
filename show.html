@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
+<!-- version: 1.1.0 -->
+<!-- 1.1.0: 全ユーザー分が見えていた不具合を修正し、自分の投稿のみ表示・保存するように変更 -->
 <style>
   body {
     font-family: "Hiragino Sans", "Segoe UI", sans-serif;
@@ -118,7 +120,11 @@
 const username = checkLogin();
 
 const GAS_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
-const CACHE_KEY = "tuts4_show_cache";
+// 乗車履歴は自分の分だけ表示・保存する（他ユーザー分は保存しない）
+const CACHE_KEY = "tuts4_show_cache_" + username;
+
+// 旧バージョンの共有キャッシュ（全ユーザー分が混在して保存されていた）は破棄する
+localStorage.removeItem("tuts4_show_cache");
 
 let allData = [];
 
@@ -229,7 +235,9 @@ fetch(GAS_URL)
     // レスポンスサイズが不明なのでXHRでプログレスを擬似表示
     return res.json();
   })
-  .then(data => {
+  .then(rawData => {
+    // 自分の投稿のみに絞り込んでから保存・表示する
+    const data = rawData.filter(r => String(r["ユーザー名"]) === String(username));
     data.reverse();
 
     // キャッシュと件数が変わっていれば更新
