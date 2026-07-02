@@ -1,5 +1,5 @@
-// version: 1.1.1
-// 1.1.1: 併結判定を4列目の位置指定ではなく列名「併結」で判定するように修正
+// version: 1.1.3
+// 1.1.3: 併結で追加するブロックから乗車駅の重複選択を廃止（種別・行先のみ追加）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -333,11 +333,6 @@ function addCoupling() {
       <button type="button" class="remove-couple-btn" onclick="this.closest('.ride-block').remove()">✕ 削除</button>
     </div>
     <div class="ride-block-row">
-      <div class="field station-field">
-        <label class="mini-label">乗車駅</label>
-        <select class="station-select"><option value="">選択してください</option></select>
-      </div>
-      <div class="arrow">→</div>
       <div class="field stack-field">
         <label class="mini-label">種別</label>
         <select class="sujitype-select"><option value="">選択してください</option></select>
@@ -348,8 +343,7 @@ function addCoupling() {
   `;
   container.appendChild(block);
 
-  // 新しく増えたプルダウンにも選択肢を反映
-  updatestationList();
+  // 新しく増えたプルダウンにも選択肢を反映（乗車駅は最初のブロックのみなので更新不要）
   updatesujitypeList();
   updateboundList();
 }
@@ -518,38 +512,9 @@ function updateRemarkList() {
 
 
 
-let myRideLogs = [];
-
-fetch("https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec")
-  .then(res => res.json())
-  .then(data => {
-    const username = localStorage.getItem("username");
-    myRideLogs = data.filter(row => row["ユーザー名"] === username);
-  });
-
-document.getElementById("number").addEventListener("change", checkRideHistory);
-
-
-function checkRideHistory() {
-  const model = document.getElementById("model").value;
-  const number = document.getElementById("number").value;
-  const result = document.getElementById("rideCheckResult");
-
-  if (!model || !number) {
-    result.textContent = "";
-    return;
-  }
-
-  const sameRides = myRideLogs.filter(row =>
-    row["車両形式"] === model &&
-    row["車番"] === number
-  );
-
-  if (sameRides.length === 0) {
-    result.textContent = "🎉 初乗車です！";
-  } else {
-    result.textContent = `🚆 ${sameRides.length + 1} 回目の乗車です`;
-  }
-}
+/* ----------------------------------------
+   ※ 旧「初乗車/○回目」表示（checkRideHistory）は削除
+   投稿後のスタンプポップアップ（showStampPopup, index.html側）に統合済み
+---------------------------------------- */
 
 
