@@ -1,6 +1,6 @@
-// version: 1.2.1
-// 1.2.1: 最寄り駅検索の路線名判定を完全一致→正式社名/愛称の対応表＋あいまい一致に変更。
-//        一致しない場合も「駅名のみ一致」として候補を出すフォールバックを追加
+// version: 1.3.0
+// 1.3.0: 「現在地から駅を探す」ボタンを廃止し、「現在時刻を入力」に統合（GPS取得は1回のみ）。
+//        確度の高い候補は自動入力するように改善。投稿成功後にフォーム全体をクリアする機能を追加
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -447,12 +447,36 @@ function upload() {
     hideLoadingPopup();
     logAction("post", `投稿: ${routeValue} / ${modelValue} ${numberValue} / ${stationValue} → ${boundValue}`);
     showStampPopup(modelValue, numberValue);
+    resetForm();
   })
   .catch(err => {
     hideLoadingPopup();
     console.error("送信エラー:", err);
     alert("送信に失敗しました");
   });
+}
+
+// 投稿完了後、次の入力に備えてフォームを全クリアする
+function resetForm() {
+  ["area", "type", "country", "route", "model", "number"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+
+  const timeEl = document.getElementById("departing_time");
+  if (timeEl) timeEl.value = "";
+  const memoEl = document.getElementById("memo");
+  if (memoEl) memoEl.value = "";
+
+  // route/model の変更カスケードを明示的に発火し、駅・種別・行先・車番の選択肢や
+  // 併結ブロック（まとまりB）・併結ボタンもまとめてクリアする
+  const routeEl = document.getElementById("route");
+  if (routeEl) routeEl.dispatchEvent(new Event("change"));
+  const modelEl = document.getElementById("model");
+  if (modelEl) modelEl.dispatchEvent(new Event("change"));
+
+  const resultBox = document.getElementById("geoStationResult");
+  if (resultBox) resultBox.innerHTML = "";
 }
 
 function setCurrentDateTime() {
@@ -558,72 +582,57 @@ function isLineMatch(masterLine, apiLine) {
   return !!coreA && !!coreB && (coreA === coreB || a.includes(coreB) || b.includes(coreA));
 }
 
-function findNearbyStations() {
-  const btn = document.getElementById("geoStationBtn");
+// 「現在時刻を入力」ボタン（index.html側）から、位置情報取得後に呼ばれる
+async function findNearbyStationsFromPosition(lat, lon) {
   const resultBox = document.getElementById("geoStationResult");
-  resultBox.innerHTML = "";
+  if (resultBox) resultBox.textContent = "📍 近くの駅を確認中...";
 
-  if (!navigator.geolocation) {
-    resultBox.textContent = "この端末では位置情報が使えません。";
-    return;
-  }
+  try {
+    const res = await fetch(`https://express.heartrails.com/api/json?method=getStations&x=${lon}&y=${lat}`);
+    const data = await res.json();
+    const stations = (data.response && data.response.station) || [];
 
-  btn.disabled = true;
-  btn.textContent = "📍 探索中...";
+    // 駅名は自分のマスタデータに存在するものだけ対象にし、路線名は表記ゆれ込みで突き合わせる
+    const matches = [];
+    const seen = new Set();
+    stations.forEach(st => {
+      const stationRows = (allstationData || []).filter(row => row["駅名"] === st.name);
+      if (!stationRows.length) return;
 
-  navigator.geolocation.getCurrentPosition(
-    async (pos) => {
-      try {
-        const lat = pos.coords.latitude;
-        const lon = pos.coords.longitude;
-
-        const res = await fetch(`https://express.heartrails.com/api/json?method=getStations&x=${lon}&y=${lat}`);
-        const data = await res.json();
-        const stations = (data.response && data.response.station) || [];
-
-        // 駅名は自分のマスタデータに存在するものだけ対象にし、路線名は表記ゆれ込みで突き合わせる
-        const matches = [];
-        const seen = new Set();
-        stations.forEach(st => {
-          const stationRows = (allstationData || []).filter(row => row["駅名"] === st.name);
-          if (!stationRows.length) return;
-
-          const hitRow = stationRows.find(row => isLineMatch(row["路線"], st.line));
-          if (hitRow) {
-            const key = st.name + "|" + hitRow["路線"];
-            if (!seen.has(key)) {
-              seen.add(key);
-              matches.push({ name: st.name, line: hitRow["路線"], confident: true });
-            }
-          } else {
-            // 路線名の表記があまりに違って一致判定できない場合のフォールバック：
-            // 駅名だけは一致しているので、その駅にある自分の路線候補を「駅名のみ一致」として出す
-            stationRows.forEach(row => {
-              const key = st.name + "|" + row["路線"];
-              if (!seen.has(key)) {
-                seen.add(key);
-                matches.push({ name: st.name, line: row["路線"], confident: false });
-              }
-            });
+      const hitRow = stationRows.find(row => isLineMatch(row["路線"], st.line));
+      if (hitRow) {
+        const key = st.name + "|" + hitRow["路線"];
+        if (!seen.has(key)) {
+          seen.add(key);
+          matches.push({ name: st.name, line: hitRow["路線"], confident: true });
+        }
+      } else {
+        // 路線名の表記があまりに違って一致判定できない場合のフォールバック：
+        // 駅名だけは一致しているので、その駅にある自分の路線候補を「駅名のみ一致」として出す
+        stationRows.forEach(row => {
+          const key = st.name + "|" + row["路線"];
+          if (!seen.has(key)) {
+            seen.add(key);
+            matches.push({ name: st.name, line: row["路線"], confident: false });
           }
         });
-
-        renderGeoStationResult(matches);
-      } catch (e) {
-        console.error("駅取得エラー:", e);
-        resultBox.textContent = "駅の取得に失敗しました。時間を置いて再試行してください。";
-      } finally {
-        btn.disabled = false;
-        btn.textContent = "📍 現在地から駅を探す";
       }
-    },
-    (err) => {
-      console.error("位置情報エラー:", err);
-      resultBox.textContent = "位置情報を取得できませんでした。端末の位置情報設定を確認してください。";
-      btn.disabled = false;
-      btn.textContent = "📍 現在地から駅を探す";
+    });
+
+    renderGeoStationResult(matches);
+
+    // 確度の高い候補（一番近いもの）が見つかっていれば自動で入力しておく。
+    // 違う場合は下のプルダウンからいつでも選び直せる。
+    const best = matches.find(m => m.confident);
+    if (best) {
+      await applyGeoStation(best);
+      const sel = document.getElementById("geoStationSelect");
+      if (sel) sel.value = matches.indexOf(best);
     }
-  );
+  } catch (e) {
+    console.error("駅取得エラー:", e);
+    if (resultBox) resultBox.textContent = "近くの駅の取得に失敗しました。";
+  }
 }
 
 function renderGeoStationResult(matches) {
