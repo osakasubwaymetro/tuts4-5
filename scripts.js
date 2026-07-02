@@ -1,5 +1,6 @@
-// version: 1.1.3
-// 1.1.3: 併結で追加するブロックから乗車駅の重複選択を廃止（種別・行先のみ追加）
+// version: 1.2.1
+// 1.2.1: 最寄り駅検索の路線名判定を完全一致→正式社名/愛称の対応表＋あいまい一致に変更。
+//        一致しない場合も「駅名のみ一致」として候補を出すフォールバックを追加
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -516,5 +517,187 @@ function updateRemarkList() {
    ※ 旧「初乗車/○回目」表示（checkRideHistory）は削除
    投稿後のスタンプポップアップ（showStampPopup, index.html側）に統合済み
 ---------------------------------------- */
+
+
+
+/* ----------------------------------------
+   現在地から最寄り駅を探す
+   HeartRails Express（駅名＋乗り入れ路線をキー無しで取得できる無料API）で
+   近くの駅と路線の組を取得し、自分のマスタデータ（station シート：路線・駅名）と
+   「駅名・路線名が完全一致」するものだけを候補としてリストアップする。
+   選択すると、エリア・区分・会社・路線・乗車駅まで自動で埋まる（ショートカットと同じ仕組み）。
+---------------------------------------- */
+// 正式社名⇄通称・表記ゆれの対応表（駅データAPIとマスタの路線名表記のズレを吸収する）
+const LINE_NAME_ALIASES = [
+  [/西日本旅客鉄道/g, "JR"], [/東日本旅客鉄道/g, "JR"], [/東海旅客鉄道/g, "JR"],
+  [/九州旅客鉄道/g, "JR"], [/北海道旅客鉄道/g, "JR"], [/四国旅客鉄道/g, "JR"],
+  [/大阪市高速電気軌道/g, "大阪メトロ"], [/大阪市営地下鉄/g, "大阪メトロ"],
+  [/阪急電鉄/g, "阪急"], [/阪神電気鉄道/g, "阪神"], [/京阪電気鉄道/g, "京阪"],
+  [/近畿日本鉄道/g, "近鉄"], [/南海電気鉄道/g, "南海"], [/西日本鉄道/g, "西鉄"],
+  [/東京地下鉄/g, "東京メトロ"], [/都営地下鉄/g, "都営"], [/東急電鉄/g, "東急"],
+  [/京王電鉄/g, "京王"], [/小田急電鉄/g, "小田急"], [/京成電鉄/g, "京成"],
+  [/西武鉄道/g, "西武"], [/東武鉄道/g, "東武"], [/相模鉄道/g, "相鉄"],
+];
+
+function normalizeLineName(name) {
+  if (!name) return "";
+  let n = String(name);
+  LINE_NAME_ALIASES.forEach(([pattern, replacement]) => { n = n.replace(pattern, replacement); });
+  return n.trim();
+}
+
+// 表記ゆれを吸収したうえで「一致」または「片方がもう片方を包含」していればOKとみなす
+function isLineMatch(masterLine, apiLine) {
+  const a = normalizeLineName(masterLine);
+  const b = normalizeLineName(apiLine);
+  if (!a || !b) return false;
+  if (a === b || a.includes(b) || b.includes(a)) return true;
+  // 末尾の「線」を除いた核部分でも比較（さらに表記ゆれに強くする）
+  const coreA = a.replace(/線$/, "");
+  const coreB = b.replace(/線$/, "");
+  return !!coreA && !!coreB && (coreA === coreB || a.includes(coreB) || b.includes(coreA));
+}
+
+function findNearbyStations() {
+  const btn = document.getElementById("geoStationBtn");
+  const resultBox = document.getElementById("geoStationResult");
+  resultBox.innerHTML = "";
+
+  if (!navigator.geolocation) {
+    resultBox.textContent = "この端末では位置情報が使えません。";
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = "📍 探索中...";
+
+  navigator.geolocation.getCurrentPosition(
+    async (pos) => {
+      try {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+
+        const res = await fetch(`https://express.heartrails.com/api/json?method=getStations&x=${lon}&y=${lat}`);
+        const data = await res.json();
+        const stations = (data.response && data.response.station) || [];
+
+        // 駅名は自分のマスタデータに存在するものだけ対象にし、路線名は表記ゆれ込みで突き合わせる
+        const matches = [];
+        const seen = new Set();
+        stations.forEach(st => {
+          const stationRows = (allstationData || []).filter(row => row["駅名"] === st.name);
+          if (!stationRows.length) return;
+
+          const hitRow = stationRows.find(row => isLineMatch(row["路線"], st.line));
+          if (hitRow) {
+            const key = st.name + "|" + hitRow["路線"];
+            if (!seen.has(key)) {
+              seen.add(key);
+              matches.push({ name: st.name, line: hitRow["路線"], confident: true });
+            }
+          } else {
+            // 路線名の表記があまりに違って一致判定できない場合のフォールバック：
+            // 駅名だけは一致しているので、その駅にある自分の路線候補を「駅名のみ一致」として出す
+            stationRows.forEach(row => {
+              const key = st.name + "|" + row["路線"];
+              if (!seen.has(key)) {
+                seen.add(key);
+                matches.push({ name: st.name, line: row["路線"], confident: false });
+              }
+            });
+          }
+        });
+
+        renderGeoStationResult(matches);
+      } catch (e) {
+        console.error("駅取得エラー:", e);
+        resultBox.textContent = "駅の取得に失敗しました。時間を置いて再試行してください。";
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "📍 現在地から駅を探す";
+      }
+    },
+    (err) => {
+      console.error("位置情報エラー:", err);
+      resultBox.textContent = "位置情報を取得できませんでした。端末の位置情報設定を確認してください。";
+      btn.disabled = false;
+      btn.textContent = "📍 現在地から駅を探す";
+    }
+  );
+}
+
+function renderGeoStationResult(matches) {
+  const resultBox = document.getElementById("geoStationResult");
+  resultBox.innerHTML = "";
+
+  if (!matches.length) {
+    resultBox.textContent = "近くに一致する駅データが見つかりませんでした。手動で選択してください。";
+    return;
+  }
+
+  const label = document.createElement("div");
+  label.className = "geo-result-label";
+  label.textContent = "近くの駅（近い順）を選ぶと、エリア〜乗車駅まで自動入力されます：";
+  resultBox.appendChild(label);
+
+  const select = document.createElement("select");
+  select.id = "geoStationSelect";
+
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = "選択してください";
+  select.appendChild(blank);
+
+  matches.forEach((m, i) => {
+    const opt = document.createElement("option");
+    opt.value = i;
+    opt.textContent = m.confident
+      ? `${m.name}（${m.line}）`
+      : `${m.name}（${m.line}）※駅名のみ一致`;
+    select.appendChild(opt);
+  });
+
+  select.addEventListener("change", () => {
+    if (select.value === "") return;
+    applyGeoStation(matches[select.value]);
+  });
+
+  resultBox.appendChild(select);
+}
+
+async function applyGeoStation(match) {
+  function setAndTrigger(id, val) {
+    const el = document.getElementById(id);
+    if (!el || !val) return;
+    el.value = val;
+    el.dispatchEvent(new Event("change"));
+  }
+  function setAndTriggerFirst(selector, val) {
+    const el = document.querySelector(selector);
+    if (!el || !val) return;
+    el.value = val;
+    el.dispatchEvent(new Event("change"));
+  }
+  function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // 路線から 区分・会社 を特定
+  const routeRow = (allrouteData || []).find(r => r["路線"] === match.line);
+  if (!routeRow) return;
+  const typeVal = routeRow["区分"];
+  const companyVal = routeRow["会社"];
+
+  // 区分・会社から えりあ を特定
+  const countryRow = (allCountryData || []).find(r => r["区分"] === typeVal && r["会社"] === companyVal);
+  const areaVal = countryRow ? countryRow["えりあ"] : "";
+
+  setAndTrigger("area", areaVal);
+  setAndTrigger("type", typeVal);
+  await wait(300);
+  setAndTrigger("country", companyVal);
+  await wait(300);
+  setAndTrigger("route", match.line);
+  await wait(300);
+  setAndTriggerFirst(".station-select", match.name);
+}
 
 
