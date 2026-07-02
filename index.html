@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
+  <!-- version: 1.1.0 -->
+  <!-- 1.1.0: フォームを「まとまり」単位でグループ化し、併結（複数種別・行先）に対応 -->
   <style>
     body {
       font-family: "Hiragino Sans", "Segoe UI", sans-serif;
@@ -72,6 +74,88 @@
     small {
       font-size: 12px;
       color: #666;
+    }
+
+    /* ===== まとまりA：エリア・区分／会社・路線を横並びに ===== */
+    .row-2 {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+    }
+    .row-2 .field { flex: 1; min-width: 0; }
+    .row-2 .field h3 { margin: 0 0 6px 0; }
+    .row-2 .field select { width: 100%; }
+
+    /* ===== まとまりB：乗車駅 → 種別／行先 ===== */
+    #rideBlocks h3 { margin-top: 20px; margin-bottom: 8px; }
+
+    .ride-block {
+      background: #FAFBFD;
+      border: 1.5px solid #E3E8F0;
+      border-radius: 12px;
+      padding: 14px;
+      margin-top: 12px;
+    }
+    .ride-block-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .ride-block-label {
+      font-size: 13px;
+      font-weight: bold;
+      color: #004C97;
+    }
+    .remove-couple-btn {
+      width: auto;
+      padding: 4px 12px;
+      margin-top: 0;
+      font-size: 12px;
+      font-weight: normal;
+      background: #f0f0f0;
+      color: #888;
+      border-radius: 20px;
+    }
+    .remove-couple-btn:hover { background: #E60012; color: white; }
+
+    .ride-block-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .ride-block-row .field { min-width: 0; }
+    .ride-block-row .field select { width: 100%; }
+    .station-field { flex: 0 0 36%; }
+    .stack-field { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+    .arrow {
+      flex-shrink: 0;
+      font-size: 20px;
+      font-weight: bold;
+      color: #004C97;
+      padding-top: 18px;
+    }
+    .mini-label {
+      display: block;
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 2px;
+    }
+
+    #coupleBtn {
+      background: white;
+      color: #004C97;
+      border: 1.5px dashed #96b6dd;
+      font-weight: bold;
+      margin-top: 12px;
+    }
+    #coupleBtn:hover { background: #EEF4FF; color: #004C97; }
+
+    @media (max-width: 380px) {
+      .ride-block-row { flex-wrap: wrap; }
+      .station-field { flex: 1 1 100%; }
+      .arrow { display: none; }
+      .stack-field { flex: 1 1 100%; }
     }
 
     /* ===== LOADING POPUP ===== */
@@ -306,25 +390,47 @@
     </select>
     <a href="settings.html">設定 ›</a>
   </div>
-  <select id="area"></select>
+  <div class="row-2">
+    <div class="field">
+      <h3>エリア</h3>
+      <select id="area"></select>
+    </div>
+    <div class="field">
+      <h3>区分</h3>
+      <select id="type"></select>
+    </div>
+  </div>
 
-  <label><h3>区分</h3></label>
-  <select id="type"></select>
+  <div class="row-2">
+    <div class="field">
+      <h3>会社</h3>
+      <select id="country"></select>
+    </div>
+    <div class="field">
+      <h3>路線</h3>
+      <select id="route"></select>
+    </div>
+  </div>
 
-  <label><h3>会社</h3></label>
-  <select id="country"></select>
-
-  <label><h3>路線</h3></label>
-  <select id="route"></select>
-
-  <label><h3>乗車駅</h3></label>
-  <select id="station"></select>
-
-  <label><h3>種別</h3></label>
-  <select id="sujitype"></select>
-
-  <label><h3>行先</h3></label>
-  <select id="bound"></select>
+  <div id="rideBlocks">
+    <h3>乗車情報</h3>
+    <div class="ride-block" data-index="0">
+      <div class="ride-block-row">
+        <div class="field station-field">
+          <label class="mini-label">乗車駅</label>
+          <select class="station-select"><option value="">選択してください</option></select>
+        </div>
+        <div class="arrow">→</div>
+        <div class="field stack-field">
+          <label class="mini-label">種別</label>
+          <select class="sujitype-select"><option value="">選択してください</option></select>
+          <label class="mini-label">行先</label>
+          <select class="bound-select"><option value="">選択してください</option></select>
+        </div>
+      </div>
+    </div>
+  </div>
+  <button type="button" id="coupleBtn" onclick="addCoupling()" style="display:none;">🔗 併結を追加</button>
 
   <label><h3>車両形式</h3></label>
   <select id="model"></select>
@@ -403,6 +509,13 @@
       el.dispatchEvent(new Event("change"));
     }
 
+    function setAndTriggerFirst(selector, val) {
+      const el = document.querySelector(selector);
+      if (!el) return;
+      el.value = val;
+      el.dispatchEvent(new Event("change"));
+    }
+
     // scripts.jsの連動プルダウンを順番にトリガー
     setAndTrigger("area", sc.area);
     setAndTrigger("type", sc.type);
@@ -411,9 +524,10 @@
     await wait(300);
     setAndTrigger("route", sc.route);
     await wait(300);
-    setAndTrigger("station",  sc.station);
-    setAndTrigger("sujitype", sc.sujitype);
-    setAndTrigger("bound",    sc.bound);
+    // ショートカットは1つ目の乗車ブロック（併結なし）に適用
+    setAndTriggerFirst(".station-select",  sc.station);
+    setAndTriggerFirst(".sujitype-select", sc.sujitype);
+    setAndTriggerFirst(".bound-select",    sc.bound);
 
     // 選択をリセット（次回も使えるように）
     document.getElementById("shortcutSelect").value = "";

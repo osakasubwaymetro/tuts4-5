@@ -1,3 +1,5 @@
+// version: 1.1.1
+// 1.1.1: 併結判定を4列目の位置指定ではなく列名「併結」で判定するように修正
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -84,6 +86,7 @@ fetch(route)
   .then(res => res.json())
   .then(data => {
     allrouteData = data;
+    updateCoupleButtonVisibility();
   })
   .catch(err => console.error(err));
 
@@ -164,35 +167,33 @@ fetch("https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/sta
   .then(res => res.json())
   .then(data => {
     allstationData = data;
+    updatestationList();
   })
   .catch(err => console.error(err));
 
-// areaまたはtypeが変わったら、countryプルダウンを更新
 document.getElementById("route").addEventListener("change", updatestationList);
 
+// 併結で追加された分も含め、.station-select を全て更新する
 function updatestationList() {
   const routeVal = document.getElementById("route").value;
-  const select = document.getElementById("station");
+  const selects = document.querySelectorAll(".station-select");
+  if (!allstationData) return;
 
-  select.innerHTML = '<option value="">選択してください</option>';
+  const filtered = routeVal
+    ? allstationData.filter(row => row["路線"] === routeVal)
+    : [];
+  const names = [...new Set(filtered.map(r => r["駅名"]))];
 
-  // 両方選ばれていなければ終了
-  if (!routeVal) return;
-
-  // スプレッドシートの station シート構成が:
-  // 路線 | 駅名
-  const filtered = allstationData.filter(row =>
-    row["路線"] === routeVal
-  );
-
-  // 重複を排除
-  const companies = [...new Set(filtered.map(r => r["駅名"]))];
-
-  companies.forEach(c => {
-    const opt = document.createElement("option");
-    opt.value = c;
-    opt.textContent = c;
-    select.appendChild(opt);
+  selects.forEach(select => {
+    const current = select.value;
+    select.innerHTML = '<option value="">選択してください</option>';
+    names.forEach(c => {
+      const opt = document.createElement("option");
+      opt.value = c;
+      opt.textContent = c;
+      select.appendChild(opt);
+    });
+    if (names.includes(current)) select.value = current;
   });
 }
 
@@ -203,35 +204,33 @@ fetch("https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/suj
   .then(res => res.json())
   .then(data => {
     allsujitypeData = data;
+    updatesujitypeList();
   })
   .catch(err => console.error(err));
 
-// areaまたはtypeが変わったら、sujitypeプルダウンを更新
 document.getElementById("route").addEventListener("change", updatesujitypeList);
 
+// 併結で追加された分も含め、.sujitype-select を全て更新する
 function updatesujitypeList() {
   const routeVal = document.getElementById("route").value;
-  const select = document.getElementById("sujitype");
+  const selects = document.querySelectorAll(".sujitype-select");
+  if (!allsujitypeData) return;
 
-  select.innerHTML = '<option value="">選択してください</option>';
+  const filtered = routeVal
+    ? allsujitypeData.filter(row => row["路線"] === routeVal)
+    : [];
+  const names = [...new Set(filtered.map(r => r["種別"]))];
 
-  // 両方選ばれていなければ終了
-  if (!routeVal) return;
-
-  // スプレッドシートの sujitype シート構成が:
-  // 路線 | 駅名
-  const filtered = allsujitypeData.filter(row =>
-    row["路線"] === routeVal
-  );
-
-  // 重複を排除
-  const companies = [...new Set(filtered.map(r => r["種別"]))];
-
-  companies.forEach(c => {
-    const opt = document.createElement("option");
-    opt.value = c;
-    opt.textContent = c;
-    select.appendChild(opt);
+  selects.forEach(select => {
+    const current = select.value;
+    select.innerHTML = '<option value="">選択してください</option>';
+    names.forEach(c => {
+      const opt = document.createElement("option");
+      opt.value = c;
+      opt.textContent = c;
+      select.appendChild(opt);
+    });
+    if (names.includes(current)) select.value = current;
   });
 }
 
@@ -242,36 +241,117 @@ fetch("https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/bou
   .then(res => res.json())
   .then(data => {
     allboundData = data;
+    updateboundList();
   })
   .catch(err => console.error(err));
 
-// areaまたはtypeが変わったら、boundプルダウンを更新
 document.getElementById("route").addEventListener("change", updateboundList);
 
+// 併結で追加された分も含め、.bound-select を全て更新する
 function updateboundList() {
   const routeVal = document.getElementById("route").value;
-  const select = document.getElementById("bound");
+  const selects = document.querySelectorAll(".bound-select");
+  if (!allboundData) return;
 
-  select.innerHTML = '<option value="">選択してください</option>';
+  const filtered = routeVal
+    ? allboundData.filter(row => row["路線"] === routeVal)
+    : [];
+  const names = [...new Set(filtered.map(r => r["行先"]))];
 
-  // 両方選ばれていなければ終了
-  if (!routeVal) return;
-
-  // スプレッドシートの bound シート構成が:
-  // 路線 | 駅名
-  const filtered = allboundData.filter(row =>
-    row["路線"] === routeVal
-  );
-
-  // 重複を排除
-  const companies = [...new Set(filtered.map(r => r["行先"]))];
-
-  companies.forEach(c => {
-    const opt = document.createElement("option");
-    opt.value = c;
-    opt.textContent = c;
-    select.appendChild(opt);
+  selects.forEach(select => {
+    const current = select.value;
+    select.innerHTML = '<option value="">選択してください</option>';
+    names.forEach(c => {
+      const opt = document.createElement("option");
+      opt.value = c;
+      opt.textContent = c;
+      select.appendChild(opt);
+    });
+    if (names.includes(current)) select.value = current;
   });
+}
+
+
+
+/* ----------------------------------------
+   併結（まとまりBの複製）対応
+   マスタデータ（route シート）の D列がチェック（TRUE）の路線だけ
+   「併結を追加」ボタンを表示する
+---------------------------------------- */
+let rideBlockCount = 1;
+
+function routeHasCoupling(routeVal) {
+  if (!routeVal || !allrouteData || !allrouteData.length) return false;
+
+  const typeVal = document.getElementById("type").value;
+  const countryVal = document.getElementById("country").value;
+
+  const row = allrouteData.find(r =>
+    r["路線"] === routeVal &&
+    (!typeVal || r["区分"] === typeVal) &&
+    (!countryVal || r["会社"] === countryVal)
+  ) || allrouteData.find(r => r["路線"] === routeVal);
+
+  if (!row) return false;
+
+  // D列は「併結」列。TRUE/チェック済みなら併結可能とみなす
+  const v = row["併結"];
+
+  return v === true || v === 1 ||
+    ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
+}
+
+function updateCoupleButtonVisibility() {
+  const routeVal = document.getElementById("route").value;
+  const btn = document.getElementById("coupleBtn");
+  btn.style.display = routeHasCoupling(routeVal) ? "block" : "none";
+}
+
+// 路線を変更したら、併結ブロックは一旦1つに戻す
+function resetRideBlocksToOne() {
+  const container = document.getElementById("rideBlocks");
+  const blocks = container.querySelectorAll(".ride-block");
+  blocks.forEach((b, i) => { if (i > 0) b.remove(); });
+  rideBlockCount = 1;
+}
+
+document.getElementById("route").addEventListener("change", () => {
+  resetRideBlocksToOne();
+  updateCoupleButtonVisibility();
+});
+
+function addCoupling() {
+  rideBlockCount++;
+  const container = document.getElementById("rideBlocks");
+
+  const block = document.createElement("div");
+  block.className = "ride-block";
+  block.dataset.index = rideBlockCount - 1;
+  block.innerHTML = `
+    <div class="ride-block-head">
+      <span class="ride-block-label">併結 ${rideBlockCount}号車</span>
+      <button type="button" class="remove-couple-btn" onclick="this.closest('.ride-block').remove()">✕ 削除</button>
+    </div>
+    <div class="ride-block-row">
+      <div class="field station-field">
+        <label class="mini-label">乗車駅</label>
+        <select class="station-select"><option value="">選択してください</option></select>
+      </div>
+      <div class="arrow">→</div>
+      <div class="field stack-field">
+        <label class="mini-label">種別</label>
+        <select class="sujitype-select"><option value="">選択してください</option></select>
+        <label class="mini-label">行先</label>
+        <select class="bound-select"><option value="">選択してください</option></select>
+      </div>
+    </div>
+  `;
+  container.appendChild(block);
+
+  // 新しく増えたプルダウンにも選択肢を反映
+  updatestationList();
+  updatesujitypeList();
+  updateboundList();
 }
 
 
@@ -324,9 +404,18 @@ function upload() {
     const countryValue = document.getElementById('country').value;
     const routeValue = document.getElementById('route').value;
     const modelValue = document.getElementById('model').value;
-    const stationValue = document.getElementById('station').value;
-    const sujitypeValue = document.getElementById('sujitype').value;
-    const boundValue = document.getElementById('bound').value;
+
+    // 乗車駅は1つ目のまとまりB（併結でも乗る場所は同じなので）
+    const stationSelects = document.querySelectorAll(".station-select");
+    const stationValue = stationSelects.length ? stationSelects[0].value : "";
+
+    // 併結時は 種別1/種別2/... 行先1/行先2/... のように「/」区切りで結合
+    // （スプレッドシートの形は崩さず、1セルに複数分を記録する）
+    const sujitypeValue = [...document.querySelectorAll(".sujitype-select")]
+      .map(el => el.value).filter(Boolean).join("/");
+    const boundValue = [...document.querySelectorAll(".bound-select")]
+      .map(el => el.value).filter(Boolean).join("/");
+
     const numberValue = document.getElementById('number').value;
     const memoValue = document.getElementById('memo').value;
     console.log(numberValue)
