@@ -4,7 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.7.0 -->
+<!-- version: 1.7.1 -->
+<!-- 1.7.1: 「via_〇〇へ直通」を直接タップするクイックジャンプ経路で、接続駅・経由路線が
+           チェーンとして記録されていなかったバグを修正。タップした瞬間に隣接する実駅を
+           自動で接続駅としてチェーンに積むように変更 -->
 <!-- 1.7.0: 降車駅ポップアップに複数路線をまたぐ直通乗り継ぎ記録（🔀 別路線に直通する）を追加 -->
 <!-- 1.6.0: 降車駅ボタン表示直後0.45秒は誤タップ防止のため押せないように変更。
            記録済みの降車駅をタップすると再度選び直せる（上書き）ように対応 -->
@@ -284,6 +287,21 @@ function formatStationOption(name) {
   return isViaEntry(name) ? `→ ${viaTargetRoute(name)}へ直通` : name;
 }
 
+// via_駅名の位置の前後で、一番近い「実駅」（via_ではない駅）を探す
+// （降車駅ポップアップで via_ を直接タップした際に、接続駅として自動記録するために使う）
+function findViaNeighborStation(routeName, viaName) {
+  const rows = stationMaster.filter(r => r["路線"] === routeName).map(r => r["駅名"]);
+  const idx = rows.indexOf(viaName);
+  if (idx === -1) return null;
+  for (let i = idx - 1; i >= 0; i--) {
+    if (!isViaEntry(rows[i])) return rows[i];
+  }
+  for (let i = idx + 1; i < rows.length; i++) {
+    if (!isViaEntry(rows[i])) return rows[i];
+  }
+  return null;
+}
+
 // 各種マスタ・自分のtransfers記録を読み込む（降車駅記録ウィジェット用）
 Promise.all([
   fetch(STATION_URL).then(r => r.json()).catch(() => []),
@@ -440,7 +458,10 @@ function openDescentModal(row) {
         label: formatStationOption(n),
         onClick: () => {
           if (isViaEntry(n)) {
-            currentRoute = viaTargetRoute(n);
+            const nextRoute = viaTargetRoute(n);
+            const neighbor = findViaNeighborStation(currentRoute, n);
+            if (neighbor) chain.push({ junction: neighbor, nextRoute });
+            currentRoute = nextRoute;
             render();
           } else {
             finishAndSubmit(n);

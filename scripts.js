@@ -1,7 +1,7 @@
-// version: 1.13.0
-// 1.13.0: 降車駅ポップアップに「🔀 別路線に直通する」を追加。乗換駅→次路線を何段でも
-//         積み上げてパンくず表示し、「接続駅@次路線|接続駅@次路線|最終降車駅」形式で記録。
-//         via_マスタに頼らず、複数路線をまたぐ直通乗車を正確に区間分解できるように対応
+// version: 1.13.1
+// 1.13.1: 「via_〇〇へ直通」を直接タップするクイックジャンプ経路で、接続駅・経由路線が
+//         チェーンとして記録されていなかったバグを修正。タップした瞬間に隣接する実駅を
+//         自動で接続駅としてチェーンに積むように変更（🔀ボタンを使わなくても正しく記録される）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -198,6 +198,21 @@ function viaTargetRoute(name) {
 }
 function formatStationOption(name) {
   return isViaEntry(name) ? `→ ${viaTargetRoute(name)}へ直通` : name;
+}
+
+// via_駅名の位置の前後で、一番近い「実駅」（via_ではない駅）を探す
+// （降車駅ポップアップで via_ を直接タップした際に、接続駅として自動記録するために使う）
+function findViaNeighborStation(routeName, viaName) {
+  const rows = (allstationData || []).filter(r => r["路線"] === routeName).map(r => r["駅名"]);
+  const idx = rows.indexOf(viaName);
+  if (idx === -1) return null;
+  for (let i = idx - 1; i >= 0; i--) {
+    if (!isViaEntry(rows[i])) return rows[i];
+  }
+  for (let i = idx + 1; i < rows.length; i++) {
+    if (!isViaEntry(rows[i])) return rows[i];
+  }
+  return null;
 }
 
 // 乗車駅プルダウンで「via_路線名」を選んだら、そのままその路線の駅を選べるようジャンプする
@@ -1092,7 +1107,10 @@ function openDescentPopup(prev) {
         label: formatStationOption(n),
         onClick: () => {
           if (isViaEntry(n)) {
-            currentRoute = viaTargetRoute(n);
+            const nextRoute = viaTargetRoute(n);
+            const neighbor = findViaNeighborStation(currentRoute, n);
+            if (neighbor) chain.push({ junction: neighbor, nextRoute });
+            currentRoute = nextRoute;
             render();
           } else {
             finishAndSubmit(n);
