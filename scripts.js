@@ -1,6 +1,6 @@
-// version: 1.10.1
-// 1.10.1: 降車駅ポップアップに時刻・乗車駅・種別・行先の詳細表示を追加（948件など大量の
-//         過去データをチェックする際にどの乗車を聞かれているか分かるようにするため）
+// version: 1.10.2
+// 1.10.2: 古いバージョンで積まれたキュー項目に乗車駅・種別が無く「乗車駅不明」になる
+//         不具合を修正。表示前にキャッシュ済みデータから自動補完し、キューにも書き戻す
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -1045,8 +1045,58 @@ function formatRideTimeLabel(rideTime) {
   return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}(${weekday}) ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function openDescentPopup(prev) {
+function timeKeyMatch(a, b) {
+  if (!a || !b) return false;
+  if (String(a) === String(b)) return true;
+  const da = new Date(a), db = new Date(b);
+  return !isNaN(da) && !isNaN(db) && da.getTime() === db.getTime();
+}
+
+// 古いバージョンで積まれたキュー項目は乗車駅・種別を持っていないことがあるので、
+// 表示前にキャッシュ済みの乗車データから補完し、キューにも書き戻しておく
+async function enrichPrevIfNeeded(prev) {
+  if (prev.station) return prev;
+
+  try {
+    const rides = await getRideHistoryCached();
+    const match = rides.find(r =>
+      String(r["ユーザー名"]) === String(prev.username) &&
+      timeKeyMatch(r["時刻"] || r["発車時刻"] || "", prev.rideTime)
+    );
+    if (match) {
+      prev.station = match["乗車駅"] || "";
+      prev.sujitype = match["種別"] || "";
+
+      const queue = getDescentQueue().map(q =>
+        queueKey(q) === queueKey(prev) ? { ...q, station: prev.station, sujitype: prev.sujitype } : q
+      );
+      setDescentQueue(queue);
+
+      const pendingRaw = localStorage.getItem("tuts4_pending_descent");
+      if (pendingRaw) {
+        try {
+          const pending = JSON.parse(pendingRaw);
+          if (queueKey(pending) === queueKey(prev)) {
+            pending.station = prev.station;
+            pending.sujitype = prev.sujitype;
+            localStorage.setItem("tuts4_pending_descent", JSON.stringify(pending));
+          }
+        } catch (e) { /* ignore */ }
+      }
+    }
+  } catch (e) {
+    console.error("乗車駅情報の補完に失敗:", e);
+  }
+
+  return prev;
+}
+
+async function openDescentPopup(prev) {
   setModalTitle("降車駅の記録");
+  openModalLoading("降車駅の記録", "読み込み中...");
+
+  prev = await enrichPrevIfNeeded(prev);
+
   const list = document.getElementById("historyModalList");
 
   const queueLen = getDescentQueue().length;
