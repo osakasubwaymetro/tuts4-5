@@ -1,7 +1,5 @@
-// version: 1.12.0
-// 1.12.0: 投稿をローカルに一時保存し、1秒だけ「送信中」表示にしてから先に進めるように変更
-//         （GAS応答待ちで体感が遅かったため）。実際の送信は裏で行い、失敗しても消さずに
-//         残しておいて、ページを開いた時・オンライン復帰時・30秒おきに自動で再送する
+// version: 1.12.1
+// 1.12.1: 投稿の「送信中」表示を1秒→0.5秒に短縮
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -498,7 +496,7 @@ function upload() {
     handleTripBookkeeping(routeValue, boundValue, timeValue, stationValue, sujitypeValue);
     showStampPopup(modelValue, numberValue);
     resetForm();
-  }, 1000);
+  }, 500);
 }
 
 // 投稿完了後、次の入力に備えてフォームを全クリアする

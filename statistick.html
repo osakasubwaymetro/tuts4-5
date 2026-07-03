@@ -4,7 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>統計情報 | tuts4 — フル版</title>
-<!-- version: 1.5.1 -->
+<!-- version: 1.5.2 -->
+<!-- 1.5.2: 乗車駅がvia_（直通先）だった乗車が丸ごとスキップされていたバグを修正。
+           A→B→Cのような多段の直通乗り継ぎで、途中区間の路線が地図に反映されなかった問題を解消 -->
 <!-- 1.5.1: 降車駅がvia_（直通先）の乗車が乗車マップに反映されないバグを修正。
            via_は隣接する実駅の位置として区間計算するように変更 -->
 <!-- 1.5.0: 各路線の行に「🔄」更新ボタンを追加。全体を再計算せず、その路線だけ降車データを再取得して更新できるように -->
@@ -514,7 +516,10 @@ function buildRouteCoverageRow(routeName, rides, stationData, myTransfers) {
 
     const boundList = [String(matchedTransfer["降車駅"] || "").trim()].filter(Boolean);
 
-    const stationIdx = stationsOnRoute.indexOf(r.station);
+    let stationIdx = stationsOnRoute.indexOf(r.station);
+    if (stationIdx === -1 && Object.prototype.hasOwnProperty.call(viaIndexMap, r.station)) {
+      stationIdx = viaIndexMap[r.station]; // 乗車駅が直通先（via_）の場合も隣接する実駅の位置として扱う
+    }
     if (stationIdx === -1) return;
 
     boundList.forEach(b => {
