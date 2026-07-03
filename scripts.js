@@ -1,6 +1,6 @@
-// version: 1.3.1
-// 1.3.1: allstationData等のマスタデータ用変数が宣言されておらず、読み込み完了前に参照すると
-//        ReferenceErrorになる不具合を修正（先頭でlet宣言し初期値[]を持たせた）
+// version: 1.4.0
+// 1.4.0: 路線名エイリアス表をハードコードからマスタデータ（linealiasシート）読み込みに変更。
+//        時刻表の代わりに「方面（両端駅）＋自分の過去の乗車記録」から種別・行先を選べる機能を追加
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -13,6 +13,7 @@ let allsujitypeData = [];
 let allboundData = [];
 let allnumberData = [];
 let allRemarkData = [];
+let lineAliasData = []; // 路線名の正式名称⇄通称対応表（linealiasシート）
 document.getElementById("username").value = localStorage.getItem("username");
 
 
@@ -484,6 +485,10 @@ function resetForm() {
 
   const resultBox = document.getElementById("geoStationResult");
   if (resultBox) resultBox.innerHTML = "";
+
+  // 直近の投稿を反映できるよう、乗車履歴キャッシュ（方面別の過去記録検索用）は無効化しておく
+  const username = localStorage.getItem("username");
+  if (username) localStorage.removeItem("tuts4_history_cache_" + username);
 }
 
 function setCurrentDateTime() {
@@ -558,22 +563,20 @@ function updateRemarkList() {
    「駅名・路線名が完全一致」するものだけを候補としてリストアップする。
    選択すると、エリア・区分・会社・路線・乗車駅まで自動で埋まる（ショートカットと同じ仕組み）。
 ---------------------------------------- */
-// 正式社名⇄通称・表記ゆれの対応表（駅データAPIとマスタの路線名表記のズレを吸収する）
-const LINE_NAME_ALIASES = [
-  [/西日本旅客鉄道/g, "JR"], [/東日本旅客鉄道/g, "JR"], [/東海旅客鉄道/g, "JR"],
-  [/九州旅客鉄道/g, "JR"], [/北海道旅客鉄道/g, "JR"], [/四国旅客鉄道/g, "JR"],
-  [/大阪市高速電気軌道/g, "大阪メトロ"], [/大阪市営地下鉄/g, "大阪メトロ"],
-  [/阪急電鉄/g, "阪急"], [/阪神電気鉄道/g, "阪神"], [/京阪電気鉄道/g, "京阪"],
-  [/近畿日本鉄道/g, "近鉄"], [/南海電気鉄道/g, "南海"], [/西日本鉄道/g, "西鉄"],
-  [/東京地下鉄/g, "東京メトロ"], [/都営地下鉄/g, "都営"], [/東急電鉄/g, "東急"],
-  [/京王電鉄/g, "京王"], [/小田急電鉄/g, "小田急"], [/京成電鉄/g, "京成"],
-  [/西武鉄道/g, "西武"], [/東武鉄道/g, "東武"], [/相模鉄道/g, "相鉄"],
-];
+// 正式社名⇄通称・表記ゆれの対応表（linealiasシート：正式名称・通称）
+fetch("https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/linealias")
+  .then(res => res.json())
+  .then(data => {
+    lineAliasData = data
+      .map(row => ({ official: row["正式名称"] || "", alias: row["通称"] || "" }))
+      .filter(r => r.official && r.alias);
+  })
+  .catch(err => console.error("linealias取得エラー:", err));
 
 function normalizeLineName(name) {
   if (!name) return "";
   let n = String(name);
-  LINE_NAME_ALIASES.forEach(([pattern, replacement]) => { n = n.replace(pattern, replacement); });
+  lineAliasData.forEach(({ official, alias }) => { n = n.split(official).join(alias); });
   return n.trim();
 }
 
@@ -714,6 +717,175 @@ async function applyGeoStation(match) {
   setAndTrigger("route", match.line);
   await wait(300);
   setAndTriggerFirst(".station-select", match.name);
+}
+
+
+
+/* ----------------------------------------
+   方面（上り/下り）＋過去の乗車記録から選ぶ
+   時刻表が使えないので、代わりに「station シートに登録されている駅の並び順＝
+   路線上の物理的な順番」とみなし、その両端の駅名を方面の目印にする。
+   方面を選ぶと、自分の過去の投稿履歴（その路線・その方面）から
+   よく使う「種別／行先」の組み合わせを候補として出す。
+
+   ※ 前提：station シートの各路線の行が、実際の駅の並び順になっている必要がある
+      （ループ線・支線・直通運転先の駅は正しく判定できない場合がある）
+---------------------------------------- */
+
+document.getElementById("route").addEventListener("change", updateDirectionField);
+
+function updateDirectionField() {
+  const routeVal = document.getElementById("route").value;
+  const field = document.getElementById("directionField");
+  const select = document.getElementById("direction");
+  const historyBox = document.getElementById("directionHistoryResult");
+  if (!field || !select) return;
+
+  select.innerHTML = '<option value="">選択してください</option>';
+  if (historyBox) historyBox.innerHTML = "";
+
+  const stationsOnRoute = (allstationData || []).filter(r => r["路線"] === routeVal);
+  if (!routeVal || stationsOnRoute.length < 2) {
+    field.style.display = "none";
+    return;
+  }
+
+  const first = stationsOnRoute[0]["駅名"];
+  const last = stationsOnRoute[stationsOnRoute.length - 1]["駅名"];
+  if (!first || !last || first === last) {
+    field.style.display = "none";
+    return;
+  }
+
+  [first, last].forEach(name => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = `${name} 方面`;
+    select.appendChild(opt);
+  });
+
+  field.style.display = "block";
+}
+
+document.getElementById("direction").addEventListener("change", showDirectionHistory);
+
+// 自分の過去の乗車履歴だけを取得（ユーザーごとにキャッシュし、他ユーザー分は保存しない）
+async function getMyRideHistoryCached() {
+  const username = localStorage.getItem("username");
+  if (!username) return [];
+
+  const CACHE_KEY = "tuts4_history_cache_" + username;
+  const cached = localStorage.getItem(CACHE_KEY);
+  if (cached) {
+    try { return JSON.parse(cached); } catch (e) { localStorage.removeItem(CACHE_KEY); }
+  }
+
+  const RIDES_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
+  try {
+    const res = await fetch(RIDES_URL);
+    const all = await res.json();
+    const mine = all.filter(r => String(r["ユーザー名"]) === String(username));
+    localStorage.setItem(CACHE_KEY, JSON.stringify(mine));
+    return mine;
+  } catch (e) {
+    console.error("乗車履歴の取得に失敗:", e);
+    return [];
+  }
+}
+
+async function showDirectionHistory() {
+  const routeVal = document.getElementById("route").value;
+  const dirVal = document.getElementById("direction").value;
+  const historyBox = document.getElementById("directionHistoryResult");
+  if (!historyBox) return;
+  historyBox.innerHTML = "";
+  if (!routeVal || !dirVal) return;
+
+  historyBox.textContent = "過去の乗車記録を確認中...";
+
+  const stationsOnRoute = (allstationData || []).filter(r => r["路線"] === routeVal);
+  const indexOf = name => stationsOnRoute.findIndex(r => r["駅名"] === name);
+  const dirIndex = indexOf(dirVal);
+  const otherIndex = dirIndex === 0 ? stationsOnRoute.length - 1 : 0;
+
+  const stationSelects = document.querySelectorAll(".station-select");
+  const boardingStation = stationSelects.length ? stationSelects[0].value : "";
+  const boardingIndex = indexOf(boardingStation);
+
+  const rides = await getMyRideHistoryCached();
+
+  // 同じ路線の自分の過去投稿から、行先が「選んだ方面寄り」のものだけ抽出
+  const candidates = [];
+  const seen = new Set();
+  rides.filter(r => r["路線"] === routeVal).forEach(r => {
+    const bounds = String(r["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
+    const types = String(r["種別"] || "").split("/").map(s => s.trim());
+    bounds.forEach((b, i) => {
+      const t = types[i] || types[0] || "";
+      const bIndex = indexOf(b);
+
+      let matchesDirection = true; // 駅リストに無い（直通運転先など）場合は判定できないので候補に含める
+      if (bIndex !== -1) {
+        if (boardingIndex !== -1) {
+          matchesDirection = (dirIndex > boardingIndex) ? (bIndex > boardingIndex) : (bIndex < boardingIndex);
+        } else {
+          matchesDirection = Math.abs(bIndex - dirIndex) < Math.abs(bIndex - otherIndex);
+        }
+      }
+
+      if (matchesDirection) {
+        const key = t + "|" + b;
+        if (!seen.has(key)) { seen.add(key); candidates.push({ type: t, bound: b }); }
+      }
+    });
+  });
+
+  renderDirectionHistory(candidates);
+}
+
+function renderDirectionHistory(candidates) {
+  const historyBox = document.getElementById("directionHistoryResult");
+  historyBox.innerHTML = "";
+
+  if (!candidates.length) {
+    historyBox.textContent = "この方面での過去の乗車記録が見つかりませんでした。";
+    return;
+  }
+
+  const label = document.createElement("div");
+  label.className = "geo-result-label";
+  label.textContent = "過去の乗車記録から選ぶ：";
+  historyBox.appendChild(label);
+
+  const select = document.createElement("select");
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = "選択してください";
+  select.appendChild(blank);
+
+  candidates.forEach((c, i) => {
+    const opt = document.createElement("option");
+    opt.value = i;
+    opt.textContent = `${c.type || "(種別不明)"} / ${c.bound}`;
+    select.appendChild(opt);
+  });
+
+  select.addEventListener("change", () => {
+    if (select.value === "") return;
+    const c = candidates[select.value];
+    const typeSel = document.querySelector(".sujitype-select");
+    const boundSel = document.querySelector(".bound-select");
+    if (typeSel && c.type) {
+      typeSel.value = c.type;
+      typeSel.dispatchEvent(new Event("change"));
+    }
+    if (boundSel) {
+      boundSel.value = c.bound;
+      boundSel.dispatchEvent(new Event("change"));
+    }
+  });
+
+  historyBox.appendChild(select);
 }
 
 
