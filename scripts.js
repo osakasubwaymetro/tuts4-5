@@ -1,6 +1,7 @@
-// version: 1.5.2
-// 1.5.2: 「乗車列車を選択」ボタンを押した瞬間にポップアップを開き、「確認中」を表示するように変更
-//        （今まではGPS取得・API取得が終わるまで何も表示されなかった）。エラー時もポップアップ内に表示
+// version: 1.6.0
+// 1.6.0: 過去の乗車記録の候補提案を「全ユーザーのデータ」から出すように変更（ユーザー名は表示しない）。
+//        乗車駅を選んだ時点で裏で先読みしておき、方面選択後のラグを解消。
+//        routeシートに「ダイヤ改正日」列があれば、その日以降の記録だけを候補にするように対応
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -486,9 +487,9 @@ function resetForm() {
   const resultBox = document.getElementById("geoStationResult");
   if (resultBox) resultBox.innerHTML = "";
 
-  // 直近の投稿を反映できるよう、乗車履歴キャッシュ（方面別の過去記録検索用）は無効化しておく
-  const username = localStorage.getItem("username");
-  if (username) localStorage.removeItem("tuts4_history_cache_" + username);
+  // 直近の投稿を反映できるよう、乗車履歴キャッシュ（候補提案用）は無効化しておく
+  localStorage.removeItem("tuts4_community_ride_cache");
+  _rideHistoryPromise = null;
 }
 
 function setCurrentDateTime() {
@@ -729,6 +730,9 @@ function startStationPopupFlow() {
   const boardingStation = stationSelects.length ? stationSelects[0].value : "";
   if (!routeVal || !boardingStation) return;
 
+  // 方面ポップアップを出している間に裏で先読みしておき、履歴選択時のラグを無くす
+  getRideHistoryCached();
+
   const stationsOnRoute = (allstationData || []).filter(r => r["路線"] === routeVal);
   if (stationsOnRoute.length < 2) return;
 
@@ -778,29 +782,38 @@ function openModalLoading(title, message) {
   if (overlay) overlay.classList.add("show");
 }
 
-// 自分の過去の乗車履歴だけを取得（ユーザーごとにキャッシュし、他ユーザー分は保存しない）
-async function getMyRideHistoryCached() {
-  const username = localStorage.getItem("username");
-  if (!username) return [];
+/* 種別・行先の候補提案だけは、自分以外のユーザーの投稿データも使う。
+   （ユーザー名は一切表示せず、種別・行先・時刻の傾向を見るだけのため。
+    「投稿履歴」「統計」は引き続き自分の分だけ表示・保存する） */
+let _rideHistoryPromise = null;
 
-  const CACHE_KEY = "tuts4_history_cache_" + username;
-  const cached = localStorage.getItem(CACHE_KEY);
-  if (cached) {
-    try { return JSON.parse(cached); } catch (e) { localStorage.removeItem(CACHE_KEY); }
-  }
+async function getRideHistoryCached() {
+  if (_rideHistoryPromise) return _rideHistoryPromise;
 
-  const RIDES_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
-  try {
-    const res = await fetch(RIDES_URL);
-    const all = await res.json();
-    const mine = all.filter(r => String(r["ユーザー名"]) === String(username));
-    localStorage.setItem(CACHE_KEY, JSON.stringify(mine));
-    return mine;
-  } catch (e) {
-    console.error("乗車履歴の取得に失敗:", e);
-    return [];
-  }
+  _rideHistoryPromise = (async () => {
+    const CACHE_KEY = "tuts4_community_ride_cache";
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (cached) {
+      try { return JSON.parse(cached); } catch (e) { localStorage.removeItem(CACHE_KEY); }
+    }
+
+    const RIDES_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
+    try {
+      const res = await fetch(RIDES_URL);
+      const all = await res.json();
+      localStorage.setItem(CACHE_KEY, JSON.stringify(all));
+      return all;
+    } catch (e) {
+      console.error("乗車履歴の取得に失敗:", e);
+      return [];
+    }
+  })();
+
+  return _rideHistoryPromise;
 }
+
+// ページを開いた時点で先読みを開始しておく（乗車駅を選ぶ頃には取得済みにしておくため）
+getRideHistoryCached();
 
 function timeOfDayMinutes(d) {
   return d.getHours() * 60 + d.getMinutes();
@@ -824,9 +837,15 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
   const dirIndex = indexOf(dirVal);
   const boardingIndex = indexOf(boardingStation);
 
-  const rides = await getMyRideHistoryCached();
+  // route シートに「ダイヤ改正日」が入っていれば、それ以降の記録だけを対象にする
+  const routeRow = (allrouteData || []).find(r => r["路線"] === routeVal);
+  const revisionRaw = routeRow ? routeRow["ダイヤ改正日"] : "";
+  const revisionDate = revisionRaw ? new Date(revisionRaw) : null;
+  const hasValidRevisionDate = revisionDate && !isNaN(revisionDate);
 
-  // 同じ路線・同じ乗車駅から乗った、自分の過去投稿のみを対象にする
+  const rides = await getRideHistoryCached();
+
+  // 同じ路線・同じ乗車駅の記録のみを対象にする（ユーザーは問わない）
   const raw = [];
   rides
     .filter(r => r["路線"] === routeVal && r["乗車駅"] === boardingStation)
@@ -835,6 +854,9 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
       const types = String(r["種別"] || "").split("/").map(s => s.trim());
       const parsedTime = new Date(r["時刻"] || r["発車時刻"] || "");
       const time = isNaN(parsedTime) ? null : parsedTime;
+
+      // ダイヤ改正日より前の記録は、今のダイヤと違う可能性があるので除外
+      if (hasValidRevisionDate && time && time < revisionDate) return;
 
       bounds.forEach((b, i) => {
         const t = types[i] || types[0] || "";
