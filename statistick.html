@@ -4,7 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>統計情報 | tuts4 — フル版</title>
-<!-- version: 1.6.0 -->
+<!-- version: 1.6.1 -->
+<!-- 1.6.1: 旧形式（単独via_）データの区間解決も、scripts.js/show.htmlと同じ方向判定ロジックに
+           統一。もう片方の区間端点の位置を見て、前方向・後方向どちらが正しいか判定するように変更 -->
 <!-- 1.6.0: 乗車区間の集計を「路線ごとの個別計算」から「全乗車を横断するグローバル計算」に刷新。
            新しい直通チェーン形式（接続駅@次路線|...|最終降車駅）を解析し、多段の直通乗り継ぎでも
            経由した全ての路線に正しく区間が塗られるように対応 -->
@@ -478,36 +480,54 @@ function buildLegs(boardingRoute, boardingStation, chain) {
   return legs;
 }
 
-// 路線ごとの駅リスト・via_隣接マップをキャッシュしながら作る
+// 路線ごとの駅リスト・via_隣接マップ（前方向・後方向の両方）をキャッシュしながら作る
 function getRouteStationInfo(routeName, stationData, cache) {
   if (cache[routeName]) return cache[routeName];
   const isVia = name => typeof name === "string" && name.startsWith("via_");
   const rawStationRows = stationData.filter(s => s["路線"] === routeName).map(s => s["駅名"]);
   const stationsOnRoute = rawStationRows.filter(name => !isVia(name));
 
-  // via_駅名 → 隣接する実駅（stationsOnRoute内のindex）
-  const viaIndexMap = {};
+  // 駅名（via_・実駅どちらも）→ シート上の生の並び順index（方向判定の基準に使う）
+  const rawIndexMap = {};
+  rawStationRows.forEach((name, i) => { if (!(name in rawIndexMap)) rawIndexMap[name] = i; });
+
+  // via_駅名 → 前方向／後方向、それぞれ最も近い実駅（stationsOnRoute内のindex）
+  const viaForward = {};
+  const viaBackward = {};
   rawStationRows.forEach((name, rawIdx) => {
     if (!isVia(name)) return;
-    let neighbor = null;
-    for (let i = rawIdx - 1; i >= 0; i--) { if (!isVia(rawStationRows[i])) { neighbor = rawStationRows[i]; break; } }
-    if (neighbor === null) {
-      for (let i = rawIdx + 1; i < rawStationRows.length; i++) { if (!isVia(rawStationRows[i])) { neighbor = rawStationRows[i]; break; } }
+    for (let i = rawIdx - 1; i >= 0; i--) {
+      if (!isVia(rawStationRows[i])) { viaBackward[name] = stationsOnRoute.indexOf(rawStationRows[i]); break; }
     }
-    if (neighbor !== null) viaIndexMap[name] = stationsOnRoute.indexOf(neighbor);
+    for (let i = rawIdx + 1; i < rawStationRows.length; i++) {
+      if (!isVia(rawStationRows[i])) { viaForward[name] = stationsOnRoute.indexOf(rawStationRows[i]); break; }
+    }
   });
 
-  const info = { stationsOnRoute, viaIndexMap };
+  const info = { stationsOnRoute, rawIndexMap, viaForward, viaBackward };
   cache[routeName] = info;
   return info;
 }
 
-function resolveStationIndex(stationName, info) {
-  let idx = info.stationsOnRoute.indexOf(stationName);
-  if (idx === -1 && Object.prototype.hasOwnProperty.call(info.viaIndexMap, stationName)) {
-    idx = info.viaIndexMap[stationName];
+// referenceStationName（同じ区間のもう片方の駅）が分かれば、その駅がvia_より前か後ろかで
+// 正しい方向（前方向／後方向）を優先して解決する（旧形式の単独via_データ向けのフォールバック）
+function resolveStationIndex(stationName, info, referenceStationName) {
+  const idx = info.stationsOnRoute.indexOf(stationName);
+  if (idx !== -1) return idx;
+
+  const hasForward = Object.prototype.hasOwnProperty.call(info.viaForward, stationName);
+  const hasBackward = Object.prototype.hasOwnProperty.call(info.viaBackward, stationName);
+  if (!hasForward && !hasBackward) return -1;
+
+  const viaRawIdx = info.rawIndexMap[stationName];
+  const refRawIdx = referenceStationName ? info.rawIndexMap[referenceStationName] : undefined;
+
+  if (refRawIdx !== undefined && viaRawIdx !== undefined) {
+    if (refRawIdx > viaRawIdx && hasForward) return info.viaForward[stationName];
+    if (refRawIdx < viaRawIdx && hasBackward) return info.viaBackward[stationName];
   }
-  return idx;
+  // 基準が分からない場合は、従来通り後方向を優先
+  return hasBackward ? info.viaBackward[stationName] : info.viaForward[stationName];
 }
 
 // 自分の乗車記録＋降車駅記録から、路線ごとに「乗った区間」を全部洗い出す（直通チェーン込み）
@@ -533,8 +553,8 @@ function computeAllRiddenSegments(mine, myTransfers, stationData) {
       const info = getRouteStationInfo(leg.route, stationData, stationInfoCache);
       if (info.stationsOnRoute.length < 2) return;
 
-      const boardIdx = resolveStationIndex(leg.board, info);
-      const alightIdx = resolveStationIndex(leg.alight, info);
+      const boardIdx = resolveStationIndex(leg.board, info, leg.alight);
+      const alightIdx = resolveStationIndex(leg.alight, info, leg.board);
       if (boardIdx === -1 || alightIdx === -1) return;
 
       if (!segmentsByRoute[leg.route]) segmentsByRoute[leg.route] = new Set();
