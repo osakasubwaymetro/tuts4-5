@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.5.1 -->
+  <!-- version: 1.5.2 -->
+  <!-- 1.5.2: 「乗車列車を選択」ボタン押下時に即ポップアップを開いて「確認中」を表示するように変更 -->
   <!-- 1.5.1: 近くの駅選択もポップアップに統合。change イベントのバブリング不具合を修正 -->
   <!-- 1.5.0: 「方面」プルダウンを廃止。乗車駅選択→ポップアップ（方面→過去の乗車記録）の流れに変更 -->
   <!-- 1.4.3: 過去の乗車記録ダイアログを、スタンプポップアップと統一感のある中央ポップアップ表示に変更 -->
@@ -751,7 +752,12 @@
     const resultBox = document.getElementById("geoStationResult");
 
     if (!navigator.geolocation) return;
-    if (resultBox) resultBox.textContent = "📍 現在地を確認中...";
+    if (resultBox) resultBox.textContent = "";
+
+    // ボタンを押した瞬間にポップアップを開いて「確認中」を表示する
+    if (typeof openModalLoading === "function") {
+      openModalLoading("近くの駅を選択", "📍 現在地を確認中...");
+    }
 
     navigator.geolocation.getCurrentPosition(async pos => {
       const lat = pos.coords.latitude;
@@ -785,12 +791,14 @@
         console.error("逆ジオコーディング失敗:", e);
       }
 
-      // ② 最寄り駅検索（scripts.js 側の関数。マスタデータと突き合わせて候補を出す）
+      // ② 最寄り駅検索（scripts.js 側の関数。開いているポップアップの中身を更新する）
       if (typeof findNearbyStationsFromPosition === "function") {
         findNearbyStationsFromPosition(lat, lon);
       }
     }, err => {
       console.error("位置情報エラー:", err);
+      const list = document.getElementById("historyModalList");
+      if (list) list.innerHTML = '<p class="modal-loading">位置情報を取得できませんでした。端末の位置情報設定を確認してください。</p>';
       if (resultBox) resultBox.textContent = "位置情報を取得できませんでした。端末の位置情報設定を確認してください。";
     });
   }
