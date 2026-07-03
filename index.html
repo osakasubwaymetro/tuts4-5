@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.7.1 -->
+  <!-- version: 1.7.2 -->
+  <!-- 1.7.2: 降車駅ポップアップに詳細情報カードのスタイルを追加 -->
   <!-- 1.7.1: ?checkDescent=1で過去の未回答降車駅チェックを起動できるように対応 -->
   <!-- 1.7.0: クリアボタンを追加。?openDescent=1でヘッダーからの降車ポップアップ起動に対応 -->
   <!-- 1.6.0: スタンプポップアップを閉じた後、前回の乗車の降車駅を聞くポップアップに繋がるフックを追加 -->
@@ -457,6 +458,16 @@
       text-align: center;
       padding: 20px 10px;
       margin: 0;
+    }
+    .descent-ride-summary {
+      background: #EEF4FF;
+      border: 1.5px solid #cfe0f2;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 14px;
+      line-height: 1.6;
+      color: #17324f;
+      margin-bottom: 10px;
     }
   </style>
 </head>
