@@ -1,7 +1,6 @@
-// version: 1.5.1
-// 1.5.1: dispatchEvent(new Event("change"))がバブリングせず、乗車駅選択のイベント委任が
-//        効いていなかった不具合を修正（bubbles:trueを追加）。近くの駅選択もインラインの
-//        プルダウンから、方面・履歴と同じポップアップに統合
+// version: 1.5.2
+// 1.5.2: 「乗車列車を選択」ボタンを押した瞬間にポップアップを開き、「確認中」を表示するように変更
+//        （今まではGPS取得・API取得が終わるまで何も表示されなかった）。エラー時もポップアップ内に表示
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -596,7 +595,7 @@ function isLineMatch(masterLine, apiLine) {
 // 「現在時刻を入力」ボタン（index.html側）から、位置情報取得後に呼ばれる
 async function findNearbyStationsFromPosition(lat, lon) {
   const resultBox = document.getElementById("geoStationResult");
-  if (resultBox) resultBox.textContent = "📍 近くの駅を確認中...";
+  openModalLoading("近くの駅を選択", "📍 近くの駅を確認中...");
 
   try {
     const res = await fetch(`https://express.heartrails.com/api/json?method=getStations&x=${lon}&y=${lat}`);
@@ -634,6 +633,8 @@ async function findNearbyStationsFromPosition(lat, lon) {
     renderGeoStationResult(matches);
   } catch (e) {
     console.error("駅取得エラー:", e);
+    const list = document.getElementById("historyModalList");
+    if (list) list.innerHTML = '<p class="modal-loading">近くの駅の取得に失敗しました。</p>';
     if (resultBox) resultBox.textContent = "近くの駅の取得に失敗しました。";
   }
 }
@@ -642,7 +643,8 @@ function renderGeoStationResult(matches) {
   const resultBox = document.getElementById("geoStationResult");
 
   if (!matches.length) {
-    if (resultBox) resultBox.textContent = "近くに一致する駅データが見つかりませんでした。手動で選択してください。";
+    const list = document.getElementById("historyModalList");
+    if (list) list.innerHTML = '<p class="modal-loading">近くに一致する駅データが見つかりませんでした。手動で選択してください。</p>';
     return;
   }
 
@@ -765,6 +767,15 @@ function showDirectionChoicePopup(routeVal, boardingStation, termini) {
 function setModalTitle(text) {
   const title = document.getElementById("modalTitle");
   if (title) title.textContent = text;
+}
+
+// ポップアップを即座に開いて「確認中」等のメッセージを表示する（データが揃う前の状態表示用）
+function openModalLoading(title, message) {
+  setModalTitle(title);
+  const list = document.getElementById("historyModalList");
+  if (list) list.innerHTML = `<p class="modal-loading">${message}</p>`;
+  const overlay = document.getElementById("historyModalOverlay");
+  if (overlay) overlay.classList.add("show");
 }
 
 // 自分の過去の乗車履歴だけを取得（ユーザーごとにキャッシュし、他ユーザー分は保存しない）
