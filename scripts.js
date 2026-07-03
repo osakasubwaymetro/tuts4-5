@@ -1,7 +1,7 @@
-// version: 1.13.1
-// 1.13.1: 「via_〇〇へ直通」を直接タップするクイックジャンプ経路で、接続駅・経由路線が
-//         チェーンとして記録されていなかったバグを修正。タップした瞬間に隣接する実駅を
-//         自動で接続駅としてチェーンに積むように変更（🔀ボタンを使わなくても正しく記録される）
+// version: 1.13.2
+// 1.13.2: via_の隣接実駅の探索方向が常に「後方優先」固定になっていたバグを修正。
+//         今来た側の基準駅（乗車駅、または前の乗換駅）の位置を見て、via_より前か後ろかで
+//         正しい方向を優先して探すように変更（敦賀発via_湖西線→近江塩津のようなケースに対応）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -201,18 +201,33 @@ function formatStationOption(name) {
 }
 
 // via_駅名の位置の前後で、一番近い「実駅」（via_ではない駅）を探す
+// referenceStation（今来た側の駅）が分かれば、その駅がvia_より前か後ろかで探す方向を決める
 // （降車駅ポップアップで via_ を直接タップした際に、接続駅として自動記録するために使う）
-function findViaNeighborStation(routeName, viaName) {
+function findViaNeighborStation(routeName, viaName, referenceStation) {
   const rows = (allstationData || []).filter(r => r["路線"] === routeName).map(r => r["駅名"]);
-  const idx = rows.indexOf(viaName);
-  if (idx === -1) return null;
-  for (let i = idx - 1; i >= 0; i--) {
-    if (!isViaEntry(rows[i])) return rows[i];
+  const viaIdx = rows.indexOf(viaName);
+  if (viaIdx === -1) return null;
+
+  const tryForward = () => {
+    for (let i = viaIdx + 1; i < rows.length; i++) {
+      if (!isViaEntry(rows[i])) return rows[i];
+    }
+    return null;
+  };
+  const tryBackward = () => {
+    for (let i = viaIdx - 1; i >= 0; i--) {
+      if (!isViaEntry(rows[i])) return rows[i];
+    }
+    return null;
+  };
+
+  const refIdx = referenceStation ? rows.indexOf(referenceStation) : -1;
+  if (refIdx !== -1) {
+    // 基準駅がvia_より後ろ（配列の後方）にあるなら、後方（forward）方向を優先して探す
+    return refIdx > viaIdx ? (tryForward() || tryBackward()) : (tryBackward() || tryForward());
   }
-  for (let i = idx + 1; i < rows.length; i++) {
-    if (!isViaEntry(rows[i])) return rows[i];
-  }
-  return null;
+  // 基準駅が分からない場合は、従来通り後方（配列の前方＝backward）を優先
+  return tryBackward() || tryForward();
 }
 
 // 乗車駅プルダウンで「via_路線名」を選んだら、そのままその路線の駅を選べるようジャンプする
@@ -1080,6 +1095,7 @@ function openDescentPopup(prev) {
 
   const chain = []; // [{ junction, nextRoute }, ...]
   let currentRoute = prev.route;
+  let legRefStation = prev.station; // 今の路線に入ってきた側の基準駅（方向判定に使う）
   let mode = "station"; // "station" | "junction" | "route"
   let submitting = false;
 
@@ -1108,9 +1124,10 @@ function openDescentPopup(prev) {
         onClick: () => {
           if (isViaEntry(n)) {
             const nextRoute = viaTargetRoute(n);
-            const neighbor = findViaNeighborStation(currentRoute, n);
+            const neighbor = findViaNeighborStation(currentRoute, n, legRefStation);
             if (neighbor) chain.push({ junction: neighbor, nextRoute });
             currentRoute = nextRoute;
+            legRefStation = neighbor;
             render();
           } else {
             finishAndSubmit(n);
@@ -1143,6 +1160,7 @@ function openDescentPopup(prev) {
         onClick: () => {
           chain[chain.length - 1].nextRoute = n;
           currentRoute = n;
+          legRefStation = chain[chain.length - 1].junction;
           mode = "station";
           render();
         }
