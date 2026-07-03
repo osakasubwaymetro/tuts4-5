@@ -4,7 +4,10 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>統計情報 | tuts4 — フル版</title>
-<!-- version: 1.5.2 -->
+<!-- version: 1.6.0 -->
+<!-- 1.6.0: 乗車区間の集計を「路線ごとの個別計算」から「全乗車を横断するグローバル計算」に刷新。
+           新しい直通チェーン形式（接続駅@次路線|...|最終降車駅）を解析し、多段の直通乗り継ぎでも
+           経由した全ての路線に正しく区間が塗られるように対応 -->
 <!-- 1.5.2: 乗車駅がvia_（直通先）だった乗車が丸ごとスキップされていたバグを修正。
            A→B→Cのような多段の直通乗り継ぎで、途中区間の路線が地図に反映されなかった問題を解消 -->
 <!-- 1.5.1: 降車駅がvia_（直通先）の乗車が乗車マップに反映されないバグを修正。
@@ -229,8 +232,9 @@
     <div class="card">
       <h3>路線ごとの乗車区間</h3>
       <p class="small">乗車駅〜降車駅の区間を路線図上で塗ります。色がついている区間＝乗ったことがある区間。<br>
-      降車駅を記録した乗車だけを集計対象にしています（未記録の乗車は含みません。show.htmlの「🚏 降車駅を記録」から追加できます）。<br>
-      ※ station シートの駅の並び順を路線の実際の順番とみなして計算しています（直通運転の区間・ループ線は正しく出ない場合があります）</p>
+      降車駅を記録した乗車だけを集計対象にしています（未記録の乗車は含みません。乗車履歴ページの「🚏 降車駅を記録」から追加できます）。<br>
+      「🔀 別路線に直通する」で記録した乗り継ぎは、区間ごとに対応する路線へ正しく塗り分けられます。<br>
+      ※ station シートの駅の並び順を路線の実際の順番とみなして計算しています（ループ線は正しく出ない場合があります）</p>
       <div id="routeCoverageList"><p class="small">読み込み中…</p></div>
     </div>
 
@@ -444,7 +448,104 @@ async function getMyTransfers() {
   return _transfersCache;
 }
 
-let _routeCoverageState = null; // { byRoute, stationData }
+let _routeCoverageState = null; // { mine, stationData }
+
+// 降車駅欄のチェーン形式を解析する: "接続駅@次路線|接続駅@次路線|最終降車駅"
+// チェーンが無ければ単純な { hops: [], finalStation: 元の文字列 } を返す（旧形式・単純形式との互換）
+function parseDescentChain(raw) {
+  const s = typeof raw === "string" ? raw : "";
+  if (!s.includes("|") && !s.includes("@")) return { hops: [], finalStation: s };
+  const parts = s.split("|");
+  const finalStation = parts.pop();
+  const hops = parts.map(p => {
+    const [junction, nextRoute] = p.split("@");
+    return { junction, nextRoute };
+  }).filter(h => h.junction && h.nextRoute);
+  return { hops, finalStation };
+}
+
+// チェーンを「路線ごとの乗車区間（区）」の並びに展開する
+function buildLegs(boardingRoute, boardingStation, chain) {
+  const legs = [];
+  let currentRoute = boardingRoute;
+  let currentBoard = boardingStation;
+  chain.hops.forEach(hop => {
+    legs.push({ route: currentRoute, board: currentBoard, alight: hop.junction });
+    currentRoute = hop.nextRoute;
+    currentBoard = hop.junction;
+  });
+  legs.push({ route: currentRoute, board: currentBoard, alight: chain.finalStation });
+  return legs;
+}
+
+// 路線ごとの駅リスト・via_隣接マップをキャッシュしながら作る
+function getRouteStationInfo(routeName, stationData, cache) {
+  if (cache[routeName]) return cache[routeName];
+  const isVia = name => typeof name === "string" && name.startsWith("via_");
+  const rawStationRows = stationData.filter(s => s["路線"] === routeName).map(s => s["駅名"]);
+  const stationsOnRoute = rawStationRows.filter(name => !isVia(name));
+
+  // via_駅名 → 隣接する実駅（stationsOnRoute内のindex）
+  const viaIndexMap = {};
+  rawStationRows.forEach((name, rawIdx) => {
+    if (!isVia(name)) return;
+    let neighbor = null;
+    for (let i = rawIdx - 1; i >= 0; i--) { if (!isVia(rawStationRows[i])) { neighbor = rawStationRows[i]; break; } }
+    if (neighbor === null) {
+      for (let i = rawIdx + 1; i < rawStationRows.length; i++) { if (!isVia(rawStationRows[i])) { neighbor = rawStationRows[i]; break; } }
+    }
+    if (neighbor !== null) viaIndexMap[name] = stationsOnRoute.indexOf(neighbor);
+  });
+
+  const info = { stationsOnRoute, viaIndexMap };
+  cache[routeName] = info;
+  return info;
+}
+
+function resolveStationIndex(stationName, info) {
+  let idx = info.stationsOnRoute.indexOf(stationName);
+  if (idx === -1 && Object.prototype.hasOwnProperty.call(info.viaIndexMap, stationName)) {
+    idx = info.viaIndexMap[stationName];
+  }
+  return idx;
+}
+
+// 自分の乗車記録＋降車駅記録から、路線ごとに「乗った区間」を全部洗い出す（直通チェーン込み）
+function computeAllRiddenSegments(mine, myTransfers, stationData) {
+  const stationInfoCache = {};
+  const segmentsByRoute = {};
+  const rideCountByRoute = {};
+
+  mine.forEach(r => {
+    if (!r.route) return;
+    rideCountByRoute[r.route] = (rideCountByRoute[r.route] || 0) + 1;
+
+    const matchedTransfer = myTransfers.find(t => timeKeyMatch(t["元の乗車時刻"], r.timeRaw));
+    if (!matchedTransfer) return;
+
+    const chain = parseDescentChain(String(matchedTransfer["降車駅"] || "").trim());
+    if (!chain.finalStation) return;
+
+    const legs = buildLegs(r.route, r.station, chain);
+
+    legs.forEach(leg => {
+      if (!leg.route) return;
+      const info = getRouteStationInfo(leg.route, stationData, stationInfoCache);
+      if (info.stationsOnRoute.length < 2) return;
+
+      const boardIdx = resolveStationIndex(leg.board, info);
+      const alightIdx = resolveStationIndex(leg.alight, info);
+      if (boardIdx === -1 || alightIdx === -1) return;
+
+      if (!segmentsByRoute[leg.route]) segmentsByRoute[leg.route] = new Set();
+      const lo = Math.min(boardIdx, alightIdx);
+      const hi = Math.max(boardIdx, alightIdx);
+      for (let i = lo; i < hi; i++) segmentsByRoute[leg.route].add(i);
+    });
+  });
+
+  return { segmentsByRoute, rideCountByRoute };
+}
 
 async function renderRouteCoverage(mine) {
   const container = document.getElementById("routeCoverageList");
@@ -453,15 +554,13 @@ async function renderRouteCoverage(mine) {
   const stationData = await getStationMaster();
   const myTransfers = await getMyTransfers();
 
-  // 路線ごとに自分の乗車記録をまとめる
-  const byRoute = {};
-  mine.forEach(r => {
-    if (!r.route) return;
-    (byRoute[r.route] = byRoute[r.route] || []).push(r);
-  });
-  _routeCoverageState = { byRoute, stationData };
+  const { segmentsByRoute, rideCountByRoute } = computeAllRiddenSegments(mine, myTransfers, stationData);
+  _routeCoverageState = { mine, stationData };
 
-  const routeNames = Object.keys(byRoute).sort((a, b) => byRoute[b].length - byRoute[a].length);
+  // 表示対象は「乗った記録がある路線」∪「直通チェーンで区間がついた路線」
+  const routeNames = [...new Set([...Object.keys(rideCountByRoute), ...Object.keys(segmentsByRoute)])]
+    .sort((a, b) => (rideCountByRoute[b] || 0) - (rideCountByRoute[a] || 0));
+
   if (!routeNames.length) {
     container.innerHTML = '<p class="small">データがありません。</p>';
     return;
@@ -470,7 +569,7 @@ async function renderRouteCoverage(mine) {
   container.innerHTML = "";
 
   routeNames.forEach(routeName => {
-    const row = buildRouteCoverageRow(routeName, byRoute[routeName], stationData, myTransfers);
+    const row = buildRouteCoverageRow(routeName, stationData, segmentsByRoute[routeName] || new Set());
     if (row) container.appendChild(row);
   });
 
@@ -479,61 +578,15 @@ async function renderRouteCoverage(mine) {
   }
 }
 
-function buildRouteCoverageRow(routeName, rides, stationData, myTransfers) {
-  const isVia = name => typeof name === "string" && name.startsWith("via_");
-
-  // via_ を含む生の駅順（隣接する実駅を求めるために使う）
-  const rawStationRows = stationData.filter(s => s["路線"] === routeName).map(s => s["駅名"]);
-  // via_ の直通目印は駅そのものではないので、区間計算からは除外する
-  const stationsOnRoute = rawStationRows.filter(name => !isVia(name));
+function buildRouteCoverageRow(routeName, stationData, riddenSegments) {
+  const stationsOnRoute = stationData
+    .filter(s => s["路線"] === routeName)
+    .map(s => s["駅名"])
+    .filter(name => !(typeof name === "string" && name.startsWith("via_")));
 
   if (stationsOnRoute.length < 2) return null; // 駅データが無い/揃ってない路線はスキップ
 
-  // via_駅名 → 隣接する実駅（stationsOnRoute内のindex）のマッピングを作る。
-  // 直通で乗り継いだ場合、via_の位置そのものは駅ではないので、隣の実駅までを「乗った区間」とみなす
-  const viaIndexMap = {};
-  rawStationRows.forEach((name, rawIdx) => {
-    if (!isVia(name)) return;
-    let neighbor = null;
-    for (let i = rawIdx - 1; i >= 0; i--) {
-      if (!isVia(rawStationRows[i])) { neighbor = rawStationRows[i]; break; }
-    }
-    if (neighbor === null) {
-      for (let i = rawIdx + 1; i < rawStationRows.length; i++) {
-        if (!isVia(rawStationRows[i])) { neighbor = rawStationRows[i]; break; }
-      }
-    }
-    if (neighbor !== null) viaIndexMap[name] = stationsOnRoute.indexOf(neighbor);
-  });
-
   const totalSegments = stationsOnRoute.length - 1;
-  const riddenSegments = new Set();
-
-  rides.forEach(r => {
-    // 降車駅が記録されている乗車だけを対象にする（未回答のものは概算せず除外）
-    const matchedTransfer = myTransfers.find(t => timeKeyMatch(t["元の乗車時刻"], r.timeRaw));
-    if (!matchedTransfer) return;
-
-    const boundList = [String(matchedTransfer["降車駅"] || "").trim()].filter(Boolean);
-
-    let stationIdx = stationsOnRoute.indexOf(r.station);
-    if (stationIdx === -1 && Object.prototype.hasOwnProperty.call(viaIndexMap, r.station)) {
-      stationIdx = viaIndexMap[r.station]; // 乗車駅が直通先（via_）の場合も隣接する実駅の位置として扱う
-    }
-    if (stationIdx === -1) return;
-
-    boundList.forEach(b => {
-      let boundIdx = stationsOnRoute.indexOf(b);
-      if (boundIdx === -1 && Object.prototype.hasOwnProperty.call(viaIndexMap, b)) {
-        boundIdx = viaIndexMap[b]; // 直通先（via_）は隣接する実駅の位置として扱う
-      }
-      if (boundIdx === -1) return; // それでも判定できない場合のみスキップ
-      const lo = Math.min(stationIdx, boundIdx);
-      const hi = Math.max(stationIdx, boundIdx);
-      for (let i = lo; i < hi; i++) riddenSegments.add(i);
-    });
-  });
-
   const riddenCount = riddenSegments.size;
   const pct = totalSegments ? Math.round((riddenCount / totalSegments) * 1000) / 10 : 0;
 
@@ -572,12 +625,11 @@ function buildRouteCoverageRow(routeName, rides, stationData, myTransfers) {
   return row;
 }
 
-// この路線だけ、降車駅データを再取得して表示を更新する（他の路線は再計算しない）
+// 降車データだけ最新に取り直して、指定した路線の行だけ更新する
+// （直通チェーンで他路線とも繋がりうるため、再計算自体は毎回全体で行うが、描画はその路線だけ差し替える）
 async function refreshRouteCoverageRow(routeName) {
   if (!_routeCoverageState) return;
-  const { byRoute, stationData } = _routeCoverageState;
-  const rides = byRoute[routeName];
-  if (!rides) return;
+  const { mine, stationData } = _routeCoverageState;
 
   const oldRow = document.querySelector(`.route-coverage-row[data-route="${CSS.escape(routeName)}"]`);
   if (oldRow) {
@@ -589,7 +641,8 @@ async function refreshRouteCoverageRow(routeName) {
   _transfersCache = null;
   const myTransfers = await getMyTransfers();
 
-  const newRow = buildRouteCoverageRow(routeName, rides, stationData, myTransfers);
+  const { segmentsByRoute } = computeAllRiddenSegments(mine, myTransfers, stationData);
+  const newRow = buildRouteCoverageRow(routeName, stationData, segmentsByRoute[routeName] || new Set());
   if (newRow && oldRow) {
     oldRow.replaceWith(newRow);
   }

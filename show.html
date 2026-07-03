@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.6.0 -->
+<!-- version: 1.7.0 -->
+<!-- 1.7.0: 降車駅ポップアップに複数路線をまたぐ直通乗り継ぎ記録（🔀 別路線に直通する）を追加 -->
 <!-- 1.6.0: 降車駅ボタン表示直後0.45秒は誤タップ防止のため押せないように変更。
            記録済みの降車駅をタップすると再度選び直せる（上書き）ように対応 -->
 <!-- 1.5.0: 降車駅選択をセレクトボックスからボタン一覧に変更。ポップアップは背景タップでは閉じず、✕ボタンのみで閉じるように変更 -->
@@ -131,6 +132,26 @@
     line-height: 1.6;
     color: #17324f;
     margin-bottom: 12px;
+  }
+  .descent-breadcrumb {
+    background: #FFF7E6;
+    border: 1.5px solid #f0dca0;
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: bold;
+    color: #7a5b00;
+    margin-bottom: 10px;
+  }
+  .descent-transfer-btn {
+    background: #FFF7E6 !important;
+    color: #7a5b00 !important;
+    border-color: #f0dca0 !important;
+    font-weight: bold;
+  }
+  .descent-back-btn {
+    background: #f2f2f2 !important;
+    color: #888 !important;
   }
   .modal-list {
     max-height: 60vh;
@@ -382,12 +403,6 @@ function closeDescentModal() {
   document.getElementById("descentModalOverlay").classList.remove("show");
 }
 
-function buildStationButtonsHTML(routeName) {
-  const stationsOnRoute = stationMaster.filter(s => s["路線"] === routeName);
-  const names = [...new Set(stationsOnRoute.map(s => s["駅名"]))];
-  return names.map(n => `<button type="button" class="descent-station-btn" data-station="${n.replace(/"/g, "&quot;")}">${formatStationOption(n)}</button>`).join("");
-}
-
 function openDescentModal(row) {
   const body = document.getElementById("descentModalBody");
 
@@ -395,41 +410,107 @@ function openDescentModal(row) {
   const typeLabel = row["種別"] ? row["種別"] : "";
   const rideSummary = `${timeLabel}<br>${row["路線"] || ""}<br>${row["乗車駅"] || "(乗車駅不明)"} → ${typeLabel}${row["行先"] || ""}行き`;
 
+  const chain = []; // [{ junction, nextRoute }, ...]
+  let currentRoute = row["路線"];
+  let mode = "station"; // "station" | "junction" | "route"
   let submitting = false;
 
-  function renderStationButtons(routeName) {
+  function breadcrumbHTML() {
+    if (!chain.length) return "";
+    let html = `<span>${row["路線"]}</span>`;
+    chain.forEach(h => { html += ` → <span style="color:#888;">[${h.junction}]</span> → <span>${h.nextRoute}</span>`; });
+    return `<div class="descent-breadcrumb">${html}</div>`;
+  }
+
+  function stationNamesFor(routeName) {
+    const rows = stationMaster.filter(s => s["路線"] === routeName);
+    return [...new Set(rows.map(s => s["駅名"]))];
+  }
+
+  function allRouteNames() {
+    return [...new Set(stationMaster.map(s => s["路線"]))].filter(Boolean).sort();
+  }
+
+  function render() {
+    let promptText = "";
+    let items = [];
+
+    if (mode === "station") {
+      items = stationNamesFor(currentRoute).map(n => ({
+        label: formatStationOption(n),
+        onClick: () => {
+          if (isViaEntry(n)) {
+            currentRoute = viaTargetRoute(n);
+            render();
+          } else {
+            finishAndSubmit(n);
+          }
+        }
+      }));
+      items.push({
+        label: "🔀 別路線に直通する",
+        extraClass: "descent-transfer-btn",
+        onClick: () => { mode = "junction"; render(); }
+      });
+    } else if (mode === "junction") {
+      promptText = `↑${currentRoute}のどの駅で乗り換え・直通しますか？`;
+      items = stationNamesFor(currentRoute)
+        .filter(n => !isViaEntry(n))
+        .map(n => ({
+          label: n,
+          onClick: () => { chain.push({ junction: n, nextRoute: null }); mode = "route"; render(); }
+        }));
+      items.push({
+        label: "← 戻る",
+        extraClass: "descent-back-btn",
+        onClick: () => { mode = "station"; render(); }
+      });
+    } else if (mode === "route") {
+      promptText = "↑次はどの路線に直通しますか？";
+      items = allRouteNames().map(n => ({
+        label: n,
+        onClick: () => {
+          chain[chain.length - 1].nextRoute = n;
+          currentRoute = n;
+          mode = "station";
+          render();
+        }
+      }));
+      items.push({
+        label: "← 戻る",
+        extraClass: "descent-back-btn",
+        onClick: () => { chain.pop(); mode = "junction"; render(); }
+      });
+    }
+
+    const itemsHTML = items.map((it, i) =>
+      `<button type="button" class="${it.extraClass || ""}" data-i="${i}">${it.label}</button>`
+    ).join("");
+
     body.innerHTML = `
       <div class="descent-ride-summary">${rideSummary}</div>
-      <div class="modal-list">${buildStationButtonsHTML(routeName)}</div>
+      ${breadcrumbHTML()}
+      ${promptText ? `<p class="modal-loading" style="margin-bottom:8px;">${promptText}</p>` : ""}
+      <div class="modal-list">${itemsHTML}</div>
     `;
 
-    const buttons = body.querySelectorAll(".descent-station-btn");
-
-    // 開いた直後の一瞬（連打・二重クリック対策）はボタンを押せないようにする
+    const buttons = body.querySelectorAll(".modal-list button");
     buttons.forEach(btn => { btn.disabled = true; });
-    setTimeout(() => {
-      if (!submitting) buttons.forEach(btn => { btn.disabled = false; });
-    }, 450);
+    setTimeout(() => { if (!submitting) buttons.forEach(btn => { btn.disabled = false; }); }, 450);
 
-    buttons.forEach(btn => {
-      btn.onclick = () => {
-        if (submitting || btn.disabled) return; // 連打防止
-        const station = btn.dataset.station;
-
-        // 「→ 〇〇線へ直通」を選んだら、そのままその路線の駅一覧に切り替える
-        if (isViaEntry(station)) {
-          renderStationButtons(viaTargetRoute(station));
-          return;
-        }
-
-        submitAlightStation(station);
-      };
+    buttons.forEach((btn, i) => {
+      btn.onclick = () => { if (!submitting && !btn.disabled) items[i].onClick(); };
     });
   }
 
-  async function submitAlightStation(alightStation) {
+  async function finishAndSubmit(finalStation) {
+    let alightStation = finalStation;
+    if (chain.length) {
+      alightStation = chain.map(h => `${h.junction}@${h.nextRoute}`).join("|") + "|" + finalStation;
+    }
+
     submitting = true;
-    body.querySelectorAll(".descent-station-btn").forEach(b => { b.disabled = true; });
+    body.querySelectorAll(".modal-list button").forEach(b => { b.disabled = true; });
 
     try {
       await fetch(TRANSFERS_URL, {
@@ -448,7 +529,7 @@ function openDescentModal(row) {
       console.error("降車駅の送信に失敗:", e);
       alert("送信に失敗しました。時間を置いて再試行してください。");
       submitting = false;
-      body.querySelectorAll(".descent-station-btn").forEach(b => { b.disabled = false; });
+      body.querySelectorAll(".modal-list button").forEach(b => { b.disabled = false; });
       return;
     }
 
@@ -458,7 +539,7 @@ function openDescentModal(row) {
     applyMonthFilter();
   }
 
-  renderStationButtons(row["路線"]);
+  render();
   document.getElementById("descentModalOverlay").classList.add("show");
 }
 

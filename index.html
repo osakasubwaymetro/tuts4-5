@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.7.4 -->
+  <!-- version: 1.7.5 -->
+  <!-- 1.7.5: 降車駅ポップアップに複数路線をまたぐ直通乗り継ぎ記録（🔀 別路線に直通する）を追加 -->
   <!-- 1.7.4: ポップアップを背景タップでは閉じないように変更（✕ボタンのみで閉じる） -->
   <!-- 1.7.3: ?checkDescent=1（過去一括チェック）の処理を撤去 -->
   <!-- 1.7.2: 降車駅ポップアップに詳細情報カードのスタイルを追加 -->
@@ -470,6 +471,26 @@
       line-height: 1.6;
       color: #17324f;
       margin-bottom: 10px;
+    }
+    .descent-breadcrumb {
+      background: #FFF7E6;
+      border: 1.5px solid #f0dca0;
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: bold;
+      color: #7a5b00;
+      margin-bottom: 10px;
+    }
+    .descent-transfer-btn {
+      background: #FFF7E6 !important;
+      color: #7a5b00 !important;
+      border-color: #f0dca0 !important;
+      font-weight: bold;
+    }
+    .descent-back-btn {
+      background: #f2f2f2 !important;
+      color: #888 !important;
     }
   </style>
 </head>
