@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.3.0 -->
+<!-- version: 1.4.0 -->
+<!-- 1.4.0: 降車駅の記録をカード内の展開フォームから、index.htmlと統一感のある中央ポップアップに変更 -->
 <!-- 1.3.0: 降車駅プルダウンで「→ 〇〇線へ直通」を選ぶと、その路線の駅一覧に切り替わるように対応 -->
 <!-- 1.2.1: 降車駅記録の「保存」ボタン連打で重複送信されないよう、送信中は無効化するガードを追加 -->
 <!-- 1.2.0: 各投稿カードに「🚏 降車駅を記録」ボタンを追加。1件ずつ任意で降車駅を記録できる -->
@@ -76,30 +77,74 @@
     color: #1e8449;
     font-weight: bold;
   }
-  .descent-form {
-    margin-top: 10px;
-    padding: 10px;
-    background: #F4F7FB;
-    border-radius: 10px;
+
+  /* ===== 降車駅を記録するポップアップ ===== */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    z-index: 10000;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(3px);
   }
-  .descent-form select {
+  .modal-overlay.show { display: flex; }
+  .modal-panel {
+    background: #FAF6EF;
+    border-radius: 20px;
+    padding: 22px 20px 20px;
+    max-width: 360px;
+    width: 90%;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.25);
+  }
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    color: #004C97;
+    font-weight: bold;
+    font-size: 15px;
+  }
+  .modal-close {
+    background: none;
+    border: none;
+    color: #999;
+    font-size: 18px;
+    padding: 2px 6px;
+    cursor: pointer;
+  }
+  .modal-close:hover { color: #E60012; }
+  .descent-ride-summary {
+    background: #EEF4FF;
+    border: 1.5px solid #cfe0f2;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #17324f;
+    margin-bottom: 12px;
+  }
+  .modal-panel select {
     width: 100%;
-    padding: 8px;
+    padding: 9px;
     border-radius: 8px;
     border: 1px solid #ccc;
-    margin-bottom: 8px;
+    margin-bottom: 12px;
     font-size: 14px;
   }
-  .descent-form button {
-    padding: 6px 12px;
+  .modal-panel .save-btn,
+  .modal-panel .cancel-btn {
+    padding: 8px 14px;
     border-radius: 8px;
     border: none;
     font-size: 13px;
     cursor: pointer;
-    margin-right: 6px;
+    margin-right: 8px;
   }
-  .descent-form .save-btn { background: #004C97; color: white; }
-  .descent-form .cancel-btn { background: #eee; color: #666; }
+  .modal-panel .save-btn { background: #004C97; color: white; }
+  .modal-panel .cancel-btn { background: #eee; color: #666; }
 
   #reload {
     text-align: center;
@@ -139,6 +184,17 @@
 </style>
 </head>
 <body>
+
+<!-- 降車駅を記録するポップアップ -->
+<div id="descentModalOverlay" class="modal-overlay" onclick="closeDescentModal()">
+  <div class="modal-panel" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <span>降車駅を記録</span>
+      <button type="button" class="modal-close" onclick="closeDescentModal()">✕</button>
+    </div>
+    <div id="descentModalBody"></div>
+  </div>
+</div>
 
 <h2>投稿一覧</h2>
 
@@ -292,7 +348,7 @@ function renderCards(data) {
       btn.type = "button";
       btn.className = "descent-row-btn";
       btn.textContent = "🚏 降車駅を記録";
-      btn.onclick = () => toggleDescentForm(card, row);
+      btn.onclick = () => openDescentModal(row);
       card.appendChild(btn);
     }
 
@@ -308,14 +364,27 @@ function buildStationOptionsHTML(routeName) {
     .join("");
 }
 
-function toggleDescentForm(card, row) {
-  const existingForm = card.querySelector(".descent-form");
-  if (existingForm) { existingForm.remove(); return; }
+function formatRideTimeLabel(rideTime) {
+  const d = new Date(rideTime);
+  if (isNaN(d)) return String(rideTime || "");
+  const pad = n => String(n).padStart(2, "0");
+  const weekday = ["日", "月", "火", "水", "木", "金", "土"][d.getDay()];
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}(${weekday}) ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
-  const form = document.createElement("div");
-  form.className = "descent-form";
+function closeDescentModal() {
+  document.getElementById("descentModalOverlay").classList.remove("show");
+}
 
-  form.innerHTML = `
+function openDescentModal(row) {
+  const body = document.getElementById("descentModalBody");
+
+  const timeLabel = formatRideTimeLabel(row["時刻"]);
+  const typeLabel = row["種別"] ? row["種別"] : "";
+  const rideSummary = `${timeLabel}<br>${row["路線"] || ""}<br>${row["乗車駅"] || "(乗車駅不明)"} → ${typeLabel}${row["行先"] || ""}行き`;
+
+  body.innerHTML = `
+    <div class="descent-ride-summary">${rideSummary}</div>
     <select class="descent-select">${buildStationOptionsHTML(row["路線"])}</select>
     <div>
       <button type="button" class="save-btn">保存</button>
@@ -323,11 +392,11 @@ function toggleDescentForm(card, row) {
     </div>
   `;
 
-  card.appendChild(form);
+  document.getElementById("descentModalOverlay").classList.add("show");
 
-  form.querySelector(".cancel-btn").onclick = () => form.remove();
+  body.querySelector(".cancel-btn").onclick = () => closeDescentModal();
 
-  const selectEl = form.querySelector(".descent-select");
+  const selectEl = body.querySelector(".descent-select");
   // 「→ 〇〇線へ直通」を選んだら、そのままその路線の駅一覧に切り替える
   selectEl.addEventListener("change", () => {
     if (isViaEntry(selectEl.value)) {
@@ -336,14 +405,13 @@ function toggleDescentForm(card, row) {
     }
   });
 
-  const saveBtn = form.querySelector(".save-btn");
-  const cancelBtn = form.querySelector(".cancel-btn");
+  const saveBtn = body.querySelector(".save-btn");
+  const cancelBtn = body.querySelector(".cancel-btn");
   let submitting = false;
 
   saveBtn.onclick = async () => {
     if (submitting) return; // 連打防止
-    const select = form.querySelector(".descent-select");
-    const alightStation = select.value;
+    const alightStation = selectEl.value;
     if (!alightStation) {
       alert("降車駅を選択してください");
       return;
@@ -352,7 +420,7 @@ function toggleDescentForm(card, row) {
     submitting = true;
     saveBtn.disabled = true;
     cancelBtn.disabled = true;
-    select.disabled = true;
+    selectEl.disabled = true;
     const originalLabel = saveBtn.textContent;
     saveBtn.textContent = "送信中...";
 
@@ -375,13 +443,14 @@ function toggleDescentForm(card, row) {
       submitting = false;
       saveBtn.disabled = false;
       cancelBtn.disabled = false;
-      select.disabled = false;
+      selectEl.disabled = false;
       saveBtn.textContent = originalLabel;
       return;
     }
 
     // 画面上のキャッシュにも反映して、すぐに「記録済み」表示に切り替える
     myTransfers.push({ "ユーザー名": username, "元の乗車時刻": row["時刻"], "降車駅": alightStation });
+    closeDescentModal();
     applyMonthFilter();
   };
 }
