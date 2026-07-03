@@ -4,7 +4,8 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>統計情報 | tuts4 — フル版</title>
-<!-- version: 1.4.0 -->
+<!-- version: 1.4.1 -->
+<!-- 1.4.1: 降車駅が未記録の乗車は、行先での概算をやめて集計対象から除外するように変更 -->
 <!-- 1.4.0: 乗車区間の計算で、transfersに実際の降車駅記録があればそちらを優先するように変更 -->
 <!-- 1.3.1: 路線ごとの乗車区間を、横棒グラフから縦の路線図風（駅名ピル＋線）デザインに変更 -->
 <!-- 1.3.0: 路線ごとの乗車区間（未乗区間の可視化・パーセント表示）カードを追加 -->
@@ -213,7 +214,7 @@
     <div class="card">
       <h3>路線ごとの乗車区間</h3>
       <p class="small">乗車駅〜降車駅の区間を路線図上で塗ります。色がついている区間＝乗ったことがある区間。<br>
-      降車駅ポップアップで答えた記録は実際の降車駅を、まだ答えていない記録は行先（終点）まで乗ったものとして概算しています。<br>
+      降車駅を記録した乗車だけを集計対象にしています（未記録の乗車は含みません。show.htmlの「🚏 降車駅を記録」から追加できます）。<br>
       ※ station シートの駅の並び順を路線の実際の順番とみなして計算しています（直通運転の区間・ループ線は正しく出ない場合があります）</p>
       <div id="routeCoverageList"><p class="small">読み込み中…</p></div>
     </div>
@@ -463,12 +464,11 @@ async function renderRouteCoverage(mine) {
     const riddenSegments = new Set();
 
     byRoute[routeName].forEach(r => {
-      // transfersに実際の降車駅の記録があれば、行先（終点）ではなくそちらを優先する
+      // 降車駅が記録されている乗車だけを対象にする（未回答のものは概算せず除外）
       const matchedTransfer = myTransfers.find(t => timeKeyMatch(t["元の乗車時刻"], r.timeRaw));
+      if (!matchedTransfer) return;
 
-      const boundList = matchedTransfer
-        ? [String(matchedTransfer["降車駅"] || "").trim()].filter(Boolean)
-        : String(r.dest || "").split("/").map(s => s.trim()).filter(Boolean);
+      const boundList = [String(matchedTransfer["降車駅"] || "").trim()].filter(Boolean);
 
       const stationIdx = stationsOnRoute.indexOf(r.station);
       if (stationIdx === -1) return;
