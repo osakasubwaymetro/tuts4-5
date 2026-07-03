@@ -1,7 +1,5 @@
-// version: 1.11.0
-// 1.11.0: 降車駅の「未回答キュー」「過去の一括チェック」を撤去し、元の「直前の1件だけ聞く」
-//         仕様に戻した（リロードで件数が復活する不具合の元だったのと、大量の過去分は
-//         乗車履歴ページから個別に記録する方式に変更したため）
+// version: 1.11.1
+// 1.11.1: 降車駅ポップアップのボタン連打で重複送信されないよう、送信中は無効化するガードを追加
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -1068,13 +1066,23 @@ function openDescentPopup(prev) {
   document.getElementById("historyModalOverlay").classList.add("show");
 }
 
+let _submittingDescent = false;
+
 async function submitDescent(prev, tripEnd) {
+  if (_submittingDescent) return; // 連打防止
   const select = document.getElementById("alightStationSelect");
   const alightStation = select ? select.value : "";
   if (!alightStation) {
     alert("降車駅を選択してください");
     return;
   }
+
+  _submittingDescent = true;
+  const continueBtn = document.getElementById("continueTripBtn");
+  const endBtn = document.getElementById("endTripBtn");
+  if (continueBtn) continueBtn.disabled = true;
+  if (endBtn) endBtn.disabled = true;
+  if (select) select.disabled = true;
 
   // 直通運転で別路線に入っただけの場合は、旅は終わらず継続する
   const viaJump = isViaEntry(alightStation);
@@ -1095,6 +1103,8 @@ async function submitDescent(prev, tripEnd) {
     });
   } catch (e) {
     console.error("降車駅の送信に失敗:", e);
+  } finally {
+    _submittingDescent = false;
   }
 
   if (effectiveTripEnd) {
