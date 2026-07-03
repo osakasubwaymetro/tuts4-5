@@ -1,5 +1,6 @@
-// version: 1.7.1
-// 1.7.1: TRANSFERS_URLに実際のデプロイURLを設定
+// version: 1.7.2
+// 1.7.2: TRANSFERS_URLを、独立した新しいGASプロジェクトのデプロイURLに差し替え
+//        （doPost名の衝突で既存の投稿用GASとぶつかっていたため分離した）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -963,7 +964,7 @@ function applyHistoryCandidate(c) {
    ※ transfers用のGASデプロイURLを発行したら、下のTRANSFERS_URLに貼ってください
       （transfers_gas.gs を参照）
 ---------------------------------------- */
-const TRANSFERS_URL = "https://script.google.com/macros/s/AKfycbzB5-CPPDF7n3joOThGKwef-OUwVEtaVaZ1lJjzAzBsttZ02CT5EtkvEDHIAqNBq4GJ/exec";
+const TRANSFERS_URL = "https://script.google.com/macros/s/AKfycbwOzhHMk2WRtcUHvSMfnrimIQxUk-_dZN_43I-m8fpMNVxomE7emhevGGyC3UnLR3ejBw/exec";
 
 // 投稿が成功するたびに呼ばれる。「前回の乗車」の降車駅を聞く準備をする
 function handleTripBookkeeping(routeValue, boundValue, timeValue) {
