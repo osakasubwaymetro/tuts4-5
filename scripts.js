@@ -1,7 +1,5 @@
-// version: 1.6.0
-// 1.6.0: 過去の乗車記録の候補提案を「全ユーザーのデータ」から出すように変更（ユーザー名は表示しない）。
-//        乗車駅を選んだ時点で裏で先読みしておき、方面選択後のラグを解消。
-//        routeシートに「ダイヤ改正日」列があれば、その日以降の記録だけを候補にするように対応
+// version: 1.7.1
+// 1.7.1: TRANSFERS_URLに実際のデプロイURLを設定
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -455,6 +453,7 @@ function upload() {
   .then(() => {
     hideLoadingPopup();
     logAction("post", `投稿: ${routeValue} / ${modelValue} ${numberValue} / ${stationValue} → ${boundValue}`);
+    handleTripBookkeeping(routeValue, boundValue, timeValue);
     showStampPopup(modelValue, numberValue);
     resetForm();
   })
@@ -947,6 +946,116 @@ function applyHistoryCandidate(c) {
     if (timeEl) {
       timeEl.value = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
     }
+  }
+
+  closeHistoryModal();
+}
+
+
+
+/* ----------------------------------------
+   乗り継ぎ（旅）記録
+   投稿の瞬間はまだ「どこで降りるか」分からないので、次に別の乗車を投稿した
+   タイミングで「前回はどこで降りましたか？」と聞く。
+   「乗り継ぎ中」を選べば同じ旅IDのまま続き、「ここで旅を終える」を選べば
+   旅IDをリセットする（次の投稿からは新しい旅として扱う）。
+
+   ※ transfers用のGASデプロイURLを発行したら、下のTRANSFERS_URLに貼ってください
+      （transfers_gas.gs を参照）
+---------------------------------------- */
+const TRANSFERS_URL = "https://script.google.com/macros/s/AKfycbzB5-CPPDF7n3joOThGKwef-OUwVEtaVaZ1lJjzAzBsttZ02CT5EtkvEDHIAqNBq4GJ/exec";
+
+// 投稿が成功するたびに呼ばれる。「前回の乗車」の降車駅を聞く準備をする
+function handleTripBookkeeping(routeValue, boundValue, timeValue) {
+  const username = localStorage.getItem("username");
+  if (!username) return;
+
+  const prevPendingRaw = localStorage.getItem("tuts4_pending_descent");
+
+  let tripId = localStorage.getItem("tuts4_current_trip_id");
+  if (!tripId) {
+    tripId = username + "_" + timeValue;
+    localStorage.setItem("tuts4_current_trip_id", tripId);
+  }
+
+  // 前回の投稿がまだ「降車駅未回答」のまま残っていれば、次にポップアップを閉じた後に聞く
+  if (prevPendingRaw) {
+    try {
+      const prev = JSON.parse(prevPendingRaw);
+      if (prev.username === username) {
+        localStorage.setItem("tuts4_awaiting_descent_answer", prevPendingRaw);
+      }
+    } catch (e) { /* 壊れてたら無視 */ }
+  }
+
+  localStorage.setItem("tuts4_pending_descent", JSON.stringify({
+    username, rideTime: timeValue, route: routeValue, bound: boundValue, tripId
+  }));
+}
+
+// スタンプポップアップを閉じたあと、聞くべき質問が溜まっていればポップアップを開く
+function maybeAskDescentStation() {
+  const raw = localStorage.getItem("tuts4_awaiting_descent_answer");
+  if (!raw) return;
+  localStorage.removeItem("tuts4_awaiting_descent_answer"); // 二重に聞かないよう先に消しておく
+
+  let prev;
+  try { prev = JSON.parse(raw); } catch (e) { return; }
+
+  openDescentPopup(prev);
+}
+
+function openDescentPopup(prev) {
+  setModalTitle(`前回（${prev.bound}行き）の降車駅`);
+  const list = document.getElementById("historyModalList");
+
+  const stationsOnRoute = (allstationData || []).filter(r => r["路線"] === prev.route);
+  const names = [...new Set(stationsOnRoute.map(r => r["駅名"]))];
+
+  const options = ['<option value="">選択してください</option>']
+    .concat(names.map(n => `<option value="${n}">${n}</option>`))
+    .join("");
+
+  list.innerHTML = `
+    <p class="modal-loading" style="margin-bottom:8px;">どこで降りましたか？</p>
+    <select id="alightStationSelect" style="width:100%;margin-bottom:14px;">${options}</select>
+    <button type="button" id="continueTripBtn">🚃 乗り継ぎ中（旅を続ける）</button>
+    <button type="button" id="endTripBtn">🏁 ここで旅を終える</button>
+  `;
+
+  document.getElementById("continueTripBtn").onclick = () => submitDescent(prev, false);
+  document.getElementById("endTripBtn").onclick = () => submitDescent(prev, true);
+
+  document.getElementById("historyModalOverlay").classList.add("show");
+}
+
+async function submitDescent(prev, tripEnd) {
+  const select = document.getElementById("alightStationSelect");
+  const alightStation = select ? select.value : "";
+  if (!alightStation) {
+    alert("降車駅を選択してください");
+    return;
+  }
+
+  try {
+    await fetch(TRANSFERS_URL, {
+      method: "POST",
+      mode: "no-cors",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: prev.username,
+        rideTime: prev.rideTime,
+        alightStation,
+        tripId: prev.tripId,
+        tripEnd
+      })
+    });
+  } catch (e) {
+    console.error("降車駅の送信に失敗:", e);
+  }
+
+  if (tripEnd) {
+    localStorage.removeItem("tuts4_current_trip_id");
   }
 
   closeHistoryModal();
