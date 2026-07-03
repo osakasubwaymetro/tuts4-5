@@ -1,5 +1,6 @@
-// version: 1.11.1
-// 1.11.1: 降車駅ポップアップのボタン連打で重複送信されないよう、送信中は無効化するガードを追加
+// version: 1.11.2
+// 1.11.2: 乗車駅プルダウンで「via_路線名」（直通先）を選ぶと、そのままその路線の駅を
+//         選べるようフォームがジャンプするように対応
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -197,6 +198,15 @@ function viaTargetRoute(name) {
 function formatStationOption(name) {
   return isViaEntry(name) ? `→ ${viaTargetRoute(name)}へ直通` : name;
 }
+
+// 乗車駅プルダウンで「via_路線名」を選んだら、そのままその路線の駅を選べるようジャンプする
+document.getElementById("rideBlocks")?.addEventListener("change", (e) => {
+  if (!e.target.classList.contains("station-select")) return;
+  const val = e.target.value;
+  if (isViaEntry(val)) {
+    jumpToRoute(viaTargetRoute(val));
+  }
+});
 
 function updatestationList() {
   const routeVal = document.getElementById("route").value;
