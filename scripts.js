@@ -1,6 +1,7 @@
-// version: 1.5.0
-// 1.5.0: 「方面」の独立プルダウンを廃止し、乗車駅を選んだ瞬間にポップアップで
-//        方面→過去の乗車記録（種別・行先・時刻）を選べる一連の流れに変更
+// version: 1.5.1
+// 1.5.1: dispatchEvent(new Event("change"))がバブリングせず、乗車駅選択のイベント委任が
+//        効いていなかった不具合を修正（bubbles:trueを追加）。近くの駅選択もインラインの
+//        プルダウンから、方面・履歴と同じポップアップに統合
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -479,9 +480,9 @@ function resetForm() {
   // route/model の変更カスケードを明示的に発火し、駅・種別・行先・車番の選択肢や
   // 併結ブロック（まとまりB）・併結ボタンもまとめてクリアする
   const routeEl = document.getElementById("route");
-  if (routeEl) routeEl.dispatchEvent(new Event("change"));
+  if (routeEl) routeEl.dispatchEvent(new Event("change", { bubbles: true }));
   const modelEl = document.getElementById("model");
-  if (modelEl) modelEl.dispatchEvent(new Event("change"));
+  if (modelEl) modelEl.dispatchEvent(new Event("change", { bubbles: true }));
 
   const resultBox = document.getElementById("geoStationResult");
   if (resultBox) resultBox.innerHTML = "";
@@ -629,16 +630,8 @@ async function findNearbyStationsFromPosition(lat, lon) {
       }
     });
 
+    // 近い順のまま、ポップアップで選んでもらう（自動確定はしない）
     renderGeoStationResult(matches);
-
-    // 確度の高い候補（一番近いもの）が見つかっていれば自動で入力しておく。
-    // 違う場合は下のプルダウンからいつでも選び直せる。
-    const best = matches.find(m => m.confident);
-    if (best) {
-      await applyGeoStation(best);
-      const sel = document.getElementById("geoStationSelect");
-      if (sel) sel.value = matches.indexOf(best);
-    }
   } catch (e) {
     console.error("駅取得エラー:", e);
     if (resultBox) resultBox.textContent = "近くの駅の取得に失敗しました。";
@@ -647,41 +640,32 @@ async function findNearbyStationsFromPosition(lat, lon) {
 
 function renderGeoStationResult(matches) {
   const resultBox = document.getElementById("geoStationResult");
-  resultBox.innerHTML = "";
 
   if (!matches.length) {
-    resultBox.textContent = "近くに一致する駅データが見つかりませんでした。手動で選択してください。";
+    if (resultBox) resultBox.textContent = "近くに一致する駅データが見つかりませんでした。手動で選択してください。";
     return;
   }
 
-  const label = document.createElement("div");
-  label.className = "geo-result-label";
-  label.textContent = "近くの駅（近い順）を選ぶと、エリア〜乗車駅まで自動入力されます：";
-  resultBox.appendChild(label);
+  if (resultBox) resultBox.textContent = "";
 
-  const select = document.createElement("select");
-  select.id = "geoStationSelect";
+  setModalTitle("近くの駅を選択");
+  const list = document.getElementById("historyModalList");
+  list.innerHTML = "";
 
-  const blank = document.createElement("option");
-  blank.value = "";
-  blank.textContent = "選択してください";
-  select.appendChild(blank);
-
-  matches.forEach((m, i) => {
-    const opt = document.createElement("option");
-    opt.value = i;
-    opt.textContent = m.confident
+  matches.forEach(m => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.textContent = m.confident
       ? `${m.name}（${m.line}）`
       : `${m.name}（${m.line}）※駅名のみ一致`;
-    select.appendChild(opt);
+    item.onclick = () => {
+      applyGeoStation(m);
+      closeHistoryModal();
+    };
+    list.appendChild(item);
   });
 
-  select.addEventListener("change", () => {
-    if (select.value === "") return;
-    applyGeoStation(matches[select.value]);
-  });
-
-  resultBox.appendChild(select);
+  document.getElementById("historyModalOverlay").classList.add("show");
 }
 
 async function applyGeoStation(match) {
@@ -689,13 +673,13 @@ async function applyGeoStation(match) {
     const el = document.getElementById(id);
     if (!el || !val) return;
     el.value = val;
-    el.dispatchEvent(new Event("change"));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
   }
   function setAndTriggerFirst(selector, val) {
     const el = document.querySelector(selector);
     if (!el || !val) return;
     el.value = val;
-    el.dispatchEvent(new Event("change"));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
   }
   function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -914,11 +898,11 @@ function applyHistoryCandidate(c) {
 
   if (typeSel) {
     typeSel.value = c.type || "";
-    typeSel.dispatchEvent(new Event("change"));
+    typeSel.dispatchEvent(new Event("change", { bubbles: true }));
   }
   if (boundSel) {
     boundSel.value = c.bound;
-    boundSel.dispatchEvent(new Event("change"));
+    boundSel.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
   // 発車時刻も、選んだ記録の時刻（今日の日付換算）に合わせる
