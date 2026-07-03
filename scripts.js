@@ -1,7 +1,7 @@
-// version: 1.9.0
-// 1.9.0: フォームの入力内容をlocalStorageに下書き保存し、リロードしても復元されるように変更。
-//        「クリア」ボタンでの明示リセット・投稿完了時のみ下書きが消える。
-//        ヘッダーに未回答の降車記録があるときのボタンを追加（nav.js側と連動）
+// version: 1.10.0
+// 1.10.0: 降車駅の「1件だけ保留」を「未回答キュー」に変更し、答えないまま次の投稿をしても
+//         質問が失われないように修正。過去の投稿を一括で洗い出して未回答をキューに積む
+//         backfillDescentQueue() を追加（nav.jsのメニューから呼べる）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -979,12 +979,26 @@ function applyHistoryCandidate(c) {
    「乗り継ぎ中」を選べば同じ旅IDのまま続き、「ここで旅を終える」を選べば
    旅IDをリセットする（次の投稿からは新しい旅として扱う）。
 
+   降車駅が未回答のまま次々に投稿が進むと質問が失われてしまうため、
+   「1件だけ保留」ではなく「未回答キュー」に積んで、答えるまで残り続けるようにしている。
+   キューは tuts4_descent_queue（配列）で管理し、ヘッダーの「🚏 降車駅未回答」ボタンから
+   何件でも順番に答えられる。
+
    ※ transfers用のGASデプロイURLを発行したら、下のTRANSFERS_URLに貼ってください
       （transfers_gas.gs を参照）
 ---------------------------------------- */
 const TRANSFERS_URL = "https://script.google.com/macros/s/AKfycbwOzhHMk2WRtcUHvSMfnrimIQxUk-_dZN_43I-m8fpMNVxomE7emhevGGyC3UnLR3ejBw/exec";
 
-// 投稿が成功するたびに呼ばれる。「前回の乗車」の降車駅を聞く準備をする
+function getDescentQueue() {
+  try { return JSON.parse(localStorage.getItem("tuts4_descent_queue") || "[]"); }
+  catch (e) { return []; }
+}
+function setDescentQueue(queue) {
+  localStorage.setItem("tuts4_descent_queue", JSON.stringify(queue));
+}
+function queueKey(item) { return item.username + "|" + item.rideTime; }
+
+// 投稿が成功するたびに呼ばれる。「前回の乗車」を降車駅未回答キューに積む
 function handleTripBookkeeping(routeValue, boundValue, timeValue) {
   const username = localStorage.getItem("username");
   if (!username) return;
@@ -997,12 +1011,16 @@ function handleTripBookkeeping(routeValue, boundValue, timeValue) {
     localStorage.setItem("tuts4_current_trip_id", tripId);
   }
 
-  // 前回の投稿がまだ「降車駅未回答」のまま残っていれば、次にポップアップを閉じた後に聞く
+  // 前回の投稿は「次の投稿があった＝もう降りたはず」なのでキューに積む
   if (prevPendingRaw) {
     try {
       const prev = JSON.parse(prevPendingRaw);
       if (prev.username === username) {
-        localStorage.setItem("tuts4_awaiting_descent_answer", prevPendingRaw);
+        const queue = getDescentQueue();
+        if (!queue.some(q => queueKey(q) === queueKey(prev))) {
+          queue.push(prev);
+          setDescentQueue(queue);
+        }
       }
     } catch (e) { /* 壊れてたら無視 */ }
   }
@@ -1012,21 +1030,19 @@ function handleTripBookkeeping(routeValue, boundValue, timeValue) {
   }));
 }
 
-// スタンプポップアップを閉じたあと、聞くべき質問が溜まっていればポップアップを開く
+// スタンプポップアップを閉じたあと、キューに未回答があれば1件開く
 function maybeAskDescentStation() {
-  const raw = localStorage.getItem("tuts4_awaiting_descent_answer");
-  if (!raw) return;
-  localStorage.removeItem("tuts4_awaiting_descent_answer"); // 二重に聞かないよう先に消しておく
-
-  let prev;
-  try { prev = JSON.parse(raw); } catch (e) { return; }
-
-  openDescentPopup(prev);
+  const queue = getDescentQueue();
+  if (!queue.length) return;
+  openDescentPopup(queue[0]);
 }
 
 function openDescentPopup(prev) {
   setModalTitle(`前回（${prev.bound}行き）の降車駅`);
   const list = document.getElementById("historyModalList");
+
+  const queueLen = getDescentQueue().length;
+  const queueNote = queueLen > 1 ? `<p class="small" style="margin-bottom:6px;">他に${queueLen - 1}件、未回答の記録が残っています</p>` : "";
 
   const stationsOnRoute = (allstationData || []).filter(r => r["路線"] === prev.route);
   const names = [...new Set(stationsOnRoute.map(r => r["駅名"]))];
@@ -1036,14 +1052,17 @@ function openDescentPopup(prev) {
     .join("");
 
   list.innerHTML = `
+    ${queueNote}
     <p class="modal-loading" style="margin-bottom:8px;">どこで降りましたか？（直通運転で別路線に入った場合は「→ 〇〇線へ直通」を選んでください）</p>
     <select id="alightStationSelect" style="width:100%;margin-bottom:14px;">${options}</select>
     <button type="button" id="continueTripBtn">🚃 乗り継ぎ中（旅を続ける）</button>
     <button type="button" id="endTripBtn">🏁 ここで旅を終える</button>
+    <button type="button" id="skipDescentBtn" style="background:none; color:#999; border:none; text-decoration:underline; padding:8px 0 0;">あとで答える</button>
   `;
 
   document.getElementById("continueTripBtn").onclick = () => submitDescent(prev, false);
   document.getElementById("endTripBtn").onclick = () => submitDescent(prev, true);
+  document.getElementById("skipDescentBtn").onclick = () => closeHistoryModal();
 
   document.getElementById("historyModalOverlay").classList.add("show");
 }
@@ -1081,10 +1100,85 @@ async function submitDescent(prev, tripEnd) {
     localStorage.removeItem("tuts4_current_trip_id");
   }
 
+  // 答えた分をキューから外す
+  const queue = getDescentQueue().filter(q => queueKey(q) !== queueKey(prev));
+  setDescentQueue(queue);
+
   closeHistoryModal();
 
   if (viaJump) {
     jumpToRoute(viaTargetRoute(alightStation));
+  } else if (queue.length) {
+    // まだキューが残っていれば、続けて次の1件を聞く
+    setTimeout(() => openDescentPopup(queue[0]), 400);
+  }
+}
+
+/* ----------------------------------------
+   過去の投稿を洗い出して、降車駅が未回答のものをキューに積む（後付けの一括チェック）
+---------------------------------------- */
+async function backfillDescentQueue() {
+  const username = localStorage.getItem("username");
+  if (!username) return;
+
+  openModalLoading("過去の記録をチェック中", "📋 未回答の降車駅を探しています...");
+
+  const RIDES_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
+
+  try {
+    const [ridesRes, transfersRes] = await Promise.all([
+      fetch(RIDES_URL),
+      fetch(TRANSFERS_URL)
+    ]);
+    const allRides = await ridesRes.json();
+    const allTransfers = await transfersRes.json();
+
+    const myRides = allRides
+      .filter(r => String(r["ユーザー名"]) === String(username))
+      .map(r => ({
+        username,
+        rideTime: r["時刻"] || r["発車時刻"] || "",
+        route: r["路線"] || "",
+        bound: r["行先"] || ""
+      }))
+      .filter(r => r.rideTime && r.route);
+
+    const answeredKeys = new Set(
+      allTransfers
+        .filter(t => String(t["ユーザー名"]) === String(username))
+        .map(t => username + "|" + t["元の乗車時刻"])
+    );
+
+    // 一番最後（＝今回答するタイミングでまだ次の乗車が無いかもしれない）ものは除外
+    myRides.sort((a, b) => new Date(a.rideTime) - new Date(b.rideTime));
+    const latestKey = myRides.length ? queueKey(myRides[myRides.length - 1]) : null;
+
+    const queue = getDescentQueue();
+    const queueKeys = new Set(queue.map(queueKey));
+
+    let addedCount = 0;
+    myRides.forEach(r => {
+      const key = queueKey(r);
+      if (key === latestKey) return; // 最新1件は「乗り継ぎ中かもしれない」ので対象外
+      if (answeredKeys.has(key)) return; // すでにtransfersに記録済み
+      if (queueKeys.has(key)) return; // すでにキューにある
+      queue.push(r);
+      queueKeys.add(key);
+      addedCount++;
+    });
+
+    setDescentQueue(queue);
+
+    if (queue.length) {
+      openDescentPopup(queue[0]);
+    } else {
+      const list = document.getElementById("historyModalList");
+      if (list) list.innerHTML = '<p class="modal-loading">未回答の降車記録は見つかりませんでした。</p>';
+    }
+  } catch (e) {
+    console.error("過去記録のチェックに失敗:", e);
+    const list = document.getElementById("historyModalList");
+    if (list) list.innerHTML = '<p class="modal-loading">チェックに失敗しました。時間を置いて再試行してください。</p>';
   }
 }
 
