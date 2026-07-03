@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.2.0 -->
+<!-- version: 1.3.0 -->
+<!-- 1.3.0: 降車駅プルダウンで「→ 〇〇線へ直通」を選ぶと、その路線の駅一覧に切り替わるように対応 -->
+<!-- 1.2.1: 降車駅記録の「保存」ボタン連打で重複送信されないよう、送信中は無効化するガードを追加 -->
 <!-- 1.2.0: 各投稿カードに「🚏 降車駅を記録」ボタンを追加。1件ずつ任意で降車駅を記録できる -->
 <!-- 1.1.0: 全ユーザー分が見えていた不具合を修正し、自分の投稿のみ表示・保存するように変更 -->
 <style>
@@ -183,11 +185,14 @@ function timeKeyMatch(a, b) {
   return !isNaN(da) && !isNaN(db) && da.getTime() === db.getTime();
 }
 
+function isViaEntry(name) {
+  return typeof name === "string" && name.startsWith("via_");
+}
+function viaTargetRoute(name) {
+  return name.slice(4);
+}
 function formatStationOption(name) {
-  if (typeof name === "string" && name.startsWith("via_")) {
-    return `→ ${name.slice(4)}へ直通`;
-  }
-  return name;
+  return isViaEntry(name) ? `→ ${viaTargetRoute(name)}へ直通` : name;
 }
 
 // 各種マスタ・自分のtransfers記録を読み込む（降車駅記録ウィジェット用）
@@ -295,23 +300,23 @@ function renderCards(data) {
   });
 }
 
+function buildStationOptionsHTML(routeName) {
+  const stationsOnRoute = stationMaster.filter(s => s["路線"] === routeName);
+  const names = [...new Set(stationsOnRoute.map(s => s["駅名"]))];
+  return ['<option value="">選択してください</option>']
+    .concat(names.map(n => `<option value="${n}">${formatStationOption(n)}</option>`))
+    .join("");
+}
+
 function toggleDescentForm(card, row) {
   const existingForm = card.querySelector(".descent-form");
   if (existingForm) { existingForm.remove(); return; }
 
-  const routeName = row["路線"];
-  const stationsOnRoute = stationMaster.filter(s => s["路線"] === routeName);
-  const names = [...new Set(stationsOnRoute.map(s => s["駅名"]))];
-
   const form = document.createElement("div");
   form.className = "descent-form";
 
-  const options = ['<option value="">選択してください</option>']
-    .concat(names.map(n => `<option value="${n}">${formatStationOption(n)}</option>`))
-    .join("");
-
   form.innerHTML = `
-    <select class="descent-select">${options}</select>
+    <select class="descent-select">${buildStationOptionsHTML(row["路線"])}</select>
     <div>
       <button type="button" class="save-btn">保存</button>
       <button type="button" class="cancel-btn">キャンセル</button>
@@ -321,13 +326,35 @@ function toggleDescentForm(card, row) {
   card.appendChild(form);
 
   form.querySelector(".cancel-btn").onclick = () => form.remove();
-  form.querySelector(".save-btn").onclick = async () => {
+
+  const selectEl = form.querySelector(".descent-select");
+  // 「→ 〇〇線へ直通」を選んだら、そのままその路線の駅一覧に切り替える
+  selectEl.addEventListener("change", () => {
+    if (isViaEntry(selectEl.value)) {
+      const targetRoute = viaTargetRoute(selectEl.value);
+      selectEl.innerHTML = buildStationOptionsHTML(targetRoute);
+    }
+  });
+
+  const saveBtn = form.querySelector(".save-btn");
+  const cancelBtn = form.querySelector(".cancel-btn");
+  let submitting = false;
+
+  saveBtn.onclick = async () => {
+    if (submitting) return; // 連打防止
     const select = form.querySelector(".descent-select");
     const alightStation = select.value;
     if (!alightStation) {
       alert("降車駅を選択してください");
       return;
     }
+
+    submitting = true;
+    saveBtn.disabled = true;
+    cancelBtn.disabled = true;
+    select.disabled = true;
+    const originalLabel = saveBtn.textContent;
+    saveBtn.textContent = "送信中...";
 
     try {
       await fetch(TRANSFERS_URL, {
@@ -345,6 +372,11 @@ function toggleDescentForm(card, row) {
     } catch (e) {
       console.error("降車駅の送信に失敗:", e);
       alert("送信に失敗しました。時間を置いて再試行してください。");
+      submitting = false;
+      saveBtn.disabled = false;
+      cancelBtn.disabled = false;
+      select.disabled = false;
+      saveBtn.textContent = originalLabel;
       return;
     }
 
