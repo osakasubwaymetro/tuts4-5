@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.3.0 -->
+  <!-- version: 1.4.0 -->
+  <!-- 1.4.0: 「方面」ピッカー（過去の乗車記録から種別・行先を提案）を追加 -->
   <!-- 1.3.0: 「現在地から駅を探す」ボタンを廃止し、「現在時刻を入力」ボタンに統合 -->
   <!-- 1.2.0: 「現在地から駅を探す」ボタンを追加（近くの駅・路線候補から自動入力） -->
   <!-- 1.1.0: フォームを「まとまり」単位でグループ化し、併結（複数種別・行先）に対応 -->
@@ -381,6 +382,13 @@
       margin-bottom: 6px;
     }
     #geoStationResult select { width: 100%; }
+
+    #directionHistoryResult {
+      margin-top: 10px;
+      font-size: 13px;
+      color: #333;
+    }
+    #directionHistoryResult select { width: 100%; }
   </style>
 </head>
 <body>
@@ -427,6 +435,13 @@
       <h3>路線</h3>
       <select id="route"></select>
     </div>
+  </div>
+
+  <div id="directionField" style="display:none;">
+    <label><h3>方面</h3></label>
+    <small>路線の両端の駅を目印に方面を選ぶと、過去の自分の乗車記録から種別・行先の候補を出します</small>
+    <select id="direction"></select>
+    <div id="directionHistoryResult"></div>
   </div>
 
   <div id="rideBlocks">
