@@ -1,7 +1,7 @@
-// version: 1.8.0
-// 1.8.0: station シートの「via_路線名」を直通運転の目印として対応。乗車駅・方面・降車駅の
-//        どこに出てきても「→ 〇〇線へ直通」表示に変換し、降車駅でviaを選ぶと自動でその路線に
-//        フォームがジャンプする（旅も自動的に継続扱いになる）
+// version: 1.9.0
+// 1.9.0: フォームの入力内容をlocalStorageに下書き保存し、リロードしても復元されるように変更。
+//        「クリア」ボタンでの明示リセット・投稿完了時のみ下書きが消える。
+//        ヘッダーに未回答の降車記録があるときのボタンを追加（nav.js側と連動）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -507,6 +507,9 @@ function resetForm() {
   // 直近の投稿を反映できるよう、乗車履歴キャッシュ（候補提案用）は無効化しておく
   localStorage.removeItem("tuts4_community_ride_cache");
   _rideHistoryPromise = null;
+
+  // 入力内容の下書きも消す（クリアボタン／投稿完了のどちらでもここを通る）
+  localStorage.removeItem("tuts4_form_draft");
 }
 
 function setCurrentDateTime() {
@@ -721,25 +724,23 @@ async function applyGeoStation(match) {
   setAndTrigger("route", match.line);
   await wait(300);
   setAndTriggerFirst(".station-select", match.name);
+
+  // 「最寄り駅から選択」経由のときだけ、方面・履歴ポップアップを続けて開く
+  startStationPopupFlow();
 }
 
 
 
 /* ----------------------------------------
    乗車駅を選ぶと、ポップアップで「方面→過去の乗車記録」を選べる
+   （「最寄り駅から選択」経由で乗車駅が決まったときだけ自動で開く。
+    手動でプルダウンから乗車駅を選んだ場合は開かない）
    時刻表が使えないので、代わりに「station シートに登録されている駅の並び順＝
    路線上の物理的な順番」とみなし、その両端の駅名を方面の目印にする。
 
    ※ 前提：station シートの各路線の行が、実際の駅の並び順になっている必要がある
       （ループ線・支線・直通運転先の駅は正しく判定できない場合がある）
 ---------------------------------------- */
-
-// 乗車駅（.station-select）が変わったら、ポップアップでの選択フローを開始する
-document.getElementById("rideBlocks").addEventListener("change", (e) => {
-  if (e.target.classList.contains("station-select")) {
-    startStationPopupFlow();
-  }
-});
 
 function startStationPopupFlow() {
   const routeVal = document.getElementById("route").value;
@@ -1113,5 +1114,110 @@ async function jumpToRoute(routeName) {
 
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
+
+
+
+/* ----------------------------------------
+   入力内容の下書き保存
+   リロードしても入力中の内容が消えないよう、変更のたびに localStorage に保存し、
+   ページを開いた時に復元する。消えるのは「クリア」ボタンを押した時と、投稿完了時のみ。
+---------------------------------------- */
+const DRAFT_KEY = "tuts4_form_draft";
+let _restoringDraft = false; // 復元中はポップアップ等の副作用を止めるためのフラグ
+
+function saveDraft() {
+  if (_restoringDraft) return;
+
+  const rideBlocks = [...document.querySelectorAll(".ride-block")].map(block => ({
+    station: block.querySelector(".station-select")?.value || "",
+    sujitype: block.querySelector(".sujitype-select")?.value || "",
+    bound: block.querySelector(".bound-select")?.value || ""
+  }));
+
+  const draft = {
+    area: document.getElementById("area")?.value || "",
+    type: document.getElementById("type")?.value || "",
+    country: document.getElementById("country")?.value || "",
+    route: document.getElementById("route")?.value || "",
+    model: document.getElementById("model")?.value || "",
+    number: document.getElementById("number")?.value || "",
+    memo: document.getElementById("memo")?.value || "",
+    departing_time: document.getElementById("departing_time")?.value || "",
+    rideBlocks
+  };
+
+  localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+}
+
+// フォーム内の変更をまとめて拾って下書き保存する（併結で増えたブロックにも自動で効く）
+document.querySelector("main")?.addEventListener("change", saveDraft);
+document.querySelector("main")?.addEventListener("input", saveDraft);
+
+async function restoreDraft() {
+  const raw = localStorage.getItem(DRAFT_KEY);
+  if (!raw) return;
+
+  let draft;
+  try { draft = JSON.parse(raw); } catch (e) { localStorage.removeItem(DRAFT_KEY); return; }
+
+  function setAndTrigger(id, val) {
+    const el = document.getElementById(id);
+    if (!el || !val) return;
+    el.value = val;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  _restoringDraft = true;
+  try {
+    if (draft.departing_time) {
+      const timeEl = document.getElementById("departing_time");
+      if (timeEl) timeEl.value = draft.departing_time;
+    }
+    if (draft.memo) {
+      const memoEl = document.getElementById("memo");
+      if (memoEl) memoEl.value = draft.memo;
+    }
+
+    setAndTrigger("area", draft.area);
+    setAndTrigger("type", draft.type);
+    await wait(400);
+    setAndTrigger("country", draft.country);
+    await wait(400);
+    setAndTrigger("route", draft.route);
+    await wait(400);
+
+    // 併結ブロックが複数あった場合は、必要な数だけ追加してから値を復元する
+    if (draft.rideBlocks && draft.rideBlocks.length > 1 && typeof addCoupling === "function") {
+      for (let i = 1; i < draft.rideBlocks.length; i++) addCoupling();
+      await wait(200);
+    }
+
+    const stationSelects = document.querySelectorAll(".station-select");
+    const sujitypeSelects = document.querySelectorAll(".sujitype-select");
+    const boundSelects = document.querySelectorAll(".bound-select");
+
+    (draft.rideBlocks || []).forEach((b, i) => {
+      if (stationSelects[i] && b.station) {
+        stationSelects[i].value = b.station;
+        stationSelects[i].dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      if (sujitypeSelects[i] && b.sujitype) sujitypeSelects[i].value = b.sujitype;
+      if (boundSelects[i] && b.bound) boundSelects[i].value = b.bound;
+    });
+
+    await wait(300);
+    setAndTrigger("model", draft.model);
+    await wait(300);
+    setAndTrigger("number", draft.number);
+  } finally {
+    _restoringDraft = false;
+  }
+}
+
+// マスタデータの読み込みが一段落する頃合いを見て下書きを復元する
+window.addEventListener("load", () => {
+  setTimeout(restoreDraft, 800);
+});
 
 

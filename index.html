@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.6.0 -->
+  <!-- version: 1.7.0 -->
+  <!-- 1.7.0: クリアボタンを追加。?openDescent=1でヘッダーからの降車ポップアップ起動に対応 -->
   <!-- 1.6.0: スタンプポップアップを閉じた後、前回の乗車の降車駅を聞くポップアップに繋がるフックを追加 -->
   <!-- 1.5.2: 「乗車列車を選択」ボタン押下時に即ポップアップを開いて「確認中」を表示するように変更 -->
   <!-- 1.5.1: 近くの駅選択もポップアップに統合。change イベントのバブリング不具合を修正 -->
@@ -474,7 +475,10 @@
 
 
 <main>
-  <h2>投稿フォーム</h2>
+  <div style="display:flex; justify-content:space-between; align-items:center;">
+    <h2 style="margin:0;">投稿フォーム</h2>
+    <button type="button" id="clearFormBtn" onclick="if(confirm('入力内容をクリアします。よろしいですか？')) resetForm();" style="width:auto; margin-top:0; padding:6px 14px; font-size:13px; background:#f2f2f2; color:#666;">🗑 クリア</button>
+  </div>
   
   <label><h3>ユーザー名</h3></label>
   <input type="text" id="username" readonly>
@@ -575,6 +579,15 @@
 
 <script src="nav.js"></script>
 <script>initNav("新規投稿");</script>
+<script>
+  if (new URLSearchParams(location.search).get("openDescent") === "1") {
+    window.addEventListener("load", () => {
+      setTimeout(() => {
+        if (typeof maybeAskDescentStation === "function") maybeAskDescentStation();
+      }, 900);
+    });
+  }
+</script>
 <script src="logs.js"></script>
 <script src="scripts.js"></script>
 <script>

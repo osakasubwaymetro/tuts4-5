@@ -1,6 +1,9 @@
 /**
  * nav.js — 共通ヘッダー管理ファイル
  * 新しいページを追加するときは NAV_LINKS だけ編集してください
+ *
+ * version: 1.1.0
+ * 1.1.0: 未回答の降車記録があるとき、ヘッダーに専用ボタンを表示するように追加
  */
 
 // ===== ① ナビゲーションのリンク一覧 =====
@@ -43,6 +46,22 @@ const NAV_CSS = `
     font-weight: bold;
     font-size: 13px;
     color: #FFD700;
+  }
+  .nav-descent-btn {
+    background: #E60012;
+    border: none;
+    color: white;
+    font-size: 13px;
+    font-weight: bold;
+    padding: 5px 9px;
+    border-radius: 8px;
+    cursor: pointer;
+    line-height: 1;
+    animation: navDescentPulse 1.6s infinite;
+  }
+  @keyframes navDescentPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
   }
   .nav-menu-btn {
     background: white;
@@ -156,11 +175,18 @@ function initNav(pageTitle) {
     return `<a href="${link.href}" ${isActive}>${link.icon} ${link.label}</a>`;
   }).join("");
 
+  // 未回答の降車記録があるかチェック（ページ問わず localStorage で判定できる）
+  const hasPendingDescent = !!localStorage.getItem("tuts4_awaiting_descent_answer");
+  const descentBtnHTML = hasPendingDescent
+    ? `<button class="nav-descent-btn" onclick="_navOpenPendingDescent()" title="前回の降車駅が未回答です">🚏 降車駅未回答</button>`
+    : "";
+
   // ヘッダー全体のHTML
   const navHTML = `
     <header class="nav-header">
       <div class="nav-title">${pageTitle}</div>
       <div class="nav-right">
+        ${descentBtnHTML}
         <span class="nav-username" id="navUsernameDisplay"></span>
         <button class="nav-menu-btn" onclick="_navToggle()" aria-label="メニュー">☰</button>
       </div>
@@ -196,4 +222,15 @@ function _navToggle() {
 function _navClose() {
   document.getElementById("navDropdown").classList.remove("open");
   document.getElementById("navBackdrop").classList.remove("open");
+}
+
+// 未回答の降車記録ボタン：index.html上ならその場でポップアップを開き、
+// 他のページからならindex.htmlに遷移してから自動で開く
+function _navOpenPendingDescent() {
+  const currentFile = location.pathname.split("/").pop() || "index.html";
+  if (currentFile === "index.html" && typeof maybeAskDescentStation === "function") {
+    maybeAskDescentStation();
+  } else {
+    location.href = "index.html?openDescent=1";
+  }
 }
