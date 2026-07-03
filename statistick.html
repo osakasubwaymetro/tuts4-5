@@ -4,7 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>統計情報 | tuts4 — フル版</title>
-<!-- version: 1.5.0 -->
+<!-- version: 1.5.1 -->
+<!-- 1.5.1: 降車駅がvia_（直通先）の乗車が乗車マップに反映されないバグを修正。
+           via_は隣接する実駅の位置として区間計算するように変更 -->
 <!-- 1.5.0: 各路線の行に「🔄」更新ボタンを追加。全体を再計算せず、その路線だけ降車データを再取得して更新できるように -->
 <!-- 1.4.1: 降車駅が未記録の乗車は、行先での概算をやめて集計対象から除外するように変更 -->
 <!-- 1.4.0: 乗車区間の計算で、transfersに実際の降車駅記録があればそちらを優先するように変更 -->
@@ -476,13 +478,31 @@ async function renderRouteCoverage(mine) {
 }
 
 function buildRouteCoverageRow(routeName, rides, stationData, myTransfers) {
+  const isVia = name => typeof name === "string" && name.startsWith("via_");
+
+  // via_ を含む生の駅順（隣接する実駅を求めるために使う）
+  const rawStationRows = stationData.filter(s => s["路線"] === routeName).map(s => s["駅名"]);
   // via_ の直通目印は駅そのものではないので、区間計算からは除外する
-  const stationsOnRoute = stationData
-    .filter(s => s["路線"] === routeName)
-    .map(s => s["駅名"])
-    .filter(name => !(typeof name === "string" && name.startsWith("via_")));
+  const stationsOnRoute = rawStationRows.filter(name => !isVia(name));
 
   if (stationsOnRoute.length < 2) return null; // 駅データが無い/揃ってない路線はスキップ
+
+  // via_駅名 → 隣接する実駅（stationsOnRoute内のindex）のマッピングを作る。
+  // 直通で乗り継いだ場合、via_の位置そのものは駅ではないので、隣の実駅までを「乗った区間」とみなす
+  const viaIndexMap = {};
+  rawStationRows.forEach((name, rawIdx) => {
+    if (!isVia(name)) return;
+    let neighbor = null;
+    for (let i = rawIdx - 1; i >= 0; i--) {
+      if (!isVia(rawStationRows[i])) { neighbor = rawStationRows[i]; break; }
+    }
+    if (neighbor === null) {
+      for (let i = rawIdx + 1; i < rawStationRows.length; i++) {
+        if (!isVia(rawStationRows[i])) { neighbor = rawStationRows[i]; break; }
+      }
+    }
+    if (neighbor !== null) viaIndexMap[name] = stationsOnRoute.indexOf(neighbor);
+  });
 
   const totalSegments = stationsOnRoute.length - 1;
   const riddenSegments = new Set();
@@ -498,8 +518,11 @@ function buildRouteCoverageRow(routeName, rides, stationData, myTransfers) {
     if (stationIdx === -1) return;
 
     boundList.forEach(b => {
-      const boundIdx = stationsOnRoute.indexOf(b);
-      if (boundIdx === -1) return; // 直通先など路線図に無い行先は区間計算できないのでスキップ
+      let boundIdx = stationsOnRoute.indexOf(b);
+      if (boundIdx === -1 && Object.prototype.hasOwnProperty.call(viaIndexMap, b)) {
+        boundIdx = viaIndexMap[b]; // 直通先（via_）は隣接する実駅の位置として扱う
+      }
+      if (boundIdx === -1) return; // それでも判定できない場合のみスキップ
       const lo = Math.min(stationIdx, boundIdx);
       const hi = Math.max(stationIdx, boundIdx);
       for (let i = lo; i < hi; i++) riddenSegments.add(i);

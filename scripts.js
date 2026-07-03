@@ -1,6 +1,7 @@
-// version: 1.11.2
-// 1.11.2: 乗車駅プルダウンで「via_路線名」（直通先）を選ぶと、そのままその路線の駅を
-//         選べるようフォームがジャンプするように対応
+// version: 1.12.0
+// 1.12.0: 投稿をローカルに一時保存し、1秒だけ「送信中」表示にしてから先に進めるように変更
+//         （GAS応答待ちで体感が遅かったため）。実際の送信は裏で行い、失敗しても消さずに
+//         残しておいて、ページを開いた時・オンライン復帰時・30秒おきに自動で再送する
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -466,6 +467,14 @@ function upload() {
   // ▼ここにGASのデプロイURLを入れる
   const scriptURL = "https://script.google.com/macros/s/AKfycbzuhYRx9gyb5J1a-6ZuxmcCepIU1hIMnuBo58wh5CTYMWE785YAnuJY4ckm_13-ZHc7/exec";
 
+  // GASの応答が遅いことがあるので、まずローカルに一時保存してから
+  // 画面上は1秒だけ「送信中」にして先に進める。実際の送信は裏で行い、
+  // 成功したらローカルから消す（失敗時は残しておいて、あとで自動リトライする）
+  const entryId = Date.now() + "_" + Math.random().toString(36).slice(2);
+  const queue = getPendingPosts();
+  queue.push({ id: entryId, payload });
+  setPendingPosts(queue);
+
   showLoadingPopup();
 
   fetch(scriptURL, {
@@ -476,18 +485,20 @@ function upload() {
     },
     body: JSON.stringify(payload),
   })
-  .then(() => {
+    .then(() => {
+      setPendingPosts(getPendingPosts().filter(e => e.id !== entryId));
+    })
+    .catch(err => {
+      console.error("送信エラー（あとで自動的に再送します）:", err);
+    });
+
+  setTimeout(() => {
     hideLoadingPopup();
     logAction("post", `投稿: ${routeValue} / ${modelValue} ${numberValue} / ${stationValue} → ${boundValue}`);
     handleTripBookkeeping(routeValue, boundValue, timeValue, stationValue, sujitypeValue);
     showStampPopup(modelValue, numberValue);
     resetForm();
-  })
-  .catch(err => {
-    hideLoadingPopup();
-    console.error("送信エラー:", err);
-    alert("送信に失敗しました");
-  });
+  }, 1000);
 }
 
 // 投稿完了後、次の入力に備えてフォームを全クリアする
@@ -1259,5 +1270,58 @@ async function restoreDraft() {
 window.addEventListener("load", () => {
   setTimeout(restoreDraft, 800);
 });
+
+
+
+/* ----------------------------------------
+   投稿の一時保存＆裏送信キュー
+   GASの応答が遅いことがあるので、投稿ボタンを押したら1秒だけ「送信中」にして先に進める。
+   実際のスプシへの送信はローカルに一時保存したうえで裏で行い、成功したら消す。
+   タブを開いた時・オンライン復帰時・定期的（30秒おき）に、残っている分を自動で再送する。
+---------------------------------------- */
+const PENDING_POSTS_KEY = "tuts4_pending_posts";
+const PENDING_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzuhYRx9gyb5J1a-6ZuxmcCepIU1hIMnuBo58wh5CTYMWE785YAnuJY4ckm_13-ZHc7/exec";
+
+function getPendingPosts() {
+  try { return JSON.parse(localStorage.getItem(PENDING_POSTS_KEY) || "[]"); }
+  catch (e) { return []; }
+}
+function setPendingPosts(list) {
+  localStorage.setItem(PENDING_POSTS_KEY, JSON.stringify(list));
+}
+
+let _flushingPendingPosts = false;
+async function flushPendingPosts() {
+  if (_flushingPendingPosts) return;
+  _flushingPendingPosts = true;
+
+  try {
+    const queue = getPendingPosts();
+    if (!queue.length) return;
+
+    const stillPending = [];
+    for (const entry of queue) {
+      try {
+        await fetch(PENDING_SCRIPT_URL, {
+          method: "POST",
+          mode: "no-cors",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(entry.payload),
+        });
+        // no-corsなので成功したかどうかは分からないが、ネットワーク自体が通れば送れたとみなす
+      } catch (e) {
+        console.error("投稿の再送信に失敗（次回また試します）:", e);
+        stillPending.push(entry);
+      }
+    }
+    setPendingPosts(stillPending);
+  } finally {
+    _flushingPendingPosts = false;
+  }
+}
+
+window.addEventListener("load", () => setTimeout(flushPendingPosts, 1500));
+window.addEventListener("online", flushPendingPosts);
+setInterval(flushPendingPosts, 30000);
 
 
