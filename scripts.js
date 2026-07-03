@@ -1,6 +1,5 @@
-// version: 1.4.2
-// 1.4.2: 過去の乗車記録の表示を「時刻 種別行先行き」形式に変更（種別未入力時は行先のみ）。
-//        記録を選ぶと発車時刻もその時刻（今日の日付）に自動反映するように変更
+// version: 1.4.3
+// 1.4.3: 過去の乗車記録の選択を、インラインのプルダウンから上から出るダイアログ（モーダル）に変更
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -906,54 +905,64 @@ function renderDirectionHistory(candidates) {
     return;
   }
 
-  const label = document.createElement("div");
-  label.className = "geo-result-label";
-  label.textContent = "過去の乗車記録から選ぶ：";
-  historyBox.appendChild(label);
+  window._directionHistoryCandidates = candidates; // モーダル側から参照する
 
-  const select = document.createElement("select");
-  const blank = document.createElement("option");
-  blank.value = "";
-  blank.textContent = "選択してください";
-  select.appendChild(blank);
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "history-open-btn";
+  btn.textContent = `📋 過去の乗車記録から選ぶ（${candidates.length}件）`;
+  btn.onclick = openHistoryModal;
+  historyBox.appendChild(btn);
+}
 
-  candidates.forEach((c, i) => {
-    const opt = document.createElement("option");
-    opt.value = i;
+function openHistoryModal() {
+  const candidates = window._directionHistoryCandidates || [];
+  const list = document.getElementById("historyModalList");
+  list.innerHTML = "";
+
+  candidates.forEach(c => {
+    const item = document.createElement("button");
+    item.type = "button";
     const timeLabel = formatHM(c.time);
     const dest = c.type ? `${c.type}${c.bound}行き` : `${c.bound}行き`;
-    opt.textContent = timeLabel ? `${timeLabel} ${dest}` : dest;
-    select.appendChild(opt);
+    item.textContent = timeLabel ? `${timeLabel} ${dest}` : dest;
+    item.onclick = () => applyHistoryCandidate(c);
+    list.appendChild(item);
   });
 
-  select.addEventListener("change", () => {
-    if (select.value === "") return;
-    const c = candidates[select.value];
-    const typeSel = document.querySelector(".sujitype-select");
-    const boundSel = document.querySelector(".bound-select");
+  document.getElementById("historyModalOverlay").classList.add("show");
+}
 
-    if (typeSel) {
-      typeSel.value = c.type || "";
-      typeSel.dispatchEvent(new Event("change"));
-    }
-    if (boundSel) {
-      boundSel.value = c.bound;
-      boundSel.dispatchEvent(new Event("change"));
-    }
+function closeHistoryModal() {
+  const overlay = document.getElementById("historyModalOverlay");
+  if (overlay) overlay.classList.remove("show");
+}
 
-    // 発車時刻も、選んだ記録の時刻（今日の日付換算）に合わせる
-    if (c.time) {
-      const now = new Date();
-      const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), c.time.getHours(), c.time.getMinutes());
-      const pad = n => String(n).padStart(2, "0");
-      const timeEl = document.getElementById("departing_time");
-      if (timeEl) {
-        timeEl.value = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
-      }
-    }
-  });
+function applyHistoryCandidate(c) {
+  const typeSel = document.querySelector(".sujitype-select");
+  const boundSel = document.querySelector(".bound-select");
 
-  historyBox.appendChild(select);
+  if (typeSel) {
+    typeSel.value = c.type || "";
+    typeSel.dispatchEvent(new Event("change"));
+  }
+  if (boundSel) {
+    boundSel.value = c.bound;
+    boundSel.dispatchEvent(new Event("change"));
+  }
+
+  // 発車時刻も、選んだ記録の時刻（今日の日付換算）に合わせる
+  if (c.time) {
+    const now = new Date();
+    const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), c.time.getHours(), c.time.getMinutes());
+    const pad = n => String(n).padStart(2, "0");
+    const timeEl = document.getElementById("departing_time");
+    if (timeEl) {
+      timeEl.value = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+    }
+  }
+
+  closeHistoryModal();
 }
 
 
