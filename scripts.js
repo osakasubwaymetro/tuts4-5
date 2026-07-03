@@ -1,7 +1,6 @@
-// version: 1.10.0
-// 1.10.0: 降車駅の「1件だけ保留」を「未回答キュー」に変更し、答えないまま次の投稿をしても
-//         質問が失われないように修正。過去の投稿を一括で洗い出して未回答をキューに積む
-//         backfillDescentQueue() を追加（nav.jsのメニューから呼べる）
+// version: 1.10.1
+// 1.10.1: 降車駅ポップアップに時刻・乗車駅・種別・行先の詳細表示を追加（948件など大量の
+//         過去データをチェックする際にどの乗車を聞かれているか分かるようにするため）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -471,7 +470,7 @@ function upload() {
   .then(() => {
     hideLoadingPopup();
     logAction("post", `投稿: ${routeValue} / ${modelValue} ${numberValue} / ${stationValue} → ${boundValue}`);
-    handleTripBookkeeping(routeValue, boundValue, timeValue);
+    handleTripBookkeeping(routeValue, boundValue, timeValue, stationValue, sujitypeValue);
     showStampPopup(modelValue, numberValue);
     resetForm();
   })
@@ -999,7 +998,7 @@ function setDescentQueue(queue) {
 function queueKey(item) { return item.username + "|" + item.rideTime; }
 
 // 投稿が成功するたびに呼ばれる。「前回の乗車」を降車駅未回答キューに積む
-function handleTripBookkeeping(routeValue, boundValue, timeValue) {
+function handleTripBookkeeping(routeValue, boundValue, timeValue, stationValue, sujitypeValue) {
   const username = localStorage.getItem("username");
   if (!username) return;
 
@@ -1026,7 +1025,8 @@ function handleTripBookkeeping(routeValue, boundValue, timeValue) {
   }
 
   localStorage.setItem("tuts4_pending_descent", JSON.stringify({
-    username, rideTime: timeValue, route: routeValue, bound: boundValue, tripId
+    username, rideTime: timeValue, route: routeValue, bound: boundValue,
+    station: stationValue || "", sujitype: sujitypeValue || "", tripId
   }));
 }
 
@@ -1037,8 +1037,16 @@ function maybeAskDescentStation() {
   openDescentPopup(queue[0]);
 }
 
+function formatRideTimeLabel(rideTime) {
+  const d = new Date(rideTime);
+  if (isNaN(d)) return String(rideTime || "");
+  const pad = n => String(n).padStart(2, "0");
+  const weekday = ["日", "月", "火", "水", "木", "金", "土"][d.getDay()];
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}(${weekday}) ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function openDescentPopup(prev) {
-  setModalTitle(`前回（${prev.bound}行き）の降車駅`);
+  setModalTitle("降車駅の記録");
   const list = document.getElementById("historyModalList");
 
   const queueLen = getDescentQueue().length;
@@ -1051,9 +1059,14 @@ function openDescentPopup(prev) {
     .concat(names.map(n => `<option value="${n}">${formatStationOption(n)}</option>`))
     .join("");
 
+  const timeLabel = formatRideTimeLabel(prev.rideTime);
+  const typeLabel = prev.sujitype ? `${prev.sujitype}` : "";
+  const rideSummary = `${timeLabel}<br>${prev.route}<br>${prev.station || "(乗車駅不明)"} → ${typeLabel}${prev.bound}行き`;
+
   list.innerHTML = `
     ${queueNote}
-    <p class="modal-loading" style="margin-bottom:8px;">どこで降りましたか？（直通運転で別路線に入った場合は「→ 〇〇線へ直通」を選んでください）</p>
+    <div class="descent-ride-summary">${rideSummary}</div>
+    <p class="modal-loading" style="margin-bottom:8px;">↑この乗車、どこで降りましたか？（直通運転で別路線に入った場合は「→ 〇〇線へ直通」を選んでください）</p>
     <select id="alightStationSelect" style="width:100%;margin-bottom:14px;">${options}</select>
     <button type="button" id="continueTripBtn">🚃 乗り継ぎ中（旅を続ける）</button>
     <button type="button" id="endTripBtn">🏁 ここで旅を終える</button>
@@ -1139,7 +1152,9 @@ async function backfillDescentQueue() {
         username,
         rideTime: r["時刻"] || r["発車時刻"] || "",
         route: r["路線"] || "",
-        bound: r["行先"] || ""
+        bound: r["行先"] || "",
+        station: r["乗車駅"] || "",
+        sujitype: r["種別"] || ""
       }))
       .filter(r => r.rideTime && r.route);
 
