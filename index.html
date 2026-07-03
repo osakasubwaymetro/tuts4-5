@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.4.3 -->
+  <!-- version: 1.5.0 -->
+  <!-- 1.5.0: 「方面」プルダウンを廃止。乗車駅選択→ポップアップ（方面→過去の乗車記録）の流れに変更 -->
   <!-- 1.4.3: 過去の乗車記録ダイアログを、スタンプポップアップと統一感のある中央ポップアップ表示に変更 -->
   <!-- 1.4.2: ボタン名を「乗車列車を選択」に変更。過去の乗車記録の選択を上から出るダイアログに変更 -->
   <!-- 1.4.1: 「方面」ブロックをショートカット・乗車駅選択より上に移動 -->
@@ -386,23 +387,6 @@
     }
     #geoStationResult select { width: 100%; }
 
-    #directionHistoryResult {
-      margin-top: 10px;
-      font-size: 13px;
-      color: #333;
-    }
-    #directionHistoryResult select { width: 100%; }
-
-    .history-open-btn {
-      background: #1e8449;
-      color: white;
-      width: auto;
-      padding: 8px 14px;
-      font-size: 13px;
-      margin-top: 4px;
-    }
-    .history-open-btn:hover { background: #E60012; }
-
     /* ===== 過去の乗車記録から選ぶ：スタンプポップアップと統一した中央ポップアップ ===== */
     .modal-overlay {
       display: none;
@@ -469,15 +453,22 @@
       color: #004C97;
       border-color: #004C97;
     }
+    .modal-loading {
+      color: #888;
+      font-size: 14px;
+      text-align: center;
+      padding: 20px 10px;
+      margin: 0;
+    }
   </style>
 </head>
 <body>
 
-<!-- 過去の乗車記録から選ぶダイアログ -->
+<!-- 方面選択・過去の乗車記録から選ぶダイアログ（乗車駅を選ぶと自動で開く） -->
 <div id="historyModalOverlay" class="modal-overlay" onclick="closeHistoryModal()">
   <div class="modal-panel" onclick="event.stopPropagation()">
     <div class="modal-header">
-      <span>過去の乗車記録から選ぶ</span>
+      <span id="modalTitle">方面を選択</span>
       <button type="button" class="modal-close" onclick="closeHistoryModal()">✕</button>
     </div>
     <div id="historyModalList" class="modal-list"></div>
@@ -497,13 +488,6 @@
   <input type="datetime-local" id="departing_time">
   <button type="button" onclick="setCurrentDateTime()">🚃 乗車列車を選択（現在時刻・現在地の駅を自動取得）</button>
   <div id="geoStationResult"></div>
-
-  <div id="directionField" style="display:none;">
-    <label><h3>方面</h3></label>
-    <small>路線の両端の駅を目印に方面を選ぶと、過去の自分の乗車記録から種別・行先の候補を出します</small>
-    <select id="direction"></select>
-    <div id="directionHistoryResult"></div>
-  </div>
 
   <!-- ショートカット選択 -->
   <div class="shortcut-bar">
