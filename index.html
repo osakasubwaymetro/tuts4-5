@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.7.3 -->
+  <!-- version: 1.7.4 -->
+  <!-- 1.7.4: ポップアップを背景タップでは閉じないように変更（✕ボタンのみで閉じる） -->
   <!-- 1.7.3: ?checkDescent=1（過去一括チェック）の処理を撤去 -->
   <!-- 1.7.2: 降車駅ポップアップに詳細情報カードのスタイルを追加 -->
   <!-- 1.7.1: ?checkDescent=1で過去の未回答降車駅チェックを起動できるように対応 -->
@@ -475,7 +476,7 @@
 <body>
 
 <!-- 方面選択・過去の乗車記録から選ぶダイアログ（乗車駅を選ぶと自動で開く） -->
-<div id="historyModalOverlay" class="modal-overlay" onclick="closeHistoryModal()">
+<div id="historyModalOverlay" class="modal-overlay">
   <div class="modal-panel" onclick="event.stopPropagation()">
     <div class="modal-header">
       <span id="modalTitle">方面を選択</span>

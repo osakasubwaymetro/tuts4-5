@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.4.0 -->
+<!-- version: 1.5.0 -->
+<!-- 1.5.0: 降車駅選択をセレクトボックスからボタン一覧に変更。ポップアップは背景タップでは閉じず、✕ボタンのみで閉じるように変更 -->
 <!-- 1.4.0: 降車駅の記録をカード内の展開フォームから、index.htmlと統一感のある中央ポップアップに変更 -->
 <!-- 1.3.0: 降車駅プルダウンで「→ 〇〇線へ直通」を選ぶと、その路線の駅一覧に切り替わるように対応 -->
 <!-- 1.2.1: 降車駅記録の「保存」ボタン連打で重複送信されないよう、送信中は無効化するガードを追加 -->
@@ -126,25 +127,31 @@
     color: #17324f;
     margin-bottom: 12px;
   }
-  .modal-panel select {
+  .modal-list {
+    max-height: 60vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .modal-list button {
     width: 100%;
-    padding: 9px;
-    border-radius: 8px;
-    border: 1px solid #ccc;
-    margin-bottom: 12px;
-    font-size: 14px;
-  }
-  .modal-panel .save-btn,
-  .modal-panel .cancel-btn {
-    padding: 8px 14px;
-    border-radius: 8px;
-    border: none;
-    font-size: 13px;
+    text-align: left;
+    background: white;
+    color: #333;
+    border: 1.5px solid #E3E8F0;
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 15px;
     cursor: pointer;
-    margin-right: 8px;
   }
-  .modal-panel .save-btn { background: #004C97; color: white; }
-  .modal-panel .cancel-btn { background: #eee; color: #666; }
+  .modal-list button:hover,
+  .modal-list button:active {
+    background: #EEF4FF;
+    color: #004C97;
+    border-color: #004C97;
+  }
+  .modal-list button:disabled { opacity: 0.5; cursor: default; }
 
   #reload {
     text-align: center;
@@ -186,7 +193,7 @@
 <body>
 
 <!-- 降車駅を記録するポップアップ -->
-<div id="descentModalOverlay" class="modal-overlay" onclick="closeDescentModal()">
+<div id="descentModalOverlay" class="modal-overlay">
   <div class="modal-panel" onclick="event.stopPropagation()">
     <div class="modal-header">
       <span>降車駅を記録</span>
@@ -356,14 +363,6 @@ function renderCards(data) {
   });
 }
 
-function buildStationOptionsHTML(routeName) {
-  const stationsOnRoute = stationMaster.filter(s => s["路線"] === routeName);
-  const names = [...new Set(stationsOnRoute.map(s => s["駅名"]))];
-  return ['<option value="">選択してください</option>']
-    .concat(names.map(n => `<option value="${n}">${formatStationOption(n)}</option>`))
-    .join("");
-}
-
 function formatRideTimeLabel(rideTime) {
   const d = new Date(rideTime);
   if (isNaN(d)) return String(rideTime || "");
@@ -376,6 +375,12 @@ function closeDescentModal() {
   document.getElementById("descentModalOverlay").classList.remove("show");
 }
 
+function buildStationButtonsHTML(routeName) {
+  const stationsOnRoute = stationMaster.filter(s => s["路線"] === routeName);
+  const names = [...new Set(stationsOnRoute.map(s => s["駅名"]))];
+  return names.map(n => `<button type="button" class="descent-station-btn" data-station="${n.replace(/"/g, "&quot;")}">${formatStationOption(n)}</button>`).join("");
+}
+
 function openDescentModal(row) {
   const body = document.getElementById("descentModalBody");
 
@@ -383,46 +388,33 @@ function openDescentModal(row) {
   const typeLabel = row["種別"] ? row["種別"] : "";
   const rideSummary = `${timeLabel}<br>${row["路線"] || ""}<br>${row["乗車駅"] || "(乗車駅不明)"} → ${typeLabel}${row["行先"] || ""}行き`;
 
-  body.innerHTML = `
-    <div class="descent-ride-summary">${rideSummary}</div>
-    <select class="descent-select">${buildStationOptionsHTML(row["路線"])}</select>
-    <div>
-      <button type="button" class="save-btn">保存</button>
-      <button type="button" class="cancel-btn">キャンセル</button>
-    </div>
-  `;
-
-  document.getElementById("descentModalOverlay").classList.add("show");
-
-  body.querySelector(".cancel-btn").onclick = () => closeDescentModal();
-
-  const selectEl = body.querySelector(".descent-select");
-  // 「→ 〇〇線へ直通」を選んだら、そのままその路線の駅一覧に切り替える
-  selectEl.addEventListener("change", () => {
-    if (isViaEntry(selectEl.value)) {
-      const targetRoute = viaTargetRoute(selectEl.value);
-      selectEl.innerHTML = buildStationOptionsHTML(targetRoute);
-    }
-  });
-
-  const saveBtn = body.querySelector(".save-btn");
-  const cancelBtn = body.querySelector(".cancel-btn");
   let submitting = false;
 
-  saveBtn.onclick = async () => {
-    if (submitting) return; // 連打防止
-    const alightStation = selectEl.value;
-    if (!alightStation) {
-      alert("降車駅を選択してください");
-      return;
-    }
+  function renderStationButtons(routeName) {
+    body.innerHTML = `
+      <div class="descent-ride-summary">${rideSummary}</div>
+      <div class="modal-list">${buildStationButtonsHTML(routeName)}</div>
+    `;
 
+    body.querySelectorAll(".descent-station-btn").forEach(btn => {
+      btn.onclick = () => {
+        if (submitting) return; // 連打防止
+        const station = btn.dataset.station;
+
+        // 「→ 〇〇線へ直通」を選んだら、そのままその路線の駅一覧に切り替える
+        if (isViaEntry(station)) {
+          renderStationButtons(viaTargetRoute(station));
+          return;
+        }
+
+        submitAlightStation(station);
+      };
+    });
+  }
+
+  async function submitAlightStation(alightStation) {
     submitting = true;
-    saveBtn.disabled = true;
-    cancelBtn.disabled = true;
-    selectEl.disabled = true;
-    const originalLabel = saveBtn.textContent;
-    saveBtn.textContent = "送信中...";
+    body.querySelectorAll(".descent-station-btn").forEach(b => { b.disabled = true; });
 
     try {
       await fetch(TRANSFERS_URL, {
@@ -441,10 +433,7 @@ function openDescentModal(row) {
       console.error("降車駅の送信に失敗:", e);
       alert("送信に失敗しました。時間を置いて再試行してください。");
       submitting = false;
-      saveBtn.disabled = false;
-      cancelBtn.disabled = false;
-      selectEl.disabled = false;
-      saveBtn.textContent = originalLabel;
+      body.querySelectorAll(".descent-station-btn").forEach(b => { b.disabled = false; });
       return;
     }
 
@@ -452,7 +441,10 @@ function openDescentModal(row) {
     myTransfers.push({ "ユーザー名": username, "元の乗車時刻": row["時刻"], "降車駅": alightStation });
     closeDescentModal();
     applyMonthFilter();
-  };
+  }
+
+  renderStationButtons(row["路線"]);
+  document.getElementById("descentModalOverlay").classList.add("show");
 }
 
 function applyMonthFilter() {
