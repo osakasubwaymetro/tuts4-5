@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.1.0 -->
+<!-- version: 1.2.0 -->
+<!-- 1.2.0: 各投稿カードに「🚏 降車駅を記録」ボタンを追加。1件ずつ任意で降車駅を記録できる -->
 <!-- 1.1.0: 全ユーザー分が見えていた不具合を修正し、自分の投稿のみ表示・保存するように変更 -->
 <style>
   body {
@@ -55,6 +56,48 @@
     color: #333;
     font-size: 14px;
   }
+
+  .descent-row-btn {
+    margin-top: 10px;
+    background: #1e8449;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .descent-row-btn:hover { background: #E60012; }
+  .descent-recorded {
+    margin-top: 8px;
+    font-size: 13px;
+    color: #1e8449;
+    font-weight: bold;
+  }
+  .descent-form {
+    margin-top: 10px;
+    padding: 10px;
+    background: #F4F7FB;
+    border-radius: 10px;
+  }
+  .descent-form select {
+    width: 100%;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    margin-bottom: 8px;
+    font-size: 14px;
+  }
+  .descent-form button {
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: none;
+    font-size: 13px;
+    cursor: pointer;
+    margin-right: 6px;
+  }
+  .descent-form .save-btn { background: #004C97; color: white; }
+  .descent-form .cancel-btn { background: #eee; color: #666; }
 
   #reload {
     text-align: center;
@@ -120,6 +163,9 @@
 const username = checkLogin();
 
 const GAS_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
+const TRANSFERS_URL = "https://script.google.com/macros/s/AKfycbwOzhHMk2WRtcUHvSMfnrimIQxUk-_dZN_43I-m8fpMNVxomE7emhevGGyC3UnLR3ejBw/exec";
+const STATION_URL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/station";
+
 // 乗車履歴は自分の分だけ表示・保存する（他ユーザー分は保存しない）
 const CACHE_KEY = "tuts4_show_cache_" + username;
 
@@ -127,6 +173,33 @@ const CACHE_KEY = "tuts4_show_cache_" + username;
 localStorage.removeItem("tuts4_show_cache");
 
 let allData = [];
+let stationMaster = [];
+let myTransfers = [];
+
+function timeKeyMatch(a, b) {
+  if (!a || !b) return false;
+  if (String(a) === String(b)) return true;
+  const da = new Date(a), db = new Date(b);
+  return !isNaN(da) && !isNaN(db) && da.getTime() === db.getTime();
+}
+
+function formatStationOption(name) {
+  if (typeof name === "string" && name.startsWith("via_")) {
+    return `→ ${name.slice(4)}へ直通`;
+  }
+  return name;
+}
+
+// 各種マスタ・自分のtransfers記録を読み込む（降車駅記録ウィジェット用）
+Promise.all([
+  fetch(STATION_URL).then(r => r.json()).catch(() => []),
+  fetch(TRANSFERS_URL).then(r => r.json()).catch(() => [])
+]).then(([stationData, transfersData]) => {
+  stationMaster = stationData;
+  myTransfers = transfersData.filter(t => String(t["ユーザー名"]) === String(username));
+  // 既に描画済みなら降車駅の状態を反映して再描画
+  if (allData.length) applyMonthFilter();
+});
 
 // ===== 更新バー =====
 function showUpdateBar(msg) {
@@ -200,8 +273,85 @@ function renderCards(data) {
       }
     });
 
+    // ===== 降車駅の記録（すでに記録済みならそれを表示、無ければ記録用ボタン） =====
+    const rideTime = row["時刻"];
+    const existing = myTransfers.find(t => timeKeyMatch(t["元の乗車時刻"], rideTime));
+
+    if (existing) {
+      const p = document.createElement("p");
+      p.className = "descent-recorded";
+      p.textContent = `🚏 降車駅：${existing["降車駅"] || "(不明)"}`;
+      card.appendChild(p);
+    } else {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "descent-row-btn";
+      btn.textContent = "🚏 降車駅を記録";
+      btn.onclick = () => toggleDescentForm(card, row);
+      card.appendChild(btn);
+    }
+
     container.appendChild(card);
   });
+}
+
+function toggleDescentForm(card, row) {
+  const existingForm = card.querySelector(".descent-form");
+  if (existingForm) { existingForm.remove(); return; }
+
+  const routeName = row["路線"];
+  const stationsOnRoute = stationMaster.filter(s => s["路線"] === routeName);
+  const names = [...new Set(stationsOnRoute.map(s => s["駅名"]))];
+
+  const form = document.createElement("div");
+  form.className = "descent-form";
+
+  const options = ['<option value="">選択してください</option>']
+    .concat(names.map(n => `<option value="${n}">${formatStationOption(n)}</option>`))
+    .join("");
+
+  form.innerHTML = `
+    <select class="descent-select">${options}</select>
+    <div>
+      <button type="button" class="save-btn">保存</button>
+      <button type="button" class="cancel-btn">キャンセル</button>
+    </div>
+  `;
+
+  card.appendChild(form);
+
+  form.querySelector(".cancel-btn").onclick = () => form.remove();
+  form.querySelector(".save-btn").onclick = async () => {
+    const select = form.querySelector(".descent-select");
+    const alightStation = select.value;
+    if (!alightStation) {
+      alert("降車駅を選択してください");
+      return;
+    }
+
+    try {
+      await fetch(TRANSFERS_URL, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username,
+          rideTime: row["時刻"],
+          alightStation,
+          tripId: username + "_" + row["時刻"],
+          tripEnd: true
+        })
+      });
+    } catch (e) {
+      console.error("降車駅の送信に失敗:", e);
+      alert("送信に失敗しました。時間を置いて再試行してください。");
+      return;
+    }
+
+    // 画面上のキャッシュにも反映して、すぐに「記録済み」表示に切り替える
+    myTransfers.push({ "ユーザー名": username, "元の乗車時刻": row["時刻"], "降車駅": alightStation });
+    applyMonthFilter();
+  };
 }
 
 function applyMonthFilter() {

@@ -2,9 +2,8 @@
  * nav.js — 共通ヘッダー管理ファイル
  * 新しいページを追加するときは NAV_LINKS だけ編集してください
  *
- * version: 1.2.0
- * 1.2.0: ヘッダーの降車駅未回答ボタンをキュー件数表示に対応。過去分を一括チェックする
- *        メニュー項目「🔍 過去の降車駅をチェック」を追加
+ * version: 1.3.0
+ * 1.3.0: 過去分の一括チェック機能を撤去（乗車履歴ページから個別に記録する方式に変更したため）
  */
 
 // ===== ① ナビゲーションのリンク一覧 =====
@@ -177,10 +176,9 @@ function initNav(pageTitle) {
   }).join("");
 
   // 未回答の降車記録があるかチェック（ページ問わず localStorage で判定できる）
-  let descentQueueLen = 0;
-  try { descentQueueLen = (JSON.parse(localStorage.getItem("tuts4_descent_queue") || "[]")).length; } catch (e) {}
-  const descentBtnHTML = descentQueueLen > 0
-    ? `<button class="nav-descent-btn" onclick="_navOpenPendingDescent()" title="前回の降車駅が未回答です">🚏 降車駅未回答${descentQueueLen > 1 ? `（${descentQueueLen}）` : ""}</button>`
+  const hasPendingDescent = !!localStorage.getItem("tuts4_awaiting_descent_answer");
+  const descentBtnHTML = hasPendingDescent
+    ? `<button class="nav-descent-btn" onclick="_navOpenPendingDescent()" title="前回の降車駅が未回答です">🚏 降車駅未回答</button>`
     : "";
 
   // ヘッダー全体のHTML
@@ -201,8 +199,6 @@ function initNav(pageTitle) {
       </div>
       <div class="nav-divider"></div>
       ${linkHTML}
-      <div class="nav-divider"></div>
-      <button class="nav-logout" onclick="_navCheckDescent()">🔍 過去の降車駅をチェック</button>
       <div class="nav-divider"></div>
       <button class="nav-logout" onclick="logout()">🚪 ログアウト</button>
     </div>
@@ -236,15 +232,5 @@ function _navOpenPendingDescent() {
     maybeAskDescentStation();
   } else {
     location.href = "index.html?openDescent=1";
-  }
-}
-
-// 過去の投稿を洗い出して、降車駅が未回答のものをまとめてチェックする
-function _navCheckDescent() {
-  const currentFile = location.pathname.split("/").pop() || "index.html";
-  if (currentFile === "index.html" && typeof backfillDescentQueue === "function") {
-    backfillDescentQueue();
-  } else {
-    location.href = "index.html?checkDescent=1";
   }
 }

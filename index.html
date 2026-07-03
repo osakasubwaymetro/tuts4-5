@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.7.2 -->
+  <!-- version: 1.7.3 -->
+  <!-- 1.7.3: ?checkDescent=1（過去一括チェック）の処理を撤去 -->
   <!-- 1.7.2: 降車駅ポップアップに詳細情報カードのスタイルを追加 -->
   <!-- 1.7.1: ?checkDescent=1で過去の未回答降車駅チェックを起動できるように対応 -->
   <!-- 1.7.0: クリアボタンを追加。?openDescent=1でヘッダーからの降車ポップアップ起動に対応 -->
@@ -597,13 +598,6 @@
     window.addEventListener("load", () => {
       setTimeout(() => {
         if (typeof maybeAskDescentStation === "function") maybeAskDescentStation();
-      }, 900);
-    });
-  }
-  if (_urlParams.get("checkDescent") === "1") {
-    window.addEventListener("load", () => {
-      setTimeout(() => {
-        if (typeof backfillDescentQueue === "function") backfillDescentQueue();
       }, 900);
     });
   }
