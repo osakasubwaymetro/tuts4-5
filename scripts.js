@@ -1,5 +1,6 @@
-// version: 1.4.3
-// 1.4.3: 過去の乗車記録の選択を、インラインのプルダウンから上から出るダイアログ（モーダル）に変更
+// version: 1.5.0
+// 1.5.0: 「方面」の独立プルダウンを廃止し、乗車駅を選んだ瞬間にポップアップで
+//        方面→過去の乗車記録（種別・行先・時刻）を選べる一連の流れに変更
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -721,69 +722,66 @@ async function applyGeoStation(match) {
 
 
 /* ----------------------------------------
-   方面（上り/下り）＋過去の乗車記録から選ぶ
+   乗車駅を選ぶと、ポップアップで「方面→過去の乗車記録」を選べる
    時刻表が使えないので、代わりに「station シートに登録されている駅の並び順＝
    路線上の物理的な順番」とみなし、その両端の駅名を方面の目印にする。
-   方面を選ぶと、自分の過去の投稿履歴（その路線・その方面）から
-   よく使う「種別／行先」の組み合わせを候補として出す。
 
    ※ 前提：station シートの各路線の行が、実際の駅の並び順になっている必要がある
       （ループ線・支線・直通運転先の駅は正しく判定できない場合がある）
 ---------------------------------------- */
 
-document.getElementById("route").addEventListener("change", updateDirectionField);
-
-// 乗車駅（.station-select）が変わったときも方面の選択肢を再計算する
+// 乗車駅（.station-select）が変わったら、ポップアップでの選択フローを開始する
 document.getElementById("rideBlocks").addEventListener("change", (e) => {
   if (e.target.classList.contains("station-select")) {
-    updateDirectionField();
+    startStationPopupFlow();
   }
 });
 
-function updateDirectionField() {
+function startStationPopupFlow() {
   const routeVal = document.getElementById("route").value;
-  const field = document.getElementById("directionField");
-  const select = document.getElementById("direction");
-  const historyBox = document.getElementById("directionHistoryResult");
-  if (!field || !select) return;
-
-  select.innerHTML = '<option value="">選択してください</option>';
-  if (historyBox) historyBox.innerHTML = "";
+  const stationSelects = document.querySelectorAll(".station-select");
+  const boardingStation = stationSelects.length ? stationSelects[0].value : "";
+  if (!routeVal || !boardingStation) return;
 
   const stationsOnRoute = (allstationData || []).filter(r => r["路線"] === routeVal);
-  if (!routeVal || stationsOnRoute.length < 2) {
-    field.style.display = "none";
-    return;
-  }
+  if (stationsOnRoute.length < 2) return;
 
   const first = stationsOnRoute[0]["駅名"];
   const last = stationsOnRoute[stationsOnRoute.length - 1]["駅名"];
-  if (!first || !last || first === last) {
-    field.style.display = "none";
-    return;
-  }
+  if (!first || !last || first === last) return;
 
-  const stationSelects = document.querySelectorAll(".station-select");
-  const boardingStation = stationSelects.length ? stationSelects[0].value : "";
-
-  // 乗車駅自体が終着駅なら、その駅への「方面」は存在しない（折り返せないので選択肢から除外）
+  // 乗車駅自体が終着駅なら、その駅への「方面」は存在しない（折り返せないので除外）
   const termini = [first, last].filter(name => name !== boardingStation);
-  if (!termini.length) {
-    field.style.display = "none";
-    return;
+  if (!termini.length) return;
+
+  if (termini.length === 1) {
+    // 方面が一意に決まる（終着駅から乗る）場合は、方面選択を飛ばして直接履歴を表示
+    loadAndShowHistoryPopup(routeVal, boardingStation, termini[0]);
+  } else {
+    showDirectionChoicePopup(routeVal, boardingStation, termini);
   }
-
-  termini.forEach(name => {
-    const opt = document.createElement("option");
-    opt.value = name;
-    opt.textContent = `${name} 方面`;
-    select.appendChild(opt);
-  });
-
-  field.style.display = "block";
 }
 
-document.getElementById("direction").addEventListener("change", showDirectionHistory);
+function showDirectionChoicePopup(routeVal, boardingStation, termini) {
+  setModalTitle("方面を選択");
+  const list = document.getElementById("historyModalList");
+  list.innerHTML = "";
+
+  termini.forEach(name => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.textContent = `${name} 方面`;
+    item.onclick = () => loadAndShowHistoryPopup(routeVal, boardingStation, name);
+    list.appendChild(item);
+  });
+
+  document.getElementById("historyModalOverlay").classList.add("show");
+}
+
+function setModalTitle(text) {
+  const title = document.getElementById("modalTitle");
+  if (title) title.textContent = text;
+}
 
 // 自分の過去の乗車履歴だけを取得（ユーザーごとにキャッシュし、他ユーザー分は保存しない）
 async function getMyRideHistoryCached() {
@@ -813,22 +811,18 @@ function timeOfDayMinutes(d) {
   return d.getHours() * 60 + d.getMinutes();
 }
 
-async function showDirectionHistory() {
-  const routeVal = document.getElementById("route").value;
-  const dirVal = document.getElementById("direction").value;
-  const historyBox = document.getElementById("directionHistoryResult");
-  if (!historyBox) return;
-  historyBox.innerHTML = "";
-  if (!routeVal || !dirVal) return;
+function formatHM(d) {
+  if (!d) return "";
+  const h = String(d.getHours()).padStart(2, "0");
+  const m = String(d.getMinutes()).padStart(2, "0");
+  return `${h}:${m}`;
+}
 
-  const stationSelects = document.querySelectorAll(".station-select");
-  const boardingStation = stationSelects.length ? stationSelects[0].value : "";
-  if (!boardingStation) {
-    historyBox.textContent = "乗車駅を選択すると、その駅から乗った過去の記録を候補にできます。";
-    return;
-  }
-
-  historyBox.textContent = "過去の乗車記録を確認中...";
+async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
+  setModalTitle("過去の乗車記録から選ぶ");
+  const list = document.getElementById("historyModalList");
+  list.innerHTML = '<p class="modal-loading">過去の乗車記録を確認中...</p>';
+  document.getElementById("historyModalOverlay").classList.add("show");
 
   const stationsOnRoute = (allstationData || []).filter(r => r["路線"] === routeVal);
   const indexOf = name => stationsOnRoute.findIndex(r => r["駅名"] === name);
@@ -886,39 +880,17 @@ async function showDirectionHistory() {
     if (!seen.has(key)) { seen.add(key); candidates.push(c); }
   });
 
-  renderDirectionHistory(candidates);
+  renderHistoryPopupList(candidates);
 }
 
-function formatHM(d) {
-  if (!d) return "";
-  const h = String(d.getHours()).padStart(2, "0");
-  const m = String(d.getMinutes()).padStart(2, "0");
-  return `${h}:${m}`;
-}
-
-function renderDirectionHistory(candidates) {
-  const historyBox = document.getElementById("directionHistoryResult");
-  historyBox.innerHTML = "";
-
-  if (!candidates.length) {
-    historyBox.textContent = "この方面での過去の乗車記録が見つかりませんでした。";
-    return;
-  }
-
-  window._directionHistoryCandidates = candidates; // モーダル側から参照する
-
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "history-open-btn";
-  btn.textContent = `📋 過去の乗車記録から選ぶ（${candidates.length}件）`;
-  btn.onclick = openHistoryModal;
-  historyBox.appendChild(btn);
-}
-
-function openHistoryModal() {
-  const candidates = window._directionHistoryCandidates || [];
+function renderHistoryPopupList(candidates) {
   const list = document.getElementById("historyModalList");
   list.innerHTML = "";
+
+  if (!candidates.length) {
+    list.innerHTML = '<p class="modal-loading">この方面での過去の乗車記録が見つかりませんでした。</p>';
+    return;
+  }
 
   candidates.forEach(c => {
     const item = document.createElement("button");
@@ -929,8 +901,6 @@ function openHistoryModal() {
     item.onclick = () => applyHistoryCandidate(c);
     list.appendChild(item);
   });
-
-  document.getElementById("historyModalOverlay").classList.add("show");
 }
 
 function closeHistoryModal() {
