@@ -4,7 +4,8 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>統計情報 | tuts4 — フル版</title>
-<!-- version: 1.4.1 -->
+<!-- version: 1.5.0 -->
+<!-- 1.5.0: 各路線の行に「🔄」更新ボタンを追加。全体を再計算せず、その路線だけ降車データを再取得して更新できるように -->
 <!-- 1.4.1: 降車駅が未記録の乗車は、行先での概算をやめて集計対象から除外するように変更 -->
 <!-- 1.4.0: 乗車区間の計算で、transfersに実際の降車駅記録があればそちらを優先するように変更 -->
 <!-- 1.3.1: 路線ごとの乗車区間を、横棒グラフから縦の路線図風（駅名ピル＋線）デザインに変更 -->
@@ -67,6 +68,16 @@
     margin-bottom: 8px;
   }
   .route-coverage-pct { font-size: 12px; font-weight: normal; color: #666; }
+  .route-refresh-btn {
+    background: none;
+    border: none;
+    font-size: 13px;
+    color: #004C97;
+    cursor: pointer;
+    padding: 2px 4px;
+    margin-left: 4px;
+  }
+  .route-refresh-btn:disabled { opacity: 0.5; cursor: default; }
 
   .route-line-scroll {
     max-height: 300px;
@@ -429,6 +440,8 @@ async function getMyTransfers() {
   return _transfersCache;
 }
 
+let _routeCoverageState = null; // { byRoute, stationData }
+
 async function renderRouteCoverage(mine) {
   const container = document.getElementById("routeCoverageList");
   if (!container) return;
@@ -442,6 +455,7 @@ async function renderRouteCoverage(mine) {
     if (!r.route) return;
     (byRoute[r.route] = byRoute[r.route] || []).push(r);
   });
+  _routeCoverageState = { byRoute, stationData };
 
   const routeNames = Object.keys(byRoute).sort((a, b) => byRoute[b].length - byRoute[a].length);
   if (!routeNames.length) {
@@ -452,69 +466,104 @@ async function renderRouteCoverage(mine) {
   container.innerHTML = "";
 
   routeNames.forEach(routeName => {
-    // via_ の直通目印は駅そのものではないので、区間計算からは除外する
-    const stationsOnRoute = stationData
-      .filter(s => s["路線"] === routeName)
-      .map(s => s["駅名"])
-      .filter(name => !(typeof name === "string" && name.startsWith("via_")));
-
-    if (stationsOnRoute.length < 2) return; // 駅データが無い/揃ってない路線はスキップ
-
-    const totalSegments = stationsOnRoute.length - 1;
-    const riddenSegments = new Set();
-
-    byRoute[routeName].forEach(r => {
-      // 降車駅が記録されている乗車だけを対象にする（未回答のものは概算せず除外）
-      const matchedTransfer = myTransfers.find(t => timeKeyMatch(t["元の乗車時刻"], r.timeRaw));
-      if (!matchedTransfer) return;
-
-      const boundList = [String(matchedTransfer["降車駅"] || "").trim()].filter(Boolean);
-
-      const stationIdx = stationsOnRoute.indexOf(r.station);
-      if (stationIdx === -1) return;
-
-      boundList.forEach(b => {
-        const boundIdx = stationsOnRoute.indexOf(b);
-        if (boundIdx === -1) return; // 直通先など路線図に無い行先は区間計算できないのでスキップ
-        const lo = Math.min(stationIdx, boundIdx);
-        const hi = Math.max(stationIdx, boundIdx);
-        for (let i = lo; i < hi; i++) riddenSegments.add(i);
-      });
-    });
-
-    const riddenCount = riddenSegments.size;
-    const pct = totalSegments ? Math.round((riddenCount / totalSegments) * 1000) / 10 : 0;
-
-    const row = document.createElement("div");
-    row.className = "route-coverage-row";
-
-    // 駅と、駅の間をつなぐ線（区間）を交互に並べる
-    let lineHTML = "";
-    stationsOnRoute.forEach((name, i) => {
-      const dotRidden = (riddenSegments.has(i - 1) || riddenSegments.has(i)) ? " ridden" : "";
-      lineHTML += `
-        <div class="route-line-station">
-          <span class="route-line-dot${dotRidden}"></span>
-          <span class="route-line-name">${name}</span>
-        </div>`;
-      if (i < stationsOnRoute.length - 1) {
-        const segRidden = riddenSegments.has(i) ? " ridden" : "";
-        lineHTML += `<div class="route-line-connector${segRidden}"></div>`;
-      }
-    });
-
-    row.innerHTML = `
-      <div class="route-coverage-label">
-        <span>${routeName}</span>
-        <span class="route-coverage-pct">${pct}%（${riddenCount}/${totalSegments}区間）</span>
-      </div>
-      <div class="route-line-scroll">${lineHTML}</div>
-    `;
-    container.appendChild(row);
+    const row = buildRouteCoverageRow(routeName, byRoute[routeName], stationData, myTransfers);
+    if (row) container.appendChild(row);
   });
 
   if (!container.children.length) {
     container.innerHTML = '<p class="small">駅データが揃っている路線がありませんでした。</p>';
+  }
+}
+
+function buildRouteCoverageRow(routeName, rides, stationData, myTransfers) {
+  // via_ の直通目印は駅そのものではないので、区間計算からは除外する
+  const stationsOnRoute = stationData
+    .filter(s => s["路線"] === routeName)
+    .map(s => s["駅名"])
+    .filter(name => !(typeof name === "string" && name.startsWith("via_")));
+
+  if (stationsOnRoute.length < 2) return null; // 駅データが無い/揃ってない路線はスキップ
+
+  const totalSegments = stationsOnRoute.length - 1;
+  const riddenSegments = new Set();
+
+  rides.forEach(r => {
+    // 降車駅が記録されている乗車だけを対象にする（未回答のものは概算せず除外）
+    const matchedTransfer = myTransfers.find(t => timeKeyMatch(t["元の乗車時刻"], r.timeRaw));
+    if (!matchedTransfer) return;
+
+    const boundList = [String(matchedTransfer["降車駅"] || "").trim()].filter(Boolean);
+
+    const stationIdx = stationsOnRoute.indexOf(r.station);
+    if (stationIdx === -1) return;
+
+    boundList.forEach(b => {
+      const boundIdx = stationsOnRoute.indexOf(b);
+      if (boundIdx === -1) return; // 直通先など路線図に無い行先は区間計算できないのでスキップ
+      const lo = Math.min(stationIdx, boundIdx);
+      const hi = Math.max(stationIdx, boundIdx);
+      for (let i = lo; i < hi; i++) riddenSegments.add(i);
+    });
+  });
+
+  const riddenCount = riddenSegments.size;
+  const pct = totalSegments ? Math.round((riddenCount / totalSegments) * 1000) / 10 : 0;
+
+  const row = document.createElement("div");
+  row.className = "route-coverage-row";
+  row.dataset.route = routeName;
+
+  // 駅と、駅の間をつなぐ線（区間）を交互に並べる
+  let lineHTML = "";
+  stationsOnRoute.forEach((name, i) => {
+    const dotRidden = (riddenSegments.has(i - 1) || riddenSegments.has(i)) ? " ridden" : "";
+    lineHTML += `
+      <div class="route-line-station">
+        <span class="route-line-dot${dotRidden}"></span>
+        <span class="route-line-name">${name}</span>
+      </div>`;
+    if (i < stationsOnRoute.length - 1) {
+      const segRidden = riddenSegments.has(i) ? " ridden" : "";
+      lineHTML += `<div class="route-line-connector${segRidden}"></div>`;
+    }
+  });
+
+  row.innerHTML = `
+    <div class="route-coverage-label">
+      <span>${routeName}</span>
+      <span>
+        <span class="route-coverage-pct">${pct}%（${riddenCount}/${totalSegments}区間）</span>
+        <button type="button" class="route-refresh-btn" title="この路線だけデータを更新">🔄</button>
+      </span>
+    </div>
+    <div class="route-line-scroll">${lineHTML}</div>
+  `;
+
+  row.querySelector(".route-refresh-btn").onclick = () => refreshRouteCoverageRow(routeName);
+
+  return row;
+}
+
+// この路線だけ、降車駅データを再取得して表示を更新する（他の路線は再計算しない）
+async function refreshRouteCoverageRow(routeName) {
+  if (!_routeCoverageState) return;
+  const { byRoute, stationData } = _routeCoverageState;
+  const rides = byRoute[routeName];
+  if (!rides) return;
+
+  const oldRow = document.querySelector(`.route-coverage-row[data-route="${CSS.escape(routeName)}"]`);
+  if (oldRow) {
+    const btn = oldRow.querySelector(".route-refresh-btn");
+    if (btn) { btn.disabled = true; btn.textContent = "…"; }
+  }
+
+  // transfersキャッシュを無効化して最新を取得
+  _transfersCache = null;
+  const myTransfers = await getMyTransfers();
+
+  const newRow = buildRouteCoverageRow(routeName, rides, stationData, myTransfers);
+  if (newRow && oldRow) {
+    oldRow.replaceWith(newRow);
   }
 }
 
