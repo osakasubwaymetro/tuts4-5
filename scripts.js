@@ -1,6 +1,6 @@
-// version: 1.4.0
-// 1.4.0: 路線名エイリアス表をハードコードからマスタデータ（linealiasシート）読み込みに変更。
-//        時刻表の代わりに「方面（両端駅）＋自分の過去の乗車記録」から種別・行先を選べる機能を追加
+// version: 1.4.2
+// 1.4.2: 過去の乗車記録の表示を「時刻 種別行先行き」形式に変更（種別未入力時は行先のみ）。
+//        記録を選ぶと発車時刻もその時刻（今日の日付）に自動反映するように変更
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -734,6 +734,13 @@ async function applyGeoStation(match) {
 
 document.getElementById("route").addEventListener("change", updateDirectionField);
 
+// 乗車駅（.station-select）が変わったときも方面の選択肢を再計算する
+document.getElementById("rideBlocks").addEventListener("change", (e) => {
+  if (e.target.classList.contains("station-select")) {
+    updateDirectionField();
+  }
+});
+
 function updateDirectionField() {
   const routeVal = document.getElementById("route").value;
   const field = document.getElementById("directionField");
@@ -757,7 +764,17 @@ function updateDirectionField() {
     return;
   }
 
-  [first, last].forEach(name => {
+  const stationSelects = document.querySelectorAll(".station-select");
+  const boardingStation = stationSelects.length ? stationSelects[0].value : "";
+
+  // 乗車駅自体が終着駅なら、その駅への「方面」は存在しない（折り返せないので選択肢から除外）
+  const termini = [first, last].filter(name => name !== boardingStation);
+  if (!termini.length) {
+    field.style.display = "none";
+    return;
+  }
+
+  termini.forEach(name => {
     const opt = document.createElement("option");
     opt.value = name;
     opt.textContent = `${name} 方面`;
@@ -793,6 +810,10 @@ async function getMyRideHistoryCached() {
   }
 }
 
+function timeOfDayMinutes(d) {
+  return d.getHours() * 60 + d.getMinutes();
+}
+
 async function showDirectionHistory() {
   const routeVal = document.getElementById("route").value;
   const dirVal = document.getElementById("direction").value;
@@ -801,46 +822,79 @@ async function showDirectionHistory() {
   historyBox.innerHTML = "";
   if (!routeVal || !dirVal) return;
 
+  const stationSelects = document.querySelectorAll(".station-select");
+  const boardingStation = stationSelects.length ? stationSelects[0].value : "";
+  if (!boardingStation) {
+    historyBox.textContent = "乗車駅を選択すると、その駅から乗った過去の記録を候補にできます。";
+    return;
+  }
+
   historyBox.textContent = "過去の乗車記録を確認中...";
 
   const stationsOnRoute = (allstationData || []).filter(r => r["路線"] === routeVal);
   const indexOf = name => stationsOnRoute.findIndex(r => r["駅名"] === name);
   const dirIndex = indexOf(dirVal);
-  const otherIndex = dirIndex === 0 ? stationsOnRoute.length - 1 : 0;
-
-  const stationSelects = document.querySelectorAll(".station-select");
-  const boardingStation = stationSelects.length ? stationSelects[0].value : "";
   const boardingIndex = indexOf(boardingStation);
 
   const rides = await getMyRideHistoryCached();
 
-  // 同じ路線の自分の過去投稿から、行先が「選んだ方面寄り」のものだけ抽出
-  const candidates = [];
-  const seen = new Set();
-  rides.filter(r => r["路線"] === routeVal).forEach(r => {
-    const bounds = String(r["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
-    const types = String(r["種別"] || "").split("/").map(s => s.trim());
-    bounds.forEach((b, i) => {
-      const t = types[i] || types[0] || "";
-      const bIndex = indexOf(b);
+  // 同じ路線・同じ乗車駅から乗った、自分の過去投稿のみを対象にする
+  const raw = [];
+  rides
+    .filter(r => r["路線"] === routeVal && r["乗車駅"] === boardingStation)
+    .forEach(r => {
+      const bounds = String(r["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
+      const types = String(r["種別"] || "").split("/").map(s => s.trim());
+      const parsedTime = new Date(r["時刻"] || r["発車時刻"] || "");
+      const time = isNaN(parsedTime) ? null : parsedTime;
 
-      let matchesDirection = true; // 駅リストに無い（直通運転先など）場合は判定できないので候補に含める
-      if (bIndex !== -1) {
-        if (boardingIndex !== -1) {
+      bounds.forEach((b, i) => {
+        const t = types[i] || types[0] || "";
+        const bIndex = indexOf(b);
+
+        // 行先が方面判定できる（駅リストにある）場合のみ方向でも絞り込む。
+        // 判定できない場合（直通運転先など）はとりあえず候補に含める
+        let matchesDirection = true;
+        if (bIndex !== -1 && boardingIndex !== -1) {
           matchesDirection = (dirIndex > boardingIndex) ? (bIndex > boardingIndex) : (bIndex < boardingIndex);
-        } else {
-          matchesDirection = Math.abs(bIndex - dirIndex) < Math.abs(bIndex - otherIndex);
         }
-      }
 
-      if (matchesDirection) {
-        const key = t + "|" + b;
-        if (!seen.has(key)) { seen.add(key); candidates.push({ type: t, bound: b }); }
-      }
+        if (matchesDirection) raw.push({ type: t, bound: b, time });
+      });
     });
+
+  // 新しい順に並べ、現在時刻から+30分以内のものを優先。無ければ直近10件にフォールバック
+  raw.sort((a, b) => {
+    if (!a.time) return 1;
+    if (!b.time) return -1;
+    return b.time - a.time;
+  });
+
+  const nowMin = timeOfDayMinutes(new Date());
+  const windowed = raw.filter(c => {
+    if (!c.time) return false;
+    const diff = (timeOfDayMinutes(c.time) - nowMin + 1440) % 1440;
+    return diff <= 30;
+  });
+
+  const pool = (windowed.length ? windowed : raw).slice(0, 10);
+
+  // 種別・行先の組み合わせで重複除去
+  const seen = new Set();
+  const candidates = [];
+  pool.forEach(c => {
+    const key = c.type + "|" + c.bound;
+    if (!seen.has(key)) { seen.add(key); candidates.push(c); }
   });
 
   renderDirectionHistory(candidates);
+}
+
+function formatHM(d) {
+  if (!d) return "";
+  const h = String(d.getHours()).padStart(2, "0");
+  const m = String(d.getMinutes()).padStart(2, "0");
+  return `${h}:${m}`;
 }
 
 function renderDirectionHistory(candidates) {
@@ -866,7 +920,9 @@ function renderDirectionHistory(candidates) {
   candidates.forEach((c, i) => {
     const opt = document.createElement("option");
     opt.value = i;
-    opt.textContent = `${c.type || "(種別不明)"} / ${c.bound}`;
+    const timeLabel = formatHM(c.time);
+    const dest = c.type ? `${c.type}${c.bound}行き` : `${c.bound}行き`;
+    opt.textContent = timeLabel ? `${timeLabel} ${dest}` : dest;
     select.appendChild(opt);
   });
 
@@ -875,13 +931,25 @@ function renderDirectionHistory(candidates) {
     const c = candidates[select.value];
     const typeSel = document.querySelector(".sujitype-select");
     const boundSel = document.querySelector(".bound-select");
-    if (typeSel && c.type) {
-      typeSel.value = c.type;
+
+    if (typeSel) {
+      typeSel.value = c.type || "";
       typeSel.dispatchEvent(new Event("change"));
     }
     if (boundSel) {
       boundSel.value = c.bound;
       boundSel.dispatchEvent(new Event("change"));
+    }
+
+    // 発車時刻も、選んだ記録の時刻（今日の日付換算）に合わせる
+    if (c.time) {
+      const now = new Date();
+      const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), c.time.getHours(), c.time.getMinutes());
+      const pad = n => String(n).padStart(2, "0");
+      const timeEl = document.getElementById("departing_time");
+      if (timeEl) {
+        timeEl.value = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+      }
     }
   });
 
