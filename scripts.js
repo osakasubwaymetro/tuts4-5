@@ -1,6 +1,7 @@
-// version: 1.7.3
-// 1.7.2: TRANSFERS_URLを、独立した新しいGASプロジェクトのデプロイURLに差し替え
-//        （doPost名の衝突で既存の投稿用GASとぶつかっていたため分離した）
+// version: 1.8.0
+// 1.8.0: station シートの「via_路線名」を直通運転の目印として対応。乗車駅・方面・降車駅の
+//        どこに出てきても「→ 〇〇線へ直通」表示に変換し、降車駅でviaを選ぶと自動でその路線に
+//        フォームがジャンプする（旅も自動的に継続扱いになる）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -183,6 +184,22 @@ fetch("https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/sta
 document.getElementById("route").addEventListener("change", updatestationList);
 
 // 併結で追加された分も含め、.station-select を全て更新する
+/* ----------------------------------------
+   直通運転（via_）対応
+   station シートに「via_路線名」という駅名を登録しておくと、物理的な駅ではなく
+   「ここで別路線に直通する」という目印として扱う。表示は「→ 〇〇線へ直通」に変換し、
+   降車駅としてこれを選ぶと、そのままフォームが直通先の路線までジャンプする。
+---------------------------------------- */
+function isViaEntry(name) {
+  return typeof name === "string" && name.startsWith("via_");
+}
+function viaTargetRoute(name) {
+  return name.slice(4);
+}
+function formatStationOption(name) {
+  return isViaEntry(name) ? `→ ${viaTargetRoute(name)}へ直通` : name;
+}
+
 function updatestationList() {
   const routeVal = document.getElementById("route").value;
   const selects = document.querySelectorAll(".station-select");
@@ -199,7 +216,7 @@ function updatestationList() {
     names.forEach(c => {
       const opt = document.createElement("option");
       opt.value = c;
-      opt.textContent = c;
+      opt.textContent = formatStationOption(c);
       select.appendChild(opt);
     });
     if (names.includes(current)) select.value = current;
@@ -760,7 +777,7 @@ function showDirectionChoicePopup(routeVal, boardingStation, termini) {
   termini.forEach(name => {
     const item = document.createElement("button");
     item.type = "button";
-    item.textContent = `${name} 方面`;
+    item.textContent = isViaEntry(name) ? formatStationOption(name) : `${name} 方面`;
     item.onclick = () => loadAndShowHistoryPopup(routeVal, boardingStation, name);
     list.appendChild(item);
   });
@@ -1014,11 +1031,11 @@ function openDescentPopup(prev) {
   const names = [...new Set(stationsOnRoute.map(r => r["駅名"]))];
 
   const options = ['<option value="">選択してください</option>']
-    .concat(names.map(n => `<option value="${n}">${n}</option>`))
+    .concat(names.map(n => `<option value="${n}">${formatStationOption(n)}</option>`))
     .join("");
 
   list.innerHTML = `
-    <p class="modal-loading" style="margin-bottom:8px;">どこで降りましたか？</p>
+    <p class="modal-loading" style="margin-bottom:8px;">どこで降りましたか？（直通運転で別路線に入った場合は「→ 〇〇線へ直通」を選んでください）</p>
     <select id="alightStationSelect" style="width:100%;margin-bottom:14px;">${options}</select>
     <button type="button" id="continueTripBtn">🚃 乗り継ぎ中（旅を続ける）</button>
     <button type="button" id="endTripBtn">🏁 ここで旅を終える</button>
@@ -1038,6 +1055,10 @@ async function submitDescent(prev, tripEnd) {
     return;
   }
 
+  // 直通運転で別路線に入っただけの場合は、旅は終わらず継続する
+  const viaJump = isViaEntry(alightStation);
+  const effectiveTripEnd = viaJump ? false : tripEnd;
+
   try {
     await fetch(TRANSFERS_URL, {
       method: "POST",
@@ -1048,18 +1069,49 @@ async function submitDescent(prev, tripEnd) {
         rideTime: prev.rideTime,
         alightStation,
         tripId: prev.tripId,
-        tripEnd
+        tripEnd: effectiveTripEnd
       })
     });
   } catch (e) {
     console.error("降車駅の送信に失敗:", e);
   }
 
-  if (tripEnd) {
+  if (effectiveTripEnd) {
     localStorage.removeItem("tuts4_current_trip_id");
   }
 
   closeHistoryModal();
+
+  if (viaJump) {
+    jumpToRoute(viaTargetRoute(alightStation));
+  }
+}
+
+// 直通先の路線名がわかっている場合、フォームのエリア〜路線までを自動で合わせてジャンプする
+async function jumpToRoute(routeName) {
+  function setAndTrigger(id, val) {
+    const el = document.getElementById(id);
+    if (!el || !val) return;
+    el.value = val;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  const routeRow = (allrouteData || []).find(r => r["路線"] === routeName);
+  if (!routeRow) return;
+  const typeVal = routeRow["区分"];
+  const companyVal = routeRow["会社"];
+  const countryRow = (allCountryData || []).find(r => r["区分"] === typeVal && r["会社"] === companyVal);
+  const areaVal = countryRow ? countryRow["えりあ"] : "";
+
+  setAndTrigger("area", areaVal);
+  setAndTrigger("type", typeVal);
+  await wait(300);
+  setAndTrigger("country", companyVal);
+  await wait(300);
+  setAndTrigger("route", routeName);
+
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 
