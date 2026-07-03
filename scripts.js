@@ -1,4 +1,4 @@
-// version: 1.7.2
+// version: 1.7.3
 // 1.7.2: TRANSFERS_URLを、独立した新しいGASプロジェクトのデプロイURLに差し替え
 //        （doPost名の衝突で既存の投稿用GASとぶつかっていたため分離した）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
