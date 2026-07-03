@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.5.0 -->
+  <!-- version: 1.5.1 -->
+  <!-- 1.5.1: 近くの駅選択もポップアップに統合。change イベントのバブリング不具合を修正 -->
   <!-- 1.5.0: 「方面」プルダウンを廃止。乗車駅選択→ポップアップ（方面→過去の乗車記録）の流れに変更 -->
   <!-- 1.4.3: 過去の乗車記録ダイアログを、スタンプポップアップと統一感のある中央ポップアップ表示に変更 -->
   <!-- 1.4.2: ボタン名を「乗車列車を選択」に変更。過去の乗車記録の選択を上から出るダイアログに変更 -->
@@ -373,19 +374,12 @@
       font-size: 16px;
     }
 
-    /* ===== 現在地から駅を探す（結果表示エリア） ===== */
+    /* ===== 現在地から駅を探す（結果表示エリア。実際の選択はポップアップ内で行う） ===== */
     #geoStationResult {
       margin-top: 10px;
       font-size: 13px;
       color: #333;
     }
-    .geo-result-label {
-      font-size: 12px;
-      color: #1e8449;
-      font-weight: bold;
-      margin-bottom: 6px;
-    }
-    #geoStationResult select { width: 100%; }
 
     /* ===== 過去の乗車記録から選ぶ：スタンプポップアップと統一した中央ポップアップ ===== */
     .modal-overlay {
@@ -613,14 +607,14 @@
       const el = document.getElementById(id);
       if (!el) return;
       el.value = val;
-      el.dispatchEvent(new Event("change"));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
     }
 
     function setAndTriggerFirst(selector, val) {
       const el = document.querySelector(selector);
       if (!el) return;
       el.value = val;
-      el.dispatchEvent(new Event("change"));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
     }
 
     // scripts.jsの連動プルダウンを順番にトリガー
@@ -785,7 +779,7 @@
         const selectedArea = regionMap[pref] || "";
         if (selectedArea) {
           areaSelect.value = selectedArea;
-          areaSelect.dispatchEvent(new Event("change"));
+          areaSelect.dispatchEvent(new Event("change", { bubbles: true }));
         }
       } catch (e) {
         console.error("逆ジオコーディング失敗:", e);
