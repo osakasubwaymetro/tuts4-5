@@ -1,7 +1,7 @@
-// version: 1.13.3
-// 1.13.3: 降車駅の送信も「ローカル送信待ちキュー→裏で送信→成功で削除」方式に変更。
-//         GASが遅い/落ちてる時でも失われず、他ページ（show.html）から「送信待ち」と
-//         判定できるように共有キー（tuts4_pending_transfers）で管理するようにした
+// version: 1.13.4
+// 1.13.4: transfers用GASへの送信からno-corsを廃止。実際にGASの{status:"ok"|"error"}という
+//         返事を読んで成否を判定できるように変更（no-corsだと成否が一切分からず、
+//         GAS側が実際に失敗していても「送信成功」に見えてしまっていたため）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -1049,6 +1049,23 @@ function isTransferPending(username, rideTime) {
   return getPendingTransfers().some(e => e.payload.username === username && e.payload.rideTime === rideTime);
 }
 
+// transfers用GASへの送信は no-cors をやめて、実際に成否を確認できる形で送る。
+// Content-Type を text/plain にするとブラウザがCORSプリフライトを送らずに済み、
+// GASの{status:"ok"|"error"}という返事をそのまま読める（no-corsだと成否が一切分からないため）
+async function postToTransfersGAS(payload) {
+  const res = await fetch(TRANSFERS_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const data = await res.json();
+  if (data && data.status && data.status !== "ok") {
+    throw new Error(data.message || "GAS側でエラーが発生しました");
+  }
+  return data;
+}
+
 // 投稿が成功するたびに呼ばれる。前回の投稿を「次に聞く1件」として保留する
 function handleTripBookkeeping(routeValue, boundValue, timeValue, stationValue, sujitypeValue) {
   const username = localStorage.getItem("username");
@@ -1258,12 +1275,7 @@ async function submitDescentValue(prev, alightStation, tripEnd) {
   setPendingTransfers(queue);
 
   try {
-    await fetch(TRANSFERS_URL, {
-      method: "POST",
-      mode: "no-cors",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
+    await postToTransfersGAS(payload);
     setPendingTransfers(getPendingTransfers().filter(e => e.id !== entryId));
   } catch (e) {
     console.error("降車駅の送信に失敗（あとで自動的に再送します）:", e);
@@ -1479,12 +1491,7 @@ async function flushPendingTransfers() {
     const stillPending = [];
     for (const entry of queue) {
       try {
-        await fetch(TRANSFERS_URL, {
-          method: "POST",
-          mode: "no-cors",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(entry.payload),
-        });
+        await postToTransfersGAS(entry.payload);
       } catch (e) {
         console.error("降車駅の再送信に失敗（次回また試します）:", e);
         stillPending.push(entry);
