@@ -4,7 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.8.1 -->
+<!-- version: 1.8.3 -->
+<!-- 1.8.3: 送信待ち表示を「(送信待ち) ⏳送信待ち」から「⏳降車駅名」に整理。
+           送信待ちキューの中身から実際の降車駅名を読んで表示するように変更 -->
+<!-- 1.8.2: GASのdoGetが復旧したので、transfers読み込みをopensheet経由からGAS経由に戻した
+           （opensheetのキャッシュによる反映ラグを避けるため。即時反映になる） -->
 <!-- 1.8.1: transfers用GASへの送信からno-corsを廃止。実際にGASの{status:"ok"|"error"}という
            返事を読んで成否を判定できるように変更 -->
 <!-- 1.8.0: 降車駅の送信を「ローカル送信待ちキュー→裏で送信→成功で削除」方式に変更。
@@ -270,7 +274,7 @@ const username = checkLogin();
 const GAS_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
 const TRANSFERS_URL = "https://script.google.com/macros/s/AKfycbwOzhHMk2WRtcUHvSMfnrimIQxUk-_dZN_43I-m8fpMNVxomE7emhevGGyC3UnLR3ejBw/exec";
 // 読み込みはopensheet経由にする（GASのdoGetがアクセスできない状態でも読めるように）
-const TRANSFERS_READ_URL = "https://opensheet.elk.sh/1igMMceqd8cYxM76F3QDVM1IY29wBgPC3AGF0pgHrvwU/transfers";
+const TRANSFERS_READ_URL = TRANSFERS_URL; // GASのdoGetが復旧したので、opensheetの反映ラグを避けてこちらに戻す
 const STATION_URL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/station";
 
 // 乗車履歴は自分の分だけ表示・保存する（他ユーザー分は保存しない）
@@ -343,8 +347,8 @@ function getPendingTransfers() {
 function setPendingTransfers(list) {
   localStorage.setItem(PENDING_TRANSFERS_KEY, JSON.stringify(list));
 }
-function isTransferPending(uname, rideTime) {
-  return getPendingTransfers().some(e => e.payload.username === uname && timeKeyMatch(e.payload.rideTime, rideTime));
+function getPendingTransferFor(uname, rideTime) {
+  return getPendingTransfers().find(e => e.payload.username === uname && timeKeyMatch(e.payload.rideTime, rideTime)) || null;
 }
 
 // transfers用GASへの送信は no-cors をやめて、実際に成否を確認できる形で送る
@@ -453,14 +457,14 @@ function renderCards(data) {
     // 複数回記録されている場合は最新（最後に送信されたもの）を採用＝再記録＝上書き扱いにする
     const rideTime = row["時刻"];
     const existing = [...myTransfers].reverse().find(t => timeKeyMatch(t["元の乗車時刻"], rideTime));
-    const pending = isTransferPending(username, rideTime);
+    const pendingEntry = getPendingTransferFor(username, rideTime);
 
-    if (existing || pending) {
+    if (existing || pendingEntry) {
       const p = document.createElement("p");
       p.className = "descent-recorded";
-      const label = existing ? existing["降車駅"] : "(送信待ち)";
-      const pendingBadge = pending ? " ⏳送信待ち" : "";
-      p.textContent = `🚏 降車駅：${label}${pendingBadge}（タップで書き換え）`;
+      const label = pendingEntry ? pendingEntry.payload.alightStation : existing["降車駅"];
+      const icon = pendingEntry ? "⏳" : "";
+      p.textContent = `🚏 降車駅：${icon}${label}（タップで書き換え）`;
       p.onclick = () => openDescentModal(row);
       card.appendChild(p);
     } else {
