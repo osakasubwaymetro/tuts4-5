@@ -4,7 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.7.5 -->
+  <!-- version: 1.7.6 -->
+  <!-- 1.7.6: 「運営」アカウントでは、乗車列車を選択ボタンを押すと現在地の代わりに
+             エリア〜駅名を手動で選べるテスト用ピッカーが開くように対応 -->
   <!-- 1.7.5: 降車駅ポップアップに複数路線をまたぐ直通乗り継ぎ記録（🔀 別路線に直通する）を追加 -->
   <!-- 1.7.4: ポップアップを背景タップでは閉じないように変更（✕ボタンのみで閉じる） -->
   <!-- 1.7.3: ?checkDescent=1（過去一括チェック）の処理を撤去 -->
@@ -799,6 +801,12 @@
   // 「現在時刻を入力」を押したときに、位置情報を1回だけ取得して
   // ① エリア推定 と ② 最寄り駅検索（scripts.js） をまとめて行う
   function locateAndFill() {
+    // 「運営」アカウントの場合は、現在地に頼らずエリア〜駅名を手動で選んでテストできるようにする
+    if (localStorage.getItem("username") === "運営") {
+      if (typeof openAdminStationPicker === "function") openAdminStationPicker();
+      return;
+    }
+
     const areaSelect = document.getElementById("area");
     const resultBox = document.getElementById("geoStationResult");
 
