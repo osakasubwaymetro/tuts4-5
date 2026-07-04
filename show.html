@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.8.6 -->
+<!-- version: 1.8.7 -->
+<!-- 1.8.7: 位置ベースのvia_解決で方向判定が抜けていたバグを修正（常に後方優先になってしまい、
+           敦賀発で近江塩津ではなく余呉が出ていた）。基準駅の位置を見て正しい方向を優先するように復活 -->
 <!-- 1.8.6: 降車駅ポップアップのvia_解決を、名前検索ではなくシート上の実際の位置から
            直接、隣の拠点駅を割り出す方式に変更（#タグ不要で東西線パターンに対応） -->
 <!-- 1.8.5: via_に "#タグ" で区別できるように対応（東西線のように両端が同じ路線に直通するケース） -->
@@ -524,16 +526,22 @@ function openDescentModal(row) {
   // 同じ路線に直通していても、indexOfによる名前検索に頼らず正しく区別できる）
   function buildStationItems(routeName) {
     const rawRows = stationMaster.filter(s => s["路線"] === routeName).map(s => s["駅名"]);
+    const refRawIdx = legRefStation ? rawRows.indexOf(legRefStation) : -1;
     const seen = new Set();
     const items = [];
 
     rawRows.forEach((name, rawIdx) => {
       if (isViaEntry(name)) {
         const nextRoute = viaTargetRoute(name);
+
         let neighbor = null;
-        for (let i = rawIdx - 1; i >= 0; i--) { if (!isViaEntry(rawRows[i])) { neighbor = rawRows[i]; break; } }
-        if (!neighbor) {
-          for (let i = rawIdx + 1; i < rawRows.length; i++) { if (!isViaEntry(rawRows[i])) { neighbor = rawRows[i]; break; } }
+        const tryBackward = () => { for (let i = rawIdx - 1; i >= 0; i--) if (!isViaEntry(rawRows[i])) return rawRows[i]; return null; };
+        const tryForward = () => { for (let i = rawIdx + 1; i < rawRows.length; i++) if (!isViaEntry(rawRows[i])) return rawRows[i]; return null; };
+
+        if (refRawIdx !== -1) {
+          neighbor = refRawIdx > rawIdx ? (tryForward() || tryBackward()) : (tryBackward() || tryForward());
+        } else {
+          neighbor = tryBackward() || tryForward();
         }
         if (!neighbor) return;
 
