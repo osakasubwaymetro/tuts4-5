@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.7.2 -->
+<!-- version: 1.7.3 -->
+<!-- 1.7.3: transfersの読み込みをGAS(doGet)からopensheet.elk.sh経由に変更（GASの疎通不良の
+           影響を受けないように）。書き込み（降車駅の記録）は引き続きGAS経由 -->
 <!-- 1.7.2: via_の隣接実駅の探索方向が常に「後方優先」固定になっていたバグを修正。
            基準駅の位置を見て正しい方向を優先して探すように変更 -->
 <!-- 1.7.1: 「via_〇〇へ直通」を直接タップするクイックジャンプ経路で、接続駅・経由路線が
@@ -260,6 +262,8 @@ const username = checkLogin();
 
 const GAS_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
 const TRANSFERS_URL = "https://script.google.com/macros/s/AKfycbwOzhHMk2WRtcUHvSMfnrimIQxUk-_dZN_43I-m8fpMNVxomE7emhevGGyC3UnLR3ejBw/exec";
+// 読み込みはopensheet経由にする（GASのdoGetがアクセスできない状態でも読めるように）
+const TRANSFERS_READ_URL = "https://opensheet.elk.sh/1igMMceqd8cYxM76F3QDVM1IY29wBgPC3AGF0pgHrvwU/transfers";
 const STATION_URL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/station";
 
 // 乗車履歴は自分の分だけ表示・保存する（他ユーザー分は保存しない）
@@ -322,7 +326,7 @@ function findViaNeighborStation(routeName, viaName, referenceStation) {
 // 各種マスタ・自分のtransfers記録を読み込む（降車駅記録ウィジェット用）
 Promise.all([
   fetch(STATION_URL).then(r => r.json()).catch(() => []),
-  fetch(TRANSFERS_URL).then(r => r.json()).catch(() => [])
+  fetch(TRANSFERS_READ_URL).then(r => r.json()).catch(() => [])
 ]).then(([stationData, transfersData]) => {
   stationMaster = stationData;
   myTransfers = transfersData.filter(t => String(t["ユーザー名"]) === String(username));
