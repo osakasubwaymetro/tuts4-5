@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.8.3 -->
+<!-- version: 1.8.4 -->
+<!-- 1.8.4: 直通が絡む降車駅の表示を「接続駅@次路線|...」の生データそのままではなく、
+           「路線1・路線2直通 降車駅」という読みやすい形に整形（保存データ自体は変更なし） -->
 <!-- 1.8.3: 送信待ち表示を「(送信待ち) ⏳送信待ち」から「⏳降車駅名」に整理。
            送信待ちキューの中身から実際の降車駅名を読んで表示するように変更 -->
 <!-- 1.8.2: GASのdoGetが復旧したので、transfers読み込みをopensheet経由からGAS経由に戻した
@@ -351,6 +353,28 @@ function getPendingTransferFor(uname, rideTime) {
   return getPendingTransfers().find(e => e.payload.username === uname && timeKeyMatch(e.payload.rideTime, rideTime)) || null;
 }
 
+// スプシに保存されてる生の値（"接続駅@次路線|接続駅@次路線|最終降車駅"）を解析する
+function parseDescentChain(raw) {
+  const s = typeof raw === "string" ? raw : "";
+  if (!s.includes("|") && !s.includes("@")) return { hops: [], finalStation: s };
+  const parts = s.split("|");
+  const finalStation = parts.pop();
+  const hops = parts.map(p => {
+    const [junction, nextRoute] = p.split("@");
+    return { junction, nextRoute };
+  }).filter(h => h.junction && h.nextRoute);
+  return { hops, finalStation };
+}
+
+// 表示専用の整形：直通が絡む場合は「路線1・路線2直通 降車駅」のようにまとめる
+// （スプレッドシート側の生データはそのまま。見た目だけ変える）
+function formatAlightDisplay(raw) {
+  const chain = parseDescentChain(raw);
+  if (!chain.hops.length) return raw; // 直通なし・単純な駅名ならそのまま
+  const routes = chain.hops.map(h => h.nextRoute);
+  return `${routes.join("・")}直通 ${chain.finalStation}`;
+}
+
 // transfers用GASへの送信は no-cors をやめて、実際に成否を確認できる形で送る
 async function postToTransfersGAS(payload) {
   const res = await fetch(TRANSFERS_URL, {
@@ -464,7 +488,7 @@ function renderCards(data) {
       p.className = "descent-recorded";
       const label = pendingEntry ? pendingEntry.payload.alightStation : existing["降車駅"];
       const icon = pendingEntry ? "⏳" : "";
-      p.textContent = `🚏 降車駅：${icon}${label}（タップで書き換え）`;
+      p.textContent = `🚏 降車駅：${icon}${formatAlightDisplay(label)}（タップで書き換え）`;
       p.onclick = () => openDescentModal(row);
       card.appendChild(p);
     } else {
