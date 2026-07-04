@@ -1,8 +1,7 @@
-// version: 1.14.0
-// 1.14.0: 路線名の突き合わせに「接頭辞（会社名部分）置き換えルール」を追加（lineprefixシート、
-//         例: 大阪→大阪メトロ）。1行の登録で「大阪○○線」→「大阪メトロ○○線」のように
-//         ○○部分を問わず一括対応できる。また、置き換えた版・置き換えない版の両方を候補として
-//         比較するように変更し、置き換えが逆に本来のマッチ（例: JR大阪環状線）を壊さないようにした
+// version: 1.14.2
+// 1.14.2: 「方面を選択」で、直通先の目印（via_）が端にある場合は接続先の路線名ではなく、
+//         その路線自体の実際の終着駅（隣の実駅）を方面名として表示するように変更
+//         （例:「近鉄吉野線 方面」ではなく「古市 方面」。南大阪線の終点は古市であるため）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -852,8 +851,23 @@ function startStationPopupFlow() {
   const last = stationsOnRoute[stationsOnRoute.length - 1]["駅名"];
   if (!first || !last || first === last) return;
 
+  // via_（直通先の目印）が端にある場合は、その路線自体の実際の終着駅（隣の実駅）を
+  // 方面名として使う（例:「近鉄吉野線 方面」ではなく「古市 方面」）
+  const stationNames = stationsOnRoute.map(r => r["駅名"]);
+  function resolveTerminus(name, rawIdx) {
+    if (!isViaEntry(name)) return name;
+    if (rawIdx === 0) {
+      for (let i = 1; i < stationNames.length; i++) if (!isViaEntry(stationNames[i])) return stationNames[i];
+    } else {
+      for (let i = rawIdx - 1; i >= 0; i--) if (!isViaEntry(stationNames[i])) return stationNames[i];
+    }
+    return name;
+  }
+  const resolvedFirst = resolveTerminus(first, 0);
+  const resolvedLast = resolveTerminus(last, stationsOnRoute.length - 1);
+
   // 乗車駅自体が終着駅なら、その駅への「方面」は存在しない（折り返せないので除外）
-  const termini = [first, last].filter(name => name !== boardingStation);
+  const termini = [resolvedFirst, resolvedLast].filter(name => name !== boardingStation);
   if (!termini.length) return;
 
   if (termini.length === 1) {
@@ -872,7 +886,7 @@ function showDirectionChoicePopup(routeVal, boardingStation, termini) {
   termini.forEach(name => {
     const item = document.createElement("button");
     item.type = "button";
-    item.textContent = isViaEntry(name) ? formatStationOption(name) : `${name} 方面`;
+    item.textContent = `${name} 方面`;
     item.onclick = () => loadAndShowHistoryPopup(routeVal, boardingStation, name);
     list.appendChild(item);
   });
