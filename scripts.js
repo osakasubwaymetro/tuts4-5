@@ -1,7 +1,7 @@
-// version: 1.13.2
-// 1.13.2: via_の隣接実駅の探索方向が常に「後方優先」固定になっていたバグを修正。
-//         今来た側の基準駅（乗車駅、または前の乗換駅）の位置を見て、via_より前か後ろかで
-//         正しい方向を優先して探すように変更（敦賀発via_湖西線→近江塩津のようなケースに対応）
+// version: 1.13.3
+// 1.13.3: 降車駅の送信も「ローカル送信待ちキュー→裏で送信→成功で削除」方式に変更。
+//         GASが遅い/落ちてる時でも失われず、他ページ（show.html）から「送信待ち」と
+//         判定できるように共有キー（tuts4_pending_transfers）で管理するようにした
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -1035,6 +1035,20 @@ function applyHistoryCandidate(c) {
 ---------------------------------------- */
 const TRANSFERS_URL = "https://script.google.com/macros/s/AKfycbwOzhHMk2WRtcUHvSMfnrimIQxUk-_dZN_43I-m8fpMNVxomE7emhevGGyC3UnLR3ejBw/exec";
 
+// 降車駅の送信も「ローカルに一時保存→裏で送信→成功したら消す」キューで管理する。
+// ページ側（show.htmlなど）はこのキューを見て「⏳ 送信待ち」を表示できる。
+const PENDING_TRANSFERS_KEY = "tuts4_pending_transfers";
+function getPendingTransfers() {
+  try { return JSON.parse(localStorage.getItem(PENDING_TRANSFERS_KEY) || "[]"); }
+  catch (e) { return []; }
+}
+function setPendingTransfers(list) {
+  localStorage.setItem(PENDING_TRANSFERS_KEY, JSON.stringify(list));
+}
+function isTransferPending(username, rideTime) {
+  return getPendingTransfers().some(e => e.payload.username === username && e.payload.rideTime === rideTime);
+}
+
 // 投稿が成功するたびに呼ばれる。前回の投稿を「次に聞く1件」として保留する
 function handleTripBookkeeping(routeValue, boundValue, timeValue, stationValue, sujitypeValue) {
   const username = localStorage.getItem("username");
@@ -1230,21 +1244,29 @@ async function submitDescentValue(prev, alightStation, tripEnd) {
   const viaJump = isViaEntry(alightStation);
   const effectiveTripEnd = viaJump ? false : tripEnd;
 
+  const payload = {
+    username: prev.username,
+    rideTime: prev.rideTime,
+    alightStation,
+    tripId: prev.tripId,
+    tripEnd: effectiveTripEnd
+  };
+
+  const entryId = Date.now() + "_" + Math.random().toString(36).slice(2);
+  const queue = getPendingTransfers();
+  queue.push({ id: entryId, payload });
+  setPendingTransfers(queue);
+
   try {
     await fetch(TRANSFERS_URL, {
       method: "POST",
       mode: "no-cors",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username: prev.username,
-        rideTime: prev.rideTime,
-        alightStation,
-        tripId: prev.tripId,
-        tripEnd: effectiveTripEnd
-      })
+      body: JSON.stringify(payload)
     });
+    setPendingTransfers(getPendingTransfers().filter(e => e.id !== entryId));
   } catch (e) {
-    console.error("降車駅の送信に失敗:", e);
+    console.error("降車駅の送信に失敗（あとで自動的に再送します）:", e);
   } finally {
     _submittingDescent = false;
   }
@@ -1444,5 +1466,38 @@ async function flushPendingPosts() {
 window.addEventListener("load", () => setTimeout(flushPendingPosts, 1500));
 window.addEventListener("online", flushPendingPosts);
 setInterval(flushPendingPosts, 30000);
+
+let _flushingPendingTransfers = false;
+async function flushPendingTransfers() {
+  if (_flushingPendingTransfers) return;
+  _flushingPendingTransfers = true;
+
+  try {
+    const queue = getPendingTransfers();
+    if (!queue.length) return;
+
+    const stillPending = [];
+    for (const entry of queue) {
+      try {
+        await fetch(TRANSFERS_URL, {
+          method: "POST",
+          mode: "no-cors",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(entry.payload),
+        });
+      } catch (e) {
+        console.error("降車駅の再送信に失敗（次回また試します）:", e);
+        stillPending.push(entry);
+      }
+    }
+    setPendingTransfers(stillPending);
+  } finally {
+    _flushingPendingTransfers = false;
+  }
+}
+
+window.addEventListener("load", () => setTimeout(flushPendingTransfers, 1500));
+window.addEventListener("online", flushPendingTransfers);
+setInterval(flushPendingTransfers, 30000);
 
 
