@@ -1,7 +1,6 @@
-// version: 1.13.4
-// 1.13.4: transfers用GASへの送信からno-corsを廃止。実際にGASの{status:"ok"|"error"}という
-//         返事を読んで成否を判定できるように変更（no-corsだと成否が一切分からず、
-//         GAS側が実際に失敗していても「送信成功」に見えてしまっていたため）
+// version: 1.13.5
+// 1.13.5: 最寄り駅検索で「駅名のみ一致」になった場合、HeartRails側が返す正式路線名も
+//         表示するように変更（linealiasシートに何を追加すべきか一目で分かるように）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -689,11 +688,12 @@ async function findNearbyStationsFromPosition(lat, lon) {
       } else {
         // 路線名の表記があまりに違って一致判定できない場合のフォールバック：
         // 駅名だけは一致しているので、その駅にある自分の路線候補を「駅名のみ一致」として出す
+        // （HeartRails側の正式名称も一緒に持たせておき、表示・linealiasへの追加検討に使う）
         stationRows.forEach(row => {
           const key = st.name + "|" + row["路線"];
           if (!seen.has(key)) {
             seen.add(key);
-            matches.push({ name: st.name, line: row["路線"], confident: false });
+            matches.push({ name: st.name, line: row["路線"], apiLine: st.line, confident: false });
           }
         });
       }
@@ -729,7 +729,7 @@ function renderGeoStationResult(matches) {
     item.type = "button";
     item.textContent = m.confident
       ? `${m.name}（${m.line}）`
-      : `${m.name}（${m.line}）※駅名のみ一致`;
+      : `${m.name}（${m.line}）※駅名のみ一致・正式名称「${m.apiLine}」`;
     item.onclick = () => {
       applyGeoStation(m);
       closeHistoryModal();
