@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.8.0 -->
+<!-- version: 1.8.1 -->
+<!-- 1.8.1: transfers用GASへの送信からno-corsを廃止。実際にGASの{status:"ok"|"error"}という
+           返事を読んで成否を判定できるように変更 -->
 <!-- 1.8.0: 降車駅の送信を「ローカル送信待ちキュー→裏で送信→成功で削除」方式に変更。
            まだGASに届いていない間は「⏳送信待ち」マークをカードに表示。ページを開いた時・
            オンライン復帰時に自動で再送する -->
@@ -344,6 +346,21 @@ function setPendingTransfers(list) {
 function isTransferPending(uname, rideTime) {
   return getPendingTransfers().some(e => e.payload.username === uname && timeKeyMatch(e.payload.rideTime, rideTime));
 }
+
+// transfers用GASへの送信は no-cors をやめて、実際に成否を確認できる形で送る
+async function postToTransfersGAS(payload) {
+  const res = await fetch(TRANSFERS_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const data = await res.json();
+  if (data && data.status && data.status !== "ok") {
+    throw new Error(data.message || "GAS側でエラーが発生しました");
+  }
+  return data;
+}
 function stripRideTimePrefix(v) {
   return typeof v === "string" && v.indexOf(RIDE_TIME_PREFIX) === 0 ? v.slice(RIDE_TIME_PREFIX.length) : v;
 }
@@ -604,12 +621,7 @@ function openDescentModal(row) {
     applyMonthFilter();
 
     try {
-      await fetch(TRANSFERS_URL, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
+      await postToTransfersGAS(payload);
       setPendingTransfers(getPendingTransfers().filter(e => e.id !== entryId));
       // 画面上のキャッシュにも反映して、すぐに「記録済み」表示に切り替える
       myTransfers.push({ "ユーザー名": username, "元の乗車時刻": row["時刻"], "降車駅": alightStation });
@@ -632,12 +644,7 @@ async function flushPendingTransfers() {
   const stillPending = [];
   for (const entry of queue) {
     try {
-      await fetch(TRANSFERS_URL, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(entry.payload)
-      });
+      await postToTransfersGAS(entry.payload);
     } catch (e) {
       console.error("降車駅の再送信に失敗（次回また試します）:", e);
       stillPending.push(entry);
