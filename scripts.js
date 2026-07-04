@@ -1,7 +1,7 @@
-// version: 1.15.2
-// 1.15.2: 降車駅ポップアップのvia_解決を「文字列で名前検索」から「シート上の実際の位置から
-//         直接、隣の拠点駅を割り出す」方式に変更。東西線のように同じ路線名のvia_が両端にあっても
-//         #タグ無しで正しく区別できるようになった（表示にも隣接駅名を added して見分けやすく）
+// version: 1.15.3
+// 1.15.3: 位置ベースのvia_解決で方向判定が抜けていたバグを修正（常に後方優先になってしまい、
+//         敦賀発で近江塩津ではなく余呉が出ていた）。基準駅（乗車駅／前の乗換駅）がvia_より
+//         前か後ろかを見て、正しい方向を優先するように復活させた（東西線パターンとも両立）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -1229,16 +1229,24 @@ function openDescentPopup(prev) {
   // 別々の候補としてちゃんと区別できる（indexOfによる名前検索に頼らないため）
   function buildStationItems(routeName) {
     const rawRows = (allstationData || []).filter(r => r["路線"] === routeName).map(r => r["駅名"]);
+    const refRawIdx = legRefStation ? rawRows.indexOf(legRefStation) : -1;
     const seen = new Set();
     const items = [];
 
     rawRows.forEach((name, rawIdx) => {
       if (isViaEntry(name)) {
         const nextRoute = viaTargetRoute(name);
+
+        // 基準駅（乗車駅、または前の乗換駅）がvia_より前か後ろかを見て、
+        // 同じ側にある実駅を優先して探す（分からなければ従来通り前方向を優先）
         let neighbor = null;
-        for (let i = rawIdx - 1; i >= 0; i--) { if (!isViaEntry(rawRows[i])) { neighbor = rawRows[i]; break; } }
-        if (!neighbor) {
-          for (let i = rawIdx + 1; i < rawRows.length; i++) { if (!isViaEntry(rawRows[i])) { neighbor = rawRows[i]; break; } }
+        const tryBackward = () => { for (let i = rawIdx - 1; i >= 0; i--) if (!isViaEntry(rawRows[i])) return rawRows[i]; return null; };
+        const tryForward = () => { for (let i = rawIdx + 1; i < rawRows.length; i++) if (!isViaEntry(rawRows[i])) return rawRows[i]; return null; };
+
+        if (refRawIdx !== -1) {
+          neighbor = refRawIdx > rawIdx ? (tryForward() || tryBackward()) : (tryBackward() || tryForward());
+        } else {
+          neighbor = tryBackward() || tryForward();
         }
         if (!neighbor) return; // 隣の実駅が見つからない場合はスキップ
 
