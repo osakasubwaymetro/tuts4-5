@@ -1,6 +1,8 @@
-// version: 1.13.5
-// 1.13.5: 最寄り駅検索で「駅名のみ一致」になった場合、HeartRails側が返す正式路線名も
-//         表示するように変更（linealiasシートに何を追加すべきか一目で分かるように）
+// version: 1.14.0
+// 1.14.0: 路線名の突き合わせに「接頭辞（会社名部分）置き換えルール」を追加（lineprefixシート、
+//         例: 大阪→大阪メトロ）。1行の登録で「大阪○○線」→「大阪メトロ○○線」のように
+//         ○○部分を問わず一括対応できる。また、置き換えた版・置き換えない版の両方を候補として
+//         比較するように変更し、置き換えが逆に本来のマッチ（例: JR大阪環状線）を壊さないようにした
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -14,6 +16,7 @@ let allboundData = [];
 let allnumberData = [];
 let allRemarkData = [];
 let lineAliasData = []; // 路線名の正式名称⇄通称対応表（linealiasシート）
+let linePrefixData = []; // 路線名の接頭辞（会社名部分）対応表（lineprefixシート）。例: 大阪→大阪メトロ
 document.getElementById("username").value = localStorage.getItem("username");
 
 
@@ -642,23 +645,65 @@ fetch("https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/lin
   })
   .catch(err => console.error("linealias取得エラー:", err));
 
-function normalizeLineName(name) {
-  if (!name) return "";
-  let n = String(name);
-  lineAliasData.forEach(({ official, alias }) => { n = n.split(official).join(alias); });
-  return n.trim();
+// 路線名の接頭辞（会社名部分）の対応表（lineprefixシート：正式接頭辞・通称接頭辞）
+// 例: 大阪メトロの各路線がHeartRails側で「大阪○○線」（大阪メトロの「メトロ」が省略された形）
+// で返ってくる場合、「大阪」→「大阪メトロ」と1行登録しておけば、○○の部分が何であっても
+// まとめて変換できる（路線名を1本ずつ完全一致で登録する必要が無い）
+fetch("https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/lineprefix")
+  .then(res => res.json())
+  .then(data => {
+    linePrefixData = data
+      .map(row => ({ officialPrefix: row["正式接頭辞"] || "", aliasPrefix: row["通称接頭辞"] || "" }))
+      .filter(r => r.officialPrefix && r.aliasPrefix);
+  })
+  .catch(err => console.error("lineprefix取得エラー:", err));
+
+// 1つの路線名から、あり得る正規化候補を複数作る（接頭辞を置き換えた版・置き換えない版の両方）。
+// どちらか一方だけを正解と決め打ちすると、置き換えが逆に邪魔をするケース
+// （例:「大阪環状線」を「大阪メトロ環状線」にしてしまい、本来の「JR大阪環状線」と
+// マッチしなくなる）があるため、両方を候補として残し、比較時にどちらかで一致すればOKとする
+function normalizeLineNameVariants(name) {
+  if (!name) return [""];
+  const base = String(name).trim();
+
+  // ① 路線名まるごとの完全一致ルールがあれば、それを唯一の候補として使う
+  const exact = lineAliasData.find(({ official }) => official === base);
+  if (exact) return [exact.alias.trim()];
+
+  // ② 通称・部分一致（正式社名の一部を通称に置き換え）を適用したベース版
+  let withAlias = base;
+  lineAliasData.forEach(({ official, alias }) => { withAlias = withAlias.split(official).join(alias); });
+  const variants = [withAlias.trim()];
+
+  // ③ さらに接頭辞（会社名部分）を置き換えた版も候補に追加する（②はそのまま残す）
+  const prefixRule = linePrefixData.find(({ officialPrefix }) => base.startsWith(officialPrefix));
+  if (prefixRule) {
+    let withPrefix = prefixRule.aliasPrefix + base.slice(prefixRule.officialPrefix.length);
+    lineAliasData.forEach(({ official, alias }) => { withPrefix = withPrefix.split(official).join(alias); });
+    variants.push(withPrefix.trim());
+  }
+
+  return variants;
 }
 
-// 表記ゆれを吸収したうえで「一致」または「片方がもう片方を包含」していればOKとみなす
+// 表記ゆれを吸収したうえで「一致」または「片方がもう片方を包含」していればOKとみなす。
+// 双方の候補（接頭辞を置き換えた版・置き換えない版）の組み合わせを全部試し、
+// どれか1つでも一致すればマッチとする
 function isLineMatch(masterLine, apiLine) {
-  const a = normalizeLineName(masterLine);
-  const b = normalizeLineName(apiLine);
-  if (!a || !b) return false;
-  if (a === b || a.includes(b) || b.includes(a)) return true;
-  // 末尾の「線」を除いた核部分でも比較（さらに表記ゆれに強くする）
-  const coreA = a.replace(/線$/, "");
-  const coreB = b.replace(/線$/, "");
-  return !!coreA && !!coreB && (coreA === coreB || a.includes(coreB) || b.includes(coreA));
+  const masterVariants = normalizeLineNameVariants(masterLine);
+  const apiVariants = normalizeLineNameVariants(apiLine);
+
+  for (const a of masterVariants) {
+    for (const b of apiVariants) {
+      if (!a || !b) continue;
+      if (a === b || a.includes(b) || b.includes(a)) return true;
+      // 末尾の「線」を除いた核部分でも比較（さらに表記ゆれに強くする）
+      const coreA = a.replace(/線$/, "");
+      const coreB = b.replace(/線$/, "");
+      if (coreA && coreB && (coreA === coreB || a.includes(coreB) || b.includes(coreA))) return true;
+    }
+  }
+  return false;
 }
 
 // 「現在時刻を入力」ボタン（index.html側）から、位置情報取得後に呼ばれる
