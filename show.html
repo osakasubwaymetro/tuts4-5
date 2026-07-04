@@ -4,7 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.8.4 -->
+<!-- version: 1.8.6 -->
+<!-- 1.8.6: 降車駅ポップアップのvia_解決を、名前検索ではなくシート上の実際の位置から
+           直接、隣の拠点駅を割り出す方式に変更（#タグ不要で東西線パターンに対応） -->
+<!-- 1.8.5: via_に "#タグ" で区別できるように対応（東西線のように両端が同じ路線に直通するケース） -->
 <!-- 1.8.4: 直通が絡む降車駅の表示を「接続駅@次路線|...」の生データそのままではなく、
            「路線1・路線2直通 降車駅」という読みやすい形に整形（保存データ自体は変更なし） -->
 <!-- 1.8.3: 送信待ち表示を「(送信待ち) ⏳送信待ち」から「⏳降車駅名」に整理。
@@ -300,7 +303,8 @@ function isViaEntry(name) {
   return typeof name === "string" && name.startsWith("via_");
 }
 function viaTargetRoute(name) {
-  return name.slice(4);
+  // "#" 以降はディスアンビゲーション用のタグ（東西線の両端が同じ路線に直通する場合などに使う）
+  return name.slice(4).split("#")[0];
 }
 function formatStationOption(name) {
   return isViaEntry(name) ? `→ ${viaTargetRoute(name)}へ直通` : name;
@@ -311,31 +315,6 @@ function formatStationOption(name) {
 // via_駅名の位置の前後で、一番近い「実駅」（via_ではない駅）を探す
 // referenceStation（今来た側の駅）が分かれば、その駅がvia_より前か後ろかで探す方向を決める
 // （降車駅ポップアップで via_ を直接タップした際に、接続駅として自動記録するために使う）
-function findViaNeighborStation(routeName, viaName, referenceStation) {
-  const rows = stationMaster.filter(r => r["路線"] === routeName).map(r => r["駅名"]);
-  const viaIdx = rows.indexOf(viaName);
-  if (viaIdx === -1) return null;
-
-  const tryForward = () => {
-    for (let i = viaIdx + 1; i < rows.length; i++) {
-      if (!isViaEntry(rows[i])) return rows[i];
-    }
-    return null;
-  };
-  const tryBackward = () => {
-    for (let i = viaIdx - 1; i >= 0; i--) {
-      if (!isViaEntry(rows[i])) return rows[i];
-    }
-    return null;
-  };
-
-  const refIdx = referenceStation ? rows.indexOf(referenceStation) : -1;
-  if (refIdx !== -1) {
-    return refIdx > viaIdx ? (tryForward() || tryBackward()) : (tryBackward() || tryForward());
-  }
-  return tryBackward() || tryForward();
-}
-
 // 各種マスタ・自分のtransfers記録を読み込む（降車駅記録ウィジェット用）
 const RIDE_TIME_PREFIX = "乗車_";
 
@@ -541,6 +520,46 @@ function openDescentModal(row) {
     return [...new Set(rows.map(s => s["駅名"]))];
   }
 
+  // via_はその「位置」から直接、隣の拠点駅を割り出して使う（東西線のように両端が
+  // 同じ路線に直通していても、indexOfによる名前検索に頼らず正しく区別できる）
+  function buildStationItems(routeName) {
+    const rawRows = stationMaster.filter(s => s["路線"] === routeName).map(s => s["駅名"]);
+    const seen = new Set();
+    const items = [];
+
+    rawRows.forEach((name, rawIdx) => {
+      if (isViaEntry(name)) {
+        const nextRoute = viaTargetRoute(name);
+        let neighbor = null;
+        for (let i = rawIdx - 1; i >= 0; i--) { if (!isViaEntry(rawRows[i])) { neighbor = rawRows[i]; break; } }
+        if (!neighbor) {
+          for (let i = rawIdx + 1; i < rawRows.length; i++) { if (!isViaEntry(rawRows[i])) { neighbor = rawRows[i]; break; } }
+        }
+        if (!neighbor) return;
+
+        const key = "via|" + neighbor + "|" + nextRoute;
+        if (seen.has(key)) return;
+        seen.add(key);
+        items.push({
+          label: `→ ${nextRoute}へ直通（${neighbor}）`,
+          onClick: () => {
+            chain.push({ junction: neighbor, nextRoute });
+            currentRoute = nextRoute;
+            legRefStation = neighbor;
+            render();
+          }
+        });
+      } else {
+        const key = "st|" + name;
+        if (seen.has(key)) return;
+        seen.add(key);
+        items.push({ label: name, onClick: () => finishAndSubmit(name) });
+      }
+    });
+
+    return items;
+  }
+
   function allRouteNames() {
     return [...new Set(stationMaster.map(s => s["路線"]))].filter(Boolean).sort();
   }
@@ -550,21 +569,7 @@ function openDescentModal(row) {
     let items = [];
 
     if (mode === "station") {
-      items = stationNamesFor(currentRoute).map(n => ({
-        label: formatStationOption(n),
-        onClick: () => {
-          if (isViaEntry(n)) {
-            const nextRoute = viaTargetRoute(n);
-            const neighbor = findViaNeighborStation(currentRoute, n, legRefStation);
-            if (neighbor) chain.push({ junction: neighbor, nextRoute });
-            currentRoute = nextRoute;
-            legRefStation = neighbor;
-            render();
-          } else {
-            finishAndSubmit(n);
-          }
-        }
-      }));
+      items = buildStationItems(currentRoute);
       items.push({
         label: "🔀 別路線に直通する",
         extraClass: "descent-transfer-btn",

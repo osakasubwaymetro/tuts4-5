@@ -1,8 +1,7 @@
-// version: 1.15.0
-// 1.15.0: ①過去の乗車記録の候補で、平日と土日祝が混ざって出る問題を修正。祝日データ
-//         （holidays-jp）を取得し、今日と同じ「曜日タイプ」（平日 / 土日祝）の記録を
-//         優先するように変更。②「運営」アカウントでは「乗車列車を選択」を押すと、
-//         現在地の代わりにエリア〜駅名を手動で選べるテスト用ピッカーを開くように対応
+// version: 1.15.2
+// 1.15.2: 降車駅ポップアップのvia_解決を「文字列で名前検索」から「シート上の実際の位置から
+//         直接、隣の拠点駅を割り出す」方式に変更。東西線のように同じ路線名のvia_が両端にあっても
+//         #タグ無しで正しく区別できるようになった（表示にも隣接駅名を added して見分けやすく）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -196,7 +195,9 @@ function isViaEntry(name) {
   return typeof name === "string" && name.startsWith("via_");
 }
 function viaTargetRoute(name) {
-  return name.slice(4);
+  // "#" 以降はディスアンビゲーション用のタグ（例: 東西線の両端がどちらも同じ路線に直通する場合、
+  // "via_JR中央・総武線各駅停車#中野方面" のように付けて、2つのvia_を別物として区別できるようにする）
+  return name.slice(4).split("#")[0];
 }
 function formatStationOption(name) {
   return isViaEntry(name) ? `→ ${viaTargetRoute(name)}へ直通` : name;
@@ -205,41 +206,6 @@ function formatStationOption(name) {
 // via_駅名の位置の前後で、一番近い「実駅」（via_ではない駅）を探す
 // referenceStation（今来た側の駅）が分かれば、その駅がvia_より前か後ろかで探す方向を決める
 // （降車駅ポップアップで via_ を直接タップした際に、接続駅として自動記録するために使う）
-function findViaNeighborStation(routeName, viaName, referenceStation) {
-  const rows = (allstationData || []).filter(r => r["路線"] === routeName).map(r => r["駅名"]);
-  const viaIdx = rows.indexOf(viaName);
-  if (viaIdx === -1) return null;
-
-  const tryForward = () => {
-    for (let i = viaIdx + 1; i < rows.length; i++) {
-      if (!isViaEntry(rows[i])) return rows[i];
-    }
-    return null;
-  };
-  const tryBackward = () => {
-    for (let i = viaIdx - 1; i >= 0; i--) {
-      if (!isViaEntry(rows[i])) return rows[i];
-    }
-    return null;
-  };
-
-  const refIdx = referenceStation ? rows.indexOf(referenceStation) : -1;
-  if (refIdx !== -1) {
-    // 基準駅がvia_より後ろ（配列の後方）にあるなら、後方（forward）方向を優先して探す
-    return refIdx > viaIdx ? (tryForward() || tryBackward()) : (tryBackward() || tryForward());
-  }
-  // 基準駅が分からない場合は、従来通り後方（配列の前方＝backward）を優先
-  return tryBackward() || tryForward();
-}
-
-// 乗車駅プルダウンで「via_路線名」を選んだら、そのままその路線の駅を選べるようジャンプする
-document.getElementById("rideBlocks")?.addEventListener("change", (e) => {
-  if (!e.target.classList.contains("station-select")) return;
-  const val = e.target.value;
-  if (isViaEntry(val)) {
-    jumpToRoute(viaTargetRoute(val));
-  }
-});
 
 function updatestationList() {
   const routeVal = document.getElementById("route").value;
@@ -249,7 +215,7 @@ function updatestationList() {
   const filtered = routeVal
     ? allstationData.filter(row => row["路線"] === routeVal)
     : [];
-  const names = [...new Set(filtered.map(r => r["駅名"]))];
+  const names = [...new Set(filtered.map(r => r["駅名"]).filter(n => !isViaEntry(n)))];
 
   selects.forEach(select => {
     const current = select.value;
@@ -257,7 +223,7 @@ function updatestationList() {
     names.forEach(c => {
       const opt = document.createElement("option");
       opt.value = c;
-      opt.textContent = formatStationOption(c);
+      opt.textContent = c;
       select.appendChild(opt);
     });
     if (names.includes(current)) select.value = current;
@@ -1258,6 +1224,47 @@ function openDescentPopup(prev) {
     return [...new Set(rows.map(r => r["駅名"]))];
   }
 
+  // 駅一覧をボタン用アイテムに変換する。via_はその「位置」から直接、隣の拠点駅を割り出して
+  // 使うので、同じ文字列のvia_が路線の両端にあっても（例: 東西線の中野側・西船橋側）、
+  // 別々の候補としてちゃんと区別できる（indexOfによる名前検索に頼らないため）
+  function buildStationItems(routeName) {
+    const rawRows = (allstationData || []).filter(r => r["路線"] === routeName).map(r => r["駅名"]);
+    const seen = new Set();
+    const items = [];
+
+    rawRows.forEach((name, rawIdx) => {
+      if (isViaEntry(name)) {
+        const nextRoute = viaTargetRoute(name);
+        let neighbor = null;
+        for (let i = rawIdx - 1; i >= 0; i--) { if (!isViaEntry(rawRows[i])) { neighbor = rawRows[i]; break; } }
+        if (!neighbor) {
+          for (let i = rawIdx + 1; i < rawRows.length; i++) { if (!isViaEntry(rawRows[i])) { neighbor = rawRows[i]; break; } }
+        }
+        if (!neighbor) return; // 隣の実駅が見つからない場合はスキップ
+
+        const key = "via|" + neighbor + "|" + nextRoute;
+        if (seen.has(key)) return;
+        seen.add(key);
+        items.push({
+          label: `→ ${nextRoute}へ直通（${neighbor}）`,
+          onClick: () => {
+            chain.push({ junction: neighbor, nextRoute });
+            currentRoute = nextRoute;
+            legRefStation = neighbor;
+            render();
+          }
+        });
+      } else {
+        const key = "st|" + name;
+        if (seen.has(key)) return;
+        seen.add(key);
+        items.push({ label: name, onClick: () => finishAndSubmit(name) });
+      }
+    });
+
+    return items;
+  }
+
   function render() {
     let promptText = "";
     let items = [];
@@ -1266,21 +1273,7 @@ function openDescentPopup(prev) {
       promptText = chain.length
         ? `↑${currentRoute}のどこで降りましたか？`
         : "↑この乗車、どこで降りましたか？";
-      items = stationNamesFor(currentRoute).map(n => ({
-        label: formatStationOption(n),
-        onClick: () => {
-          if (isViaEntry(n)) {
-            const nextRoute = viaTargetRoute(n);
-            const neighbor = findViaNeighborStation(currentRoute, n, legRefStation);
-            if (neighbor) chain.push({ junction: neighbor, nextRoute });
-            currentRoute = nextRoute;
-            legRefStation = neighbor;
-            render();
-          } else {
-            finishAndSubmit(n);
-          }
-        }
-      }));
+      items = buildStationItems(currentRoute);
       items.push({
         label: "🔀 別路線に直通する",
         extraClass: "descent-transfer-btn",
