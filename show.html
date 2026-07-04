@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.7.3 -->
+<!-- version: 1.7.4 -->
+<!-- 1.7.4: transfersの「元の乗車時刻」に付くようになった"乗車_"接頭辞を、opensheet経由の
+           読み込み時に取り除くように対応（GAS側の日付型誤変換対策の一環） -->
 <!-- 1.7.3: transfersの読み込みをGAS(doGet)からopensheet.elk.sh経由に変更（GASの疎通不良の
            影響を受けないように）。書き込み（降車駅の記録）は引き続きGAS経由 -->
 <!-- 1.7.2: via_の隣接実駅の探索方向が常に「後方優先」固定になっていたバグを修正。
@@ -324,12 +326,19 @@ function findViaNeighborStation(routeName, viaName, referenceStation) {
 }
 
 // 各種マスタ・自分のtransfers記録を読み込む（降車駅記録ウィジェット用）
+const RIDE_TIME_PREFIX = "乗車_";
+function stripRideTimePrefix(v) {
+  return typeof v === "string" && v.indexOf(RIDE_TIME_PREFIX) === 0 ? v.slice(RIDE_TIME_PREFIX.length) : v;
+}
+
 Promise.all([
   fetch(STATION_URL).then(r => r.json()).catch(() => []),
   fetch(TRANSFERS_READ_URL).then(r => r.json()).catch(() => [])
 ]).then(([stationData, transfersData]) => {
   stationMaster = stationData;
-  myTransfers = transfersData.filter(t => String(t["ユーザー名"]) === String(username));
+  myTransfers = transfersData
+    .filter(t => String(t["ユーザー名"]) === String(username))
+    .map(t => ({ ...t, "元の乗車時刻": stripRideTimePrefix(t["元の乗車時刻"]) }));
   // 既に描画済みなら降車駅の状態を反映して再描画
   if (allData.length) applyMonthFilter();
 });
