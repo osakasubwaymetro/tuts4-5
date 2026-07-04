@@ -4,7 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.7.4 -->
+<!-- version: 1.8.0 -->
+<!-- 1.8.0: 降車駅の送信を「ローカル送信待ちキュー→裏で送信→成功で削除」方式に変更。
+           まだGASに届いていない間は「⏳送信待ち」マークをカードに表示。ページを開いた時・
+           オンライン復帰時に自動で再送する -->
 <!-- 1.7.4: transfersの「元の乗車時刻」に付くようになった"乗車_"接頭辞を、opensheet経由の
            読み込み時に取り除くように対応（GAS側の日付型誤変換対策の一環） -->
 <!-- 1.7.3: transfersの読み込みをGAS(doGet)からopensheet.elk.sh経由に変更（GASの疎通不良の
@@ -327,6 +330,20 @@ function findViaNeighborStation(routeName, viaName, referenceStation) {
 
 // 各種マスタ・自分のtransfers記録を読み込む（降車駅記録ウィジェット用）
 const RIDE_TIME_PREFIX = "乗車_";
+
+// scripts.js（index.html）と共有のローカル送信待ちキュー。ここに残っている間は
+// まだGASへの送信が完了していない（＝スプシにはまだ反映されていない）ことを示す
+const PENDING_TRANSFERS_KEY = "tuts4_pending_transfers";
+function getPendingTransfers() {
+  try { return JSON.parse(localStorage.getItem(PENDING_TRANSFERS_KEY) || "[]"); }
+  catch (e) { return []; }
+}
+function setPendingTransfers(list) {
+  localStorage.setItem(PENDING_TRANSFERS_KEY, JSON.stringify(list));
+}
+function isTransferPending(uname, rideTime) {
+  return getPendingTransfers().some(e => e.payload.username === uname && timeKeyMatch(e.payload.rideTime, rideTime));
+}
 function stripRideTimePrefix(v) {
   return typeof v === "string" && v.indexOf(RIDE_TIME_PREFIX) === 0 ? v.slice(RIDE_TIME_PREFIX.length) : v;
 }
@@ -419,11 +436,14 @@ function renderCards(data) {
     // 複数回記録されている場合は最新（最後に送信されたもの）を採用＝再記録＝上書き扱いにする
     const rideTime = row["時刻"];
     const existing = [...myTransfers].reverse().find(t => timeKeyMatch(t["元の乗車時刻"], rideTime));
+    const pending = isTransferPending(username, rideTime);
 
-    if (existing) {
+    if (existing || pending) {
       const p = document.createElement("p");
       p.className = "descent-recorded";
-      p.textContent = `🚏 降車駅：${existing["降車駅"] || "(不明)"}（タップで書き換え）`;
+      const label = existing ? existing["降車駅"] : "(送信待ち)";
+      const pendingBadge = pending ? " ⏳送信待ち" : "";
+      p.textContent = `🚏 降車駅：${label}${pendingBadge}（タップで書き換え）`;
       p.onclick = () => openDescentModal(row);
       card.appendChild(p);
     } else {
@@ -566,36 +586,68 @@ function openDescentModal(row) {
     submitting = true;
     body.querySelectorAll(".modal-list button").forEach(b => { b.disabled = true; });
 
+    const payload = {
+      username,
+      rideTime: row["時刻"],
+      alightStation,
+      tripId: username + "_" + row["時刻"],
+      tripEnd: true
+    };
+
+    const entryId = Date.now() + "_" + Math.random().toString(36).slice(2);
+    const queue = getPendingTransfers();
+    queue.push({ id: entryId, payload });
+    setPendingTransfers(queue);
+
+    // 送信待ちの間もすぐ見えるよう、この時点で一旦カード表示を更新して閉じる
+    closeDescentModal();
+    applyMonthFilter();
+
     try {
       await fetch(TRANSFERS_URL, {
         method: "POST",
         mode: "no-cors",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username,
-          rideTime: row["時刻"],
-          alightStation,
-          tripId: username + "_" + row["時刻"],
-          tripEnd: true
-        })
+        body: JSON.stringify(payload)
       });
+      setPendingTransfers(getPendingTransfers().filter(e => e.id !== entryId));
+      // 画面上のキャッシュにも反映して、すぐに「記録済み」表示に切り替える
+      myTransfers.push({ "ユーザー名": username, "元の乗車時刻": row["時刻"], "降車駅": alightStation });
     } catch (e) {
-      console.error("降車駅の送信に失敗:", e);
-      alert("送信に失敗しました。時間を置いて再試行してください。");
-      submitting = false;
-      body.querySelectorAll(".modal-list button").forEach(b => { b.disabled = false; });
-      return;
+      console.error("降車駅の送信に失敗（あとで自動的に再送します）:", e);
     }
 
-    // 画面上のキャッシュにも反映して、すぐに「記録済み」表示に切り替える
-    myTransfers.push({ "ユーザー名": username, "元の乗車時刻": row["時刻"], "降車駅": alightStation });
-    closeDescentModal();
     applyMonthFilter();
   }
 
   render();
   document.getElementById("descentModalOverlay").classList.add("show");
 }
+
+// ページを開いた時、まだ送信できてない降車駅記録があれば裏で再送を試みる
+async function flushPendingTransfers() {
+  const queue = getPendingTransfers();
+  if (!queue.length) return;
+
+  const stillPending = [];
+  for (const entry of queue) {
+    try {
+      await fetch(TRANSFERS_URL, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(entry.payload)
+      });
+    } catch (e) {
+      console.error("降車駅の再送信に失敗（次回また試します）:", e);
+      stillPending.push(entry);
+    }
+  }
+  setPendingTransfers(stillPending);
+  applyMonthFilter();
+}
+window.addEventListener("load", () => setTimeout(flushPendingTransfers, 1500));
+window.addEventListener("online", flushPendingTransfers);
 
 function applyMonthFilter() {
   const selected = document.getElementById("monthFilter").value;
