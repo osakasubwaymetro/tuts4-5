@@ -1,7 +1,8 @@
-// version: 1.14.2
-// 1.14.2: 「方面を選択」で、直通先の目印（via_）が端にある場合は接続先の路線名ではなく、
-//         その路線自体の実際の終着駅（隣の実駅）を方面名として表示するように変更
-//         （例:「近鉄吉野線 方面」ではなく「古市 方面」。南大阪線の終点は古市であるため）
+// version: 1.15.0
+// 1.15.0: ①過去の乗車記録の候補で、平日と土日祝が混ざって出る問題を修正。祝日データ
+//         （holidays-jp）を取得し、今日と同じ「曜日タイプ」（平日 / 土日祝）の記録を
+//         優先するように変更。②「運営」アカウントでは「乗車列車を選択」を押すと、
+//         現在地の代わりにエリア〜駅名を手動で選べるテスト用ピッカーを開くように対応
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -952,6 +953,53 @@ function formatHM(d) {
   return `${h}:${m}`;
 }
 
+/* ----------------------------------------
+   平日／土日祝の判定（電車のダイヤは平日ダイヤ・土休日ダイヤで違うことが多いため、
+   過去の乗車記録から候補を出す時に、今日と同じ「曜日タイプ」を優先するのに使う）
+---------------------------------------- */
+let _holidaySetPromise = null;
+async function getHolidaySet() {
+  if (_holidaySetPromise) return _holidaySetPromise;
+
+  _holidaySetPromise = (async () => {
+    const CACHE_KEY = "tuts4_holidays_cache";
+    const ONE_WEEK = 7 * 24 * 60 * 60 * 1000;
+
+    try {
+      const cached = localStorage.getItem(CACHE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Date.now() - parsed.fetchedAt < ONE_WEEK) return new Set(parsed.dates);
+      }
+    } catch (e) { /* ignore */ }
+
+    try {
+      const res = await fetch("https://holidays-jp.github.io/api/v1/date.json");
+      const data = await res.json();
+      const dates = Object.keys(data);
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ fetchedAt: Date.now(), dates }));
+      return new Set(dates);
+    } catch (e) {
+      console.error("祝日データの取得に失敗:", e);
+      return new Set();
+    }
+  })();
+
+  return _holidaySetPromise;
+}
+
+function dateKey(d) {
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// true = 土日祝（休日ダイヤ）、false = 平日（平日ダイヤ）
+function isWeekendType(d, holidaySet) {
+  const day = d.getDay();
+  if (day === 0 || day === 6) return true;
+  return holidaySet.has(dateKey(d));
+}
+
 async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
   setModalTitle("過去の乗車記録から選ぶ");
   const list = document.getElementById("historyModalList");
@@ -970,6 +1018,8 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
   const hasValidRevisionDate = revisionDate && !isNaN(revisionDate);
 
   const rides = await getRideHistoryCached();
+  const holidaySet = await getHolidaySet();
+  const todayIsWeekendType = isWeekendType(new Date(), holidaySet);
 
   // 同じ路線・同じ乗車駅の記録のみを対象にする（ユーザーは問わない）
   const raw = [];
@@ -995,7 +1045,9 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
           matchesDirection = (dirIndex > boardingIndex) ? (bIndex > boardingIndex) : (bIndex < boardingIndex);
         }
 
-        if (matchesDirection) raw.push({ type: t, bound: b, time });
+        if (matchesDirection) {
+          raw.push({ type: t, bound: b, time, isWeekendType: time ? isWeekendType(time, holidaySet) : null });
+        }
       });
     });
 
@@ -1006,14 +1058,19 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
     return b.time - a.time;
   });
 
+  // 平日ダイヤ・土休日ダイヤは別物なので、今日と同じ「曜日タイプ」の記録があればそちらを優先する
+  // （無ければ曜日タイプを問わず全部を対象にフォールバック）
+  const sameDayType = raw.filter(c => c.isWeekendType === todayIsWeekendType);
+  const dayTypePool = sameDayType.length ? sameDayType : raw;
+
   const nowMin = timeOfDayMinutes(new Date());
-  const windowed = raw.filter(c => {
+  const windowed = dayTypePool.filter(c => {
     if (!c.time) return false;
     const diff = (timeOfDayMinutes(c.time) - nowMin + 1440) % 1440;
     return diff <= 30;
   });
 
-  const pool = (windowed.length ? windowed : raw).slice(0, 10);
+  const pool = (windowed.length ? windowed : dayTypePool).slice(0, 10);
 
   // 種別・行先の組み合わせで重複除去
   const seen = new Set();
@@ -1565,5 +1622,99 @@ async function flushPendingTransfers() {
 window.addEventListener("load", () => setTimeout(flushPendingTransfers, 1500));
 window.addEventListener("online", flushPendingTransfers);
 setInterval(flushPendingTransfers, 30000);
+
+
+
+/* ----------------------------------------
+   「運営」アカウント専用：現在地に頼らず、エリア〜駅名を手動で選んで
+   「最寄り駅から選んだ後」と同じ動作（方面→過去の乗車記録）を他の駅でもテストできるようにする
+---------------------------------------- */
+function openAdminStationPicker() {
+  let mode = "area";
+  let areaVal = "", typeVal = "", countryVal = "", routeVal = "";
+
+  function backItem(fn) {
+    return { label: "← 戻る", extraClass: "descent-back-btn", onClick: fn };
+  }
+
+  function render() {
+    let title = "";
+    let items = [];
+
+    if (mode === "area") {
+      title = "【運営テスト】エリアを選択";
+      const areas = [...new Set((allCountryData || []).map(r => r["えりあ"]))].filter(Boolean);
+      items = areas.map(a => ({ label: a, onClick: () => { areaVal = a; mode = "type"; render(); } }));
+    } else if (mode === "type") {
+      title = "【運営テスト】区分を選択";
+      const types = [...new Set((allCountryData || [])
+        .filter(r => r["えりあ"] === areaVal)
+        .map(r => r["区分"]))].filter(Boolean);
+      items = types.map(t => ({ label: t, onClick: () => { typeVal = t; mode = "country"; render(); } }));
+      items.push(backItem(() => { mode = "area"; render(); }));
+    } else if (mode === "country") {
+      title = "【運営テスト】会社を選択";
+      const companies = [...new Set((allCountryData || [])
+        .filter(r => r["えりあ"] === areaVal && r["区分"] === typeVal)
+        .map(r => r["会社"]))].filter(Boolean);
+      items = companies.map(c => ({ label: c, onClick: () => { countryVal = c; mode = "route"; render(); } }));
+      items.push(backItem(() => { mode = "type"; render(); }));
+    } else if (mode === "route") {
+      title = "【運営テスト】路線を選択";
+      const routes = [...new Set((allrouteData || [])
+        .filter(r => r["区分"] === typeVal && r["会社"] === countryVal)
+        .map(r => r["路線"]))].filter(Boolean);
+      items = routes.map(r => ({ label: r, onClick: () => { routeVal = r; mode = "station"; render(); } }));
+      items.push(backItem(() => { mode = "country"; render(); }));
+    } else if (mode === "station") {
+      title = "【運営テスト】駅名を選択";
+      const stations = [...new Set((allstationData || [])
+        .filter(r => r["路線"] === routeVal)
+        .map(r => r["駅名"]))].filter(n => !isViaEntry(n));
+      items = stations.map(s => ({ label: s, onClick: () => applyAdminStation(areaVal, typeVal, countryVal, routeVal, s) }));
+      items.push(backItem(() => { mode = "route"; render(); }));
+    }
+
+    setModalTitle(title);
+    const list = document.getElementById("historyModalList");
+    list.innerHTML = `<div class="modal-list">${items.map((it, i) => `<button type="button" class="${it.extraClass || ""}" data-i="${i}">${it.label}</button>`).join("")}</div>`;
+
+    list.querySelectorAll(".modal-list button").forEach((btn, i) => {
+      btn.onclick = () => items[i].onClick();
+    });
+
+    document.getElementById("historyModalOverlay").classList.add("show");
+  }
+
+  render();
+}
+
+async function applyAdminStation(areaVal, typeVal, countryVal, routeVal, stationVal) {
+  function setAndTrigger(id, val) {
+    const el = document.getElementById(id);
+    if (!el || !val) return;
+    el.value = val;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  function setAndTriggerFirst(selector, val) {
+    const el = document.querySelector(selector);
+    if (!el || !val) return;
+    el.value = val;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  setAndTrigger("area", areaVal);
+  setAndTrigger("type", typeVal);
+  await wait(300);
+  setAndTrigger("country", countryVal);
+  await wait(300);
+  setAndTrigger("route", routeVal);
+  await wait(300);
+  setAndTriggerFirst(".station-select", stationVal);
+
+  // 「最寄り駅から選択」経由の時と同じく、続けて方面・履歴ポップアップを開く
+  startStationPopupFlow();
+}
 
 
