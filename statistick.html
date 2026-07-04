@@ -4,7 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>統計情報 | tuts4 — フル版</title>
-<!-- version: 1.6.1 -->
+<!-- version: 1.6.2 -->
+<!-- 1.6.2: transfersの読み込みをGAS(doGet)からopensheet.elk.sh経由に変更（GASの疎通不良の
+           影響を受けないように）。書き込み（降車駅の記録）は引き続きGAS経由 -->
 <!-- 1.6.1: 旧形式（単独via_）データの区間解決も、scripts.js/show.htmlと同じ方向判定ロジックに
            統一。もう片方の区間端点の位置を見て、前方向・後方向どちらが正しいか判定するように変更 -->
 <!-- 1.6.0: 乗車区間の集計を「路線ごとの個別計算」から「全乗車を横断するグローバル計算」に刷新。
@@ -428,6 +430,8 @@ async function getStationMaster() {
 }
 
 const TRANSFERS_URL = "https://script.google.com/macros/s/AKfycbwOzhHMk2WRtcUHvSMfnrimIQxUk-_dZN_43I-m8fpMNVxomE7emhevGGyC3UnLR3ejBw/exec";
+// 読み込みはopensheet経由にする（GASのdoGetがアクセスできない状態でも読めるように）
+const TRANSFERS_READ_URL = "https://opensheet.elk.sh/1igMMceqd8cYxM76F3QDVM1IY29wBgPC3AGF0pgHrvwU/transfers";
 
 function timeKeyMatch(a, b) {
   if (!a || !b) return false;
@@ -440,7 +444,7 @@ let _transfersCache = null;
 async function getMyTransfers() {
   if (_transfersCache) return _transfersCache;
   try {
-    const res = await fetch(TRANSFERS_URL);
+    const res = await fetch(TRANSFERS_READ_URL);
     const all = await res.json();
     _transfersCache = all.filter(t => String(t["ユーザー名"]) === String(MY_NAME));
   } catch (e) {
