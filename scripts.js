@@ -1,7 +1,7 @@
-// version: 1.16.3
-// 1.16.3: 環状線でvia_の接続駅を探す時、直線用の「基準駅がvia_より前か後ろか」という判定が
-//         ループでは通用しない（どちらの向きでもいずれ基準駅に辿り着けてしまう）バグを修正。
-//         環状線では、すでに選んである内回り／外回りの向きをそのまま使って接続駅を探すように変更
+// version: 1.16.4
+// 1.16.4: 環状線のvia_接続駅探索で、方向の解釈が逆だったバグを修正。列車が「forward」方向に
+//         進んでいる場合、via_マーカーに来た側（直前の駅）はraw位置としては「backward」側に
+//         あるため、探索順序を反転させる必要があった（天王寺で大和路線に直通する例で確認・修正）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -1315,7 +1315,9 @@ function openDescentPopup(prev) {
           // なので、すでに選んである内回り／外回りの向きをそのまま使う
           const wantsOuter = circularDir === "外回り";
           const goForward = reversed ? !wantsOuter : wantsOuter;
-          neighbor = goForward ? (tryForward() || tryBackward()) : (tryBackward() || tryForward());
+          // 列車が「forward」方向に進んでいるなら、via_マーカーに来た側（直前の駅）は
+          // raw位置としては「backward」側にあるので、探す順序を逆にする
+          neighbor = goForward ? (tryBackward() || tryForward()) : (tryForward() || tryBackward());
         } else if (refRawIdx !== -1) {
           // 基準駅（乗車駅、または前の乗換駅）がvia_より前か後ろかを見て、
           // 同じ側にある実駅を優先して探す（分からなければ従来通り前方向を優先）
