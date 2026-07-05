@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.9.3 -->
+<!-- version: 1.10.0 -->
+<!-- 1.10.0: 各投稿カードに「✏️ 編集」「🗑 削除」ボタンを追加。ridesのGAS(rides_gas.gs)に
+           action(edit/delete)対応が必要 -->
 <!-- 1.9.3: 環状線のvia_接続駅探索で、方向の解釈が逆だったバグを修正
            （forward方向に進む場合、via_の直前の駅はbackward側にある） -->
 <!-- 1.9.2: 環状線でvia_の接続駅を探す時、直線用の判定がループでは通用しないバグを修正。
@@ -116,6 +118,51 @@
     cursor: pointer;
     text-decoration: underline dotted;
   }
+  .card-edit-row {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid #eee;
+    display: flex;
+    gap: 8px;
+  }
+  .card-edit-row button {
+    flex: 1;
+    padding: 7px 10px;
+    border-radius: 8px;
+    border: none;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .card-edit-row .edit-btn { background: #EEF4FF; color: #004C97; }
+  .card-edit-row .delete-btn { background: #FFEBEB; color: #C0392B; }
+  .edit-form {
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  .edit-field-label {
+    display: block;
+    font-size: 12px;
+    color: #888;
+    margin: 10px 0 3px;
+  }
+  .edit-form input {
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1.5px solid #E3E8F0;
+    font-size: 14px;
+    box-sizing: border-box;
+  }
+  .save-btn, .cancel-btn {
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: none;
+    font-size: 14px;
+    cursor: pointer;
+    margin-right: 8px;
+  }
+  .save-btn { background: #004C97; color: white; }
+  .cancel-btn { background: #eee; color: #666; }
   .descent-recorded:hover { color: #004C97; }
 
   /* ===== 降車駅を記録するポップアップ ===== */
@@ -251,11 +298,11 @@
 </head>
 <body>
 
-<!-- 降車駅を記録するポップアップ -->
+<!-- 降車駅を記録／投稿を編集するポップアップ（共用） -->
 <div id="descentModalOverlay" class="modal-overlay">
   <div class="modal-panel" onclick="event.stopPropagation()">
     <div class="modal-header">
-      <span>降車駅を記録</span>
+      <span id="modalHeaderTitle">降車駅を記録</span>
       <button type="button" class="modal-close" onclick="closeDescentModal()">✕</button>
     </div>
     <div id="descentModalBody"></div>
@@ -287,6 +334,8 @@
 const username = checkLogin();
 
 const GAS_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
+// 編集・削除の書き込みは、投稿フォーム（index.html）が使っているのと同じGASのデプロイ先へ送る
+const RIDES_WRITE_URL = "https://script.google.com/macros/s/AKfycbzuhYRx9gyb5J1a-6ZuxmcCepIU1hIMnuBo58wh5CTYMWE785YAnuJY4ckm_13-ZHc7/exec";
 const TRANSFERS_URL = "https://script.google.com/macros/s/AKfycbwOzhHMk2WRtcUHvSMfnrimIQxUk-_dZN_43I-m8fpMNVxomE7emhevGGyC3UnLR3ejBw/exec";
 // 読み込みはopensheet経由にする（GASのdoGetがアクセスできない状態でも読めるように）
 const TRANSFERS_READ_URL = TRANSFERS_URL; // GASのdoGetが復旧したので、opensheetの反映ラグを避けてこちらに戻す
@@ -413,6 +462,21 @@ function stripRideTimePrefix(v) {
   return typeof v === "string" && v.indexOf(RIDE_TIME_PREFIX) === 0 ? v.slice(RIDE_TIME_PREFIX.length) : v;
 }
 
+// 編集・削除はno-corsを使わず、実際にGASの{result:"success"|"error"}を読んで成否を判定する
+async function postToRidesGAS(payload) {
+  const res = await fetch(RIDES_WRITE_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const data = await res.json();
+  if (data && data.result && data.result !== "success") {
+    throw new Error(data.message || "GAS側でエラーが発生しました");
+  }
+  return data;
+}
+
 const ROUTE_URL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 
 Promise.all([
@@ -524,6 +588,17 @@ function renderCards(data) {
       card.appendChild(btn);
     }
 
+    // ===== 投稿の編集・削除 =====
+    const editRow = document.createElement("div");
+    editRow.className = "card-edit-row";
+    editRow.innerHTML = `
+      <button type="button" class="edit-btn">✏️ 編集</button>
+      <button type="button" class="delete-btn">🗑 削除</button>
+    `;
+    editRow.querySelector(".edit-btn").onclick = () => openEditModal(row);
+    editRow.querySelector(".delete-btn").onclick = () => deleteRide(row);
+    card.appendChild(editRow);
+
     container.appendChild(card);
   });
 }
@@ -540,7 +615,89 @@ function closeDescentModal() {
   document.getElementById("descentModalOverlay").classList.remove("show");
 }
 
+function toDatetimeLocalValue(stored) {
+  // "yyyy-MM-dd HH:mm" -> "yyyy-MM-ddTHH:mm"（datetime-local入力欄の形式に合わせる）
+  return typeof stored === "string" ? stored.replace(" ", "T") : "";
+}
+
+function openEditModal(row) {
+  document.getElementById("modalHeaderTitle").textContent = "投稿を編集";
+  const body = document.getElementById("descentModalBody");
+  const originalTime = row["時刻"];
+
+  const fields = [
+    ["timeValue", "発車時刻", "datetime-local", toDatetimeLocalValue(originalTime)],
+    ["areaValue", "エリア", "text", row["エリア"] || ""],
+    ["typeValue", "区分", "text", row["区分"] || ""],
+    ["countryValue", "会社", "text", row["会社"] || ""],
+    ["routeValue", "路線", "text", row["路線"] || ""],
+    ["stationValue", "乗車駅", "text", row["乗車駅"] || ""],
+    ["sujitypeValue", "種別", "text", row["種別"] || ""],
+    ["boundValue", "行先", "text", row["行先"] || ""],
+    ["modelValue", "車両形式", "text", row["車両形式"] || ""],
+    ["numberValue", "車番", "text", row["車番"] || ""],
+    ["memoValue", "備考", "text", row["メモ"] || ""]
+  ];
+
+  body.innerHTML = `
+    <div class="edit-form">
+      ${fields.map(([id, label, type, val]) => `
+        <label class="edit-field-label">${label}</label>
+        <input type="${type}" id="edit_${id}" value="${String(val).replace(/"/g, "&quot;")}">
+      `).join("")}
+    </div>
+    <div style="margin-top:14px;">
+      <button type="button" id="editSaveBtn" class="save-btn">保存</button>
+      <button type="button" id="editCancelBtn" class="cancel-btn">キャンセル</button>
+    </div>
+  `;
+
+  document.getElementById("editCancelBtn").onclick = () => closeDescentModal();
+
+  const saveBtn = document.getElementById("editSaveBtn");
+  saveBtn.onclick = async () => {
+    saveBtn.disabled = true;
+    saveBtn.textContent = "保存中...";
+
+    const payload = { action: "edit", usernameValue: username, originalTimeValue: originalTime };
+    fields.forEach(([id]) => { payload[id] = document.getElementById(`edit_${id}`).value; });
+
+    try {
+      await postToRidesGAS(payload);
+      closeDescentModal();
+      // キャッシュを無効化して最新を取り直す
+      localStorage.removeItem(CACHE_KEY);
+      location.reload();
+    } catch (e) {
+      console.error("編集の保存に失敗:", e);
+      alert("保存に失敗しました: " + e.message);
+      saveBtn.disabled = false;
+      saveBtn.textContent = "保存";
+    }
+  };
+
+  document.getElementById("descentModalOverlay").classList.add("show");
+}
+
+async function deleteRide(row) {
+  if (!confirm(`この投稿を削除しますか？\n\n${row["路線"] || ""} / ${row["時刻"] || ""}\n\nこの操作は取り消せません。`)) return;
+
+  try {
+    await postToRidesGAS({
+      action: "delete",
+      usernameValue: username,
+      originalTimeValue: row["時刻"]
+    });
+    localStorage.removeItem(CACHE_KEY);
+    location.reload();
+  } catch (e) {
+    console.error("削除に失敗:", e);
+    alert("削除に失敗しました: " + e.message);
+  }
+}
+
 function openDescentModal(row) {
+  document.getElementById("modalHeaderTitle").textContent = "降車駅を記録";
   const body = document.getElementById("descentModalBody");
 
   const timeLabel = formatRideTimeLabel(row["時刻"]);
