@@ -1,4 +1,7 @@
-// logs.js (修正版)
+// logs.js
+// version: 1.1.0
+// 1.1.0: loginVersionマーカーを必須化。Google/運営ログイン方式への切り替えに伴い、
+//        古いキャッシュのままのセッションを強制的にログインし直させる
 
 // ✅ ログ保存用GASのURL（あなたのログ用GASに置き換える）
 const GAS_LOG_URL = "https://script.google.com/macros/s/AKfycbzly7vRlMrEqI0D156pHJMaAlcYmiQM98n0N9rKpfDt_UKFQsA5kcGyHjpQx5uwJyD3/exec";
@@ -7,11 +10,15 @@ const GAS_LOG_URL = "https://script.google.com/macros/s/AKfycbzly7vRlMrEqI0D156p
 const VALID_KEYS = ["00002025"];
 
 // ログインチェック（ページ内で使う）
+// 2.0.0のログイン方式（Google／運営）に切り替えたタイミングで、古いキャッシュのままの
+// セッションを強制的にログインし直させるため、loginVersionというマーカーも必須にしている
+const REQUIRED_LOGIN_VERSION = "2";
 function checkLogin() {
   const username = localStorage.getItem("username");
   const accessKey = localStorage.getItem("accessKey");
+  const loginVersion = localStorage.getItem("loginVersion");
 
-  if (!username || !VALID_KEYS.includes(accessKey)) {
+  if (!username || !VALID_KEYS.includes(accessKey) || loginVersion !== REQUIRED_LOGIN_VERSION) {
     alert("ログインが必要です。");
     window.location.href = "login.html";
     return null;

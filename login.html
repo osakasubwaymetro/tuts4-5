@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ログイン | tuts4</title>
-<!-- version: 2.0.0 -->
+<!-- version: 2.1.0 -->
+<!-- 2.1.0: ログイン成功時にloginVersion="2"を記録するように対応（旧キャッシュの強制ログアウト用） -->
 <!-- 2.0.0: Googleログインを追加。初回のみ「今までのユーザー名」を紐付けることで、
            過去データ（ユーザー名ベース）をそのまま引き継げるようにした。
            運営アカウントは従来通りのユーザー名＋アクセスキー方式を別枠で維持 -->
@@ -241,6 +242,7 @@ async function submitLink() {
 function finishLogin(usernameValue) {
   localStorage.setItem("username", usernameValue);
   localStorage.setItem("accessKey", VALID_KEYS[0]); // 既存機能との互換のため設定
+  localStorage.setItem("loginVersion", "2");
 
   fetch(GAS_LOG_URL, {
     method: "POST",
@@ -275,6 +277,7 @@ function login() {
   if (VALID_KEYS.includes(key)) {
     localStorage.setItem("username", username);
     localStorage.setItem("accessKey", key);
+    localStorage.setItem("loginVersion", "2");
 
     fetch(GAS_LOG_URL, {
       method: "POST",

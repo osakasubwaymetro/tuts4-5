@@ -1,5 +1,7 @@
 <!DOCTYPE html>
 <html lang="ja">
+<!-- version: 1.1.0 -->
+<!-- 1.1.0: loginVersionマーカーを必須化（Google/運営ログイン方式への切り替えに伴う強制再ログイン） -->
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -293,10 +295,12 @@
 const GAS_LOG_URL = "https://script.google.com/macros/s/AKfycbzly7vRlMrEqI0D156pHJMaAlcYmiQM98n0N9rKpfDt_UKFQsA5kcGyHjpQx5uwJyD3/exec";
 const VALID_KEYS = ["00002025"];
 
+const REQUIRED_LOGIN_VERSION = "2";
 function checkLogin() {
   const username = localStorage.getItem("username");
   const accessKey = localStorage.getItem("accessKey");
-  if (!username || !VALID_KEYS.includes(accessKey)) {
+  const loginVersion = localStorage.getItem("loginVersion");
+  if (!username || !VALID_KEYS.includes(accessKey) || loginVersion !== REQUIRED_LOGIN_VERSION) {
     alert("ログインが必要です。");
     window.location.href = "login.html";
     return null;
