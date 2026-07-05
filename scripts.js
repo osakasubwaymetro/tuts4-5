@@ -1,7 +1,8 @@
-// version: 1.16.0
-// 1.16.0: 環状線（山手線・大阪環状線など）に対応。routeシートに「環状」列（TRUE）があると、
-//         方面選択が「両端駅」ではなく「内回り／外回り」の2択になり、過去の乗車記録も
-//         環状（一周する方向）を考慮して絞り込むように変更
+// version: 1.16.1
+// 1.16.1: 環状線の場合、降車駅を記録する時に「内回り／外回り」も一緒に聞くように変更。
+//         過去の投稿にも遡って正確な方向を記録できる（[環状:外回り]のようなタグとして
+//         降車駅欄に保存）。統計側はこの明示的な方向があればそちらを優先し、無ければ
+//         今まで通り短い方の弧を推測して使う
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -1253,7 +1254,8 @@ function openDescentPopup(prev) {
   const chain = []; // [{ junction, nextRoute }, ...]
   let currentRoute = prev.route;
   let legRefStation = prev.station; // 今の路線に入ってきた側の基準駅（方向判定に使う）
-  let mode = "station"; // "station" | "junction" | "route"
+  let circularDir = null; // 最初の路線が環状線の場合の内回り／外回り
+  let mode = isCircularRoute(prev.route) ? "circularDir" : "station"; // "circularDir" | "station" | "junction" | "route"
   let submitting = false;
 
   function breadcrumbHTML() {
@@ -1321,7 +1323,13 @@ function openDescentPopup(prev) {
     let promptText = "";
     let items = [];
 
-    if (mode === "station") {
+    if (mode === "circularDir") {
+      promptText = `↑${currentRoute}は環状線です。この乗車はどちら回りでしたか？`;
+      items = ["外回り", "内回り"].map(label => ({
+        label,
+        onClick: () => { circularDir = label; mode = "station"; render(); }
+      }));
+    } else if (mode === "station") {
       promptText = chain.length
         ? `↑${currentRoute}のどこで降りましたか？`
         : "↑この乗車、どこで降りましたか？";
@@ -1391,6 +1399,9 @@ function openDescentPopup(prev) {
     let alightValue = finalStation;
     if (chain.length) {
       alightValue = chain.map(h => `${h.junction}@${h.nextRoute}`).join("|") + "|" + finalStation;
+    }
+    if (circularDir) {
+      alightValue = `[環状:${circularDir}]${alightValue}`;
     }
 
     list.innerHTML = `
