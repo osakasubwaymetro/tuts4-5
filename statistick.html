@@ -4,7 +4,11 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>統計情報 | tuts4 — フル版</title>
-<!-- version: 1.6.3 -->
+<!-- version: 1.7.0 -->
+<!-- 1.7.0: 環状線（山手線・大阪環状線など）に対応。routeシートの「環状」フラグを見て、
+           乗車駅→降車駅の短い方の弧を塗り、最後の駅から最初の駅への一周分の区間も表示 -->
+<!-- 1.6.4: GASのdoGetが復旧したので、transfers読み込みをopensheet経由からGAS経由に戻した
+           （opensheetのキャッシュによる反映ラグを避けるため。即時反映になる） -->
 <!-- 1.6.3: transfersの「元の乗車時刻」に付くようになった"乗車_"接頭辞を、opensheet経由の
            読み込み時に取り除くように対応（GAS側の日付型誤変換対策の一環） -->
 <!-- 1.6.2: transfersの読み込みをGAS(doGet)からopensheet.elk.sh経由に変更（GASの疎通不良の
@@ -240,6 +244,7 @@
       <p class="small">乗車駅〜降車駅の区間を路線図上で塗ります。色がついている区間＝乗ったことがある区間。<br>
       降車駅を記録した乗車だけを集計対象にしています（未記録の乗車は含みません。乗車履歴ページの「🚏 降車駅を記録」から追加できます）。<br>
       「🔀 別路線に直通する」で記録した乗り継ぎは、区間ごとに対応する路線へ正しく塗り分けられます。<br>
+      環状線（routeシートで「環状」がTRUEの路線）は、乗車駅→降車駅の短い方の弧を塗り、最後の駅から最初の駅へ戻る一周分の区間も表示します。<br>
       ※ station シートの駅の並び順を路線の実際の順番とみなして計算しています（ループ線は正しく出ない場合があります）</p>
       <div id="routeCoverageList"><p class="small">読み込み中…</p></div>
     </div>
@@ -431,9 +436,29 @@ async function getStationMaster() {
   return _stationMasterCache;
 }
 
+let _routeMasterCache = null;
+async function getRouteMaster() {
+  if (_routeMasterCache) return _routeMasterCache;
+  try {
+    const res = await fetch("https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route");
+    _routeMasterCache = await res.json();
+  } catch (e) {
+    console.error("route マスタの取得に失敗:", e);
+    _routeMasterCache = [];
+  }
+  return _routeMasterCache;
+}
+
+function isCircularRouteName(routeName, routeMaster) {
+  const row = routeMaster.find(r => r["路線"] === routeName);
+  if (!row) return false;
+  const v = row["環状"];
+  return v === true || v === 1 || ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
+}
+
 const TRANSFERS_URL = "https://script.google.com/macros/s/AKfycbwOzhHMk2WRtcUHvSMfnrimIQxUk-_dZN_43I-m8fpMNVxomE7emhevGGyC3UnLR3ejBw/exec";
 // 読み込みはopensheet経由にする（GASのdoGetがアクセスできない状態でも読めるように）
-const TRANSFERS_READ_URL = "https://opensheet.elk.sh/1igMMceqd8cYxM76F3QDVM1IY29wBgPC3AGF0pgHrvwU/transfers";
+const TRANSFERS_READ_URL = TRANSFERS_URL; // GASのdoGetが復旧したので、opensheetの反映ラグを避けてこちらに戻す
 
 function timeKeyMatch(a, b) {
   if (!a || !b) return false;
@@ -544,7 +569,7 @@ function resolveStationIndex(stationName, info, referenceStationName) {
 }
 
 // 自分の乗車記録＋降車駅記録から、路線ごとに「乗った区間」を全部洗い出す（直通チェーン込み）
-function computeAllRiddenSegments(mine, myTransfers, stationData) {
+function computeAllRiddenSegments(mine, myTransfers, stationData, routeMaster) {
   const stationInfoCache = {};
   const segmentsByRoute = {};
   const rideCountByRoute = {};
@@ -571,9 +596,22 @@ function computeAllRiddenSegments(mine, myTransfers, stationData) {
       if (boardIdx === -1 || alightIdx === -1) return;
 
       if (!segmentsByRoute[leg.route]) segmentsByRoute[leg.route] = new Set();
-      const lo = Math.min(boardIdx, alightIdx);
-      const hi = Math.max(boardIdx, alightIdx);
-      for (let i = lo; i < hi; i++) segmentsByRoute[leg.route].add(i);
+      const total = info.stationsOnRoute.length;
+
+      if (isCircularRouteName(leg.route, routeMaster)) {
+        // 環状線：短い方の弧（乗り換え無しで進んだと思われる方向）を塗る
+        const forwardDist = (alightIdx - boardIdx + total) % total;
+        const backwardDist = total - forwardDist;
+        if (forwardDist <= backwardDist) {
+          for (let i = 0; i < forwardDist; i++) segmentsByRoute[leg.route].add((boardIdx + i) % total);
+        } else {
+          for (let i = 0; i < backwardDist; i++) segmentsByRoute[leg.route].add((boardIdx - i - 1 + total) % total);
+        }
+      } else {
+        const lo = Math.min(boardIdx, alightIdx);
+        const hi = Math.max(boardIdx, alightIdx);
+        for (let i = lo; i < hi; i++) segmentsByRoute[leg.route].add(i);
+      }
     });
   });
 
@@ -585,10 +623,11 @@ async function renderRouteCoverage(mine) {
   if (!container) return;
 
   const stationData = await getStationMaster();
+  const routeMaster = await getRouteMaster();
   const myTransfers = await getMyTransfers();
 
-  const { segmentsByRoute, rideCountByRoute } = computeAllRiddenSegments(mine, myTransfers, stationData);
-  _routeCoverageState = { mine, stationData };
+  const { segmentsByRoute, rideCountByRoute } = computeAllRiddenSegments(mine, myTransfers, stationData, routeMaster);
+  _routeCoverageState = { mine, stationData, routeMaster };
 
   // 表示対象は「乗った記録がある路線」∪「直通チェーンで区間がついた路線」
   const routeNames = [...new Set([...Object.keys(rideCountByRoute), ...Object.keys(segmentsByRoute)])]
@@ -602,7 +641,7 @@ async function renderRouteCoverage(mine) {
   container.innerHTML = "";
 
   routeNames.forEach(routeName => {
-    const row = buildRouteCoverageRow(routeName, stationData, segmentsByRoute[routeName] || new Set());
+    const row = buildRouteCoverageRow(routeName, stationData, segmentsByRoute[routeName] || new Set(), routeMaster);
     if (row) container.appendChild(row);
   });
 
@@ -611,7 +650,7 @@ async function renderRouteCoverage(mine) {
   }
 }
 
-function buildRouteCoverageRow(routeName, stationData, riddenSegments) {
+function buildRouteCoverageRow(routeName, stationData, riddenSegments, routeMaster) {
   const stationsOnRoute = stationData
     .filter(s => s["路線"] === routeName)
     .map(s => s["駅名"])
@@ -619,7 +658,8 @@ function buildRouteCoverageRow(routeName, stationData, riddenSegments) {
 
   if (stationsOnRoute.length < 2) return null; // 駅データが無い/揃ってない路線はスキップ
 
-  const totalSegments = stationsOnRoute.length - 1;
+  const isLoop = isCircularRouteName(routeName, routeMaster || []);
+  const totalSegments = isLoop ? stationsOnRoute.length : stationsOnRoute.length - 1;
   const riddenCount = riddenSegments.size;
   const pct = totalSegments ? Math.round((riddenCount / totalSegments) * 1000) / 10 : 0;
 
@@ -630,7 +670,8 @@ function buildRouteCoverageRow(routeName, stationData, riddenSegments) {
   // 駅と、駅の間をつなぐ線（区間）を交互に並べる
   let lineHTML = "";
   stationsOnRoute.forEach((name, i) => {
-    const dotRidden = (riddenSegments.has(i - 1) || riddenSegments.has(i)) ? " ridden" : "";
+    const prevSeg = isLoop ? (i - 1 + totalSegments) % totalSegments : i - 1;
+    const dotRidden = (riddenSegments.has(prevSeg) || riddenSegments.has(i)) ? " ridden" : "";
     lineHTML += `
       <div class="route-line-station">
         <span class="route-line-dot${dotRidden}"></span>
@@ -641,6 +682,18 @@ function buildRouteCoverageRow(routeName, stationData, riddenSegments) {
       lineHTML += `<div class="route-line-connector${segRidden}"></div>`;
     }
   });
+
+  if (isLoop) {
+    // 環状線：最後の駅から最初の駅へ戻る区間（一周分）も表示する
+    const lastSegIdx = stationsOnRoute.length - 1;
+    const segRidden = riddenSegments.has(lastSegIdx) ? " ridden" : "";
+    lineHTML += `<div class="route-line-connector${segRidden}"></div>`;
+    lineHTML += `
+      <div class="route-line-station">
+        <span class="route-line-dot${segRidden}"></span>
+        <span class="route-line-name">${stationsOnRoute[0]}（一周）</span>
+      </div>`;
+  }
 
   row.innerHTML = `
     <div class="route-coverage-label">
@@ -662,7 +715,7 @@ function buildRouteCoverageRow(routeName, stationData, riddenSegments) {
 // （直通チェーンで他路線とも繋がりうるため、再計算自体は毎回全体で行うが、描画はその路線だけ差し替える）
 async function refreshRouteCoverageRow(routeName) {
   if (!_routeCoverageState) return;
-  const { mine, stationData } = _routeCoverageState;
+  const { mine, stationData, routeMaster } = _routeCoverageState;
 
   const oldRow = document.querySelector(`.route-coverage-row[data-route="${CSS.escape(routeName)}"]`);
   if (oldRow) {
@@ -674,8 +727,8 @@ async function refreshRouteCoverageRow(routeName) {
   _transfersCache = null;
   const myTransfers = await getMyTransfers();
 
-  const { segmentsByRoute } = computeAllRiddenSegments(mine, myTransfers, stationData);
-  const newRow = buildRouteCoverageRow(routeName, stationData, segmentsByRoute[routeName] || new Set());
+  const { segmentsByRoute } = computeAllRiddenSegments(mine, myTransfers, stationData, routeMaster);
+  const newRow = buildRouteCoverageRow(routeName, stationData, segmentsByRoute[routeName] || new Set(), routeMaster);
   if (newRow && oldRow) {
     oldRow.replaceWith(newRow);
   }
