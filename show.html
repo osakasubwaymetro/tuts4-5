@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.9.1 -->
+<!-- version: 1.9.2 -->
+<!-- 1.9.2: 環状線でvia_の接続駅を探す時、直線用の判定がループでは通用しないバグを修正。
+           内回り／外回りの向きをそのまま使って接続駅を探すように変更 -->
 <!-- 1.9.1: routeシートの「環状反転」列に対応。内回り／外回りのボタンに「（隣の駅）方面」の
            ヒントを表示するように変更 -->
 <!-- 1.9.0: 環状線の場合、降車駅を記録する時に「内回り／外回り」も一緒に聞くように変更。
@@ -567,6 +569,8 @@ function openDescentModal(row) {
   function buildStationItems(routeName) {
     const rawRows = stationMaster.filter(s => s["路線"] === routeName).map(s => s["駅名"]);
     const refRawIdx = legRefStation ? rawRows.indexOf(legRefStation) : -1;
+    const circular = isCircularRoute(routeName);
+    const reversed = circular ? isCircularReversed(routeName) : false;
     const seen = new Set();
     const items = [];
 
@@ -578,7 +582,11 @@ function openDescentModal(row) {
         const tryBackward = () => { for (let i = rawIdx - 1; i >= 0; i--) if (!isViaEntry(rawRows[i])) return rawRows[i]; return null; };
         const tryForward = () => { for (let i = rawIdx + 1; i < rawRows.length; i++) if (!isViaEntry(rawRows[i])) return rawRows[i]; return null; };
 
-        if (refRawIdx !== -1) {
+        if (circular && circularDir) {
+          const wantsOuter = circularDir === "外回り";
+          const goForward = reversed ? !wantsOuter : wantsOuter;
+          neighbor = goForward ? (tryForward() || tryBackward()) : (tryBackward() || tryForward());
+        } else if (refRawIdx !== -1) {
           neighbor = refRawIdx > rawIdx ? (tryForward() || tryBackward()) : (tryBackward() || tryForward());
         } else {
           neighbor = tryBackward() || tryForward();
