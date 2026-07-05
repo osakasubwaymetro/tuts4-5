@@ -4,7 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.7.6 -->
+  <!-- version: 1.7.7 -->
+  <!-- 1.7.7: 車両形式のみ選択・車番未選択で投稿した場合、編成全体（車番問わず）の乗車回数を
+             表示するように対応。車両形式が無い投稿は、スタンプ帳を出さずそのまま降車ポップアップの
+             確認へ進むように修正（今まで早期returnで確認自体が止まっていた） -->
   <!-- 1.7.6: 「運営」アカウントでは、乗車列車を選択ボタンを押すと現在地の代わりに
              エリア〜駅名を手動で選べるテスト用ピッカーが開くように対応 -->
   <!-- 1.7.5: 降車駅ポップアップに複数路線をまたぐ直通乗り継ぎ記録（🔀 別路線に直通する）を追加 -->
@@ -731,7 +734,11 @@
   }
 
   async function showStampPopup(modelValue, postedNumber) {
-    if (!modelValue) return;
+    if (!modelValue) {
+      // 車両形式が無ければスタンプ帳は出さず、そのまま降車ポップアップの確認へ進む
+      if (typeof maybeAskDescentStation === "function") maybeAskDescentStation();
+      return;
+    }
 
     const [numberData, rideData] = await Promise.all([
       fetch(NUMBER_URL).then(r => r.json()),
@@ -747,6 +754,39 @@
     const myRides = rideData.filter(r =>
       r["ユーザー名"] === username && r["車両形式"] === modelValue
     );
+
+    // Get color index based on model order in full number data
+    const allModels = [...new Set(numberData.map(r => r["車両形式"]))];
+    const colorIdx = allModels.indexOf(modelValue) % STAMP_COLORS.length;
+    const color = STAMP_COLORS[colorIdx];
+
+    document.getElementById("spModelName").textContent = modelValue;
+    const grid = document.getElementById("spGrid");
+    grid.innerHTML = "";
+
+    if (!postedNumber) {
+      // 車番が未選択：編成全体（車番問わず）での乗車回数を表示する
+      const totalCount = myRides.length + 1; // 今回の分も含める
+      const riddenSet = new Set(myRides.map(r => r["車番"]).filter(Boolean));
+
+      document.getElementById("spMsg").textContent = `🚆 ${modelValue} 全体の乗車回数：${totalCount} 回`;
+      document.getElementById("spMsg").className = "stamp-popup-msg again";
+
+      formations.forEach(num => {
+        const isRidden = riddenSet.has(num);
+        const cell = document.createElement("div");
+        cell.className = "stamp-popup-cell";
+        cell.innerHTML = `
+          <div class="sp-circle">${stampSVGSmall(color, isRidden)}</div>
+          <div class="sp-label">${num}</div>
+        `;
+        grid.appendChild(cell);
+      });
+
+      document.getElementById("stampPopupOverlay").classList.add("show");
+      return;
+    }
+
     const riddenSet = new Set(myRides.map(r => r["車番"]));
     // Also count the just-posted one as ridden
     riddenSet.add(postedNumber);
@@ -755,20 +795,10 @@
     const prevRides = myRides.filter(r => r["車番"] === postedNumber);
     const isFirst = prevRides.length === 0;
 
-    // Get color index based on model order in full number data
-    const allModels = [...new Set(numberData.map(r => r["車両形式"]))];
-    const colorIdx = allModels.indexOf(modelValue) % STAMP_COLORS.length;
-    const color = STAMP_COLORS[colorIdx];
-
-    // Render
-    document.getElementById("spModelName").textContent = modelValue;
     document.getElementById("spMsg").textContent = isFirst
       ? `🎉 ${postedNumber} は初乗車！`
       : `🚆 ${postedNumber}編成の乗車回数：${prevRides.length} 回`;
     document.getElementById("spMsg").className = "stamp-popup-msg " + (isFirst ? "first" : "again");
-
-    const grid = document.getElementById("spGrid");
-    grid.innerHTML = "";
 
     formations.forEach(num => {
       const isRidden = riddenSet.has(num);
