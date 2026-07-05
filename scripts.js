@@ -1,7 +1,6 @@
-// version: 1.16.4
-// 1.16.4: 環状線のvia_接続駅探索で、方向の解釈が逆だったバグを修正。列車が「forward」方向に
-//         進んでいる場合、via_マーカーに来た側（直前の駅）はraw位置としては「backward」側に
-//         あるため、探索順序を反転させる必要があった（天王寺で大和路線に直通する例で確認・修正）
+// version: 1.16.6
+// 1.16.6: 乗車投稿・降車登録どちらも「1秒だけ送信中を表示→裏で送信→キャッシュから消す」という
+//         同じパターンに統一。実際の送信完了を待たず、常に1秒でUIを先に進める
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -490,13 +489,13 @@ function upload() {
       console.error("送信エラー（あとで自動的に再送します）:", err);
     });
 
-  setTimeout(() => {
-    hideLoadingPopup();
+  setTimeout(async () => {
     logAction("post", `投稿: ${routeValue} / ${modelValue} ${numberValue} / ${stationValue} → ${boundValue}`);
     handleTripBookkeeping(routeValue, boundValue, timeValue, stationValue, sujitypeValue);
+    hideLoadingPopup();
     showStampPopup(modelValue, numberValue);
     resetForm();
-  }, 500);
+  }, 1000);
 }
 
 // 投稿完了後、次の入力に備えてフォームを全クリアする
@@ -1446,8 +1445,20 @@ function openDescentPopup(prev) {
       <button type="button" id="endTripBtn">🏁 ここで旅を終える</button>
     `;
 
-    document.getElementById("continueTripBtn").onclick = () => { submitting = true; submitDescentValue(prev, alightValue, false); };
-    document.getElementById("endTripBtn").onclick = () => { submitting = true; submitDescentValue(prev, alightValue, true); };
+    document.getElementById("continueTripBtn").onclick = () => {
+      submitting = true;
+      document.getElementById("continueTripBtn").disabled = true;
+      document.getElementById("endTripBtn").disabled = true;
+      document.getElementById("continueTripBtn").textContent = "送信中...";
+      submitDescentValue(prev, alightValue, false);
+    };
+    document.getElementById("endTripBtn").onclick = () => {
+      submitting = true;
+      document.getElementById("continueTripBtn").disabled = true;
+      document.getElementById("endTripBtn").disabled = true;
+      document.getElementById("endTripBtn").textContent = "送信中...";
+      submitDescentValue(prev, alightValue, true);
+    };
   }
 
   render();
@@ -1480,14 +1491,14 @@ async function submitDescentValue(prev, alightStation, tripEnd) {
   queue.push({ id: entryId, payload });
   setPendingTransfers(queue);
 
-  try {
-    await postToTransfersGAS(payload);
-    setPendingTransfers(getPendingTransfers().filter(e => e.id !== entryId));
-  } catch (e) {
-    console.error("降車駅の送信に失敗（あとで自動的に再送します）:", e);
-  } finally {
-    _submittingDescent = false;
-  }
+  // 裏で実際に送信する（結果を待たず、1秒後にUIを先に進める）
+  postToTransfersGAS(payload)
+    .then(() => { setPendingTransfers(getPendingTransfers().filter(e => e.id !== entryId)); })
+    .catch(e => console.error("降車駅の送信に失敗（あとで自動的に再送します）:", e));
+
+  await new Promise(r => setTimeout(r, 1000));
+
+  _submittingDescent = false;
 
   if (effectiveTripEnd) {
     localStorage.removeItem("tuts4_current_trip_id");
@@ -1806,5 +1817,3 @@ async function applyAdminStation(areaVal, typeVal, countryVal, routeVal, station
   // 「最寄り駅から選択」経由の時と同じく、続けて方面・履歴ポップアップを開く
   startStationPopupFlow();
 }
-
-
