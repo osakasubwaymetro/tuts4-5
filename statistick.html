@@ -4,7 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>統計情報 | tuts4 — フル版</title>
-<!-- version: 1.7.2 -->
+<!-- version: 1.7.3 -->
+<!-- 1.7.3: 片方向のみ運行の環状線（route シートの「環状方向限定」）に対応。
+           記録の有無に関わらず、常にその方向として区間を塗るように変更 -->
 <!-- 1.7.2: routeシートの「環状反転」列に対応。路線ごとに外回り／内回りの向きを反転できるように -->
 <!-- 1.7.1: 降車駅記録時に明示的に選ばれた内回り／外回り（[環状:X]タグ）があればそちらを優先し、
            無い場合のみ短い方の弧を推測するように変更。過去データでも正確な方向が使えるように -->
@@ -466,6 +468,16 @@ function isCircularReversedName(routeName, routeMaster) {
   return v === true || v === 1 || ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
 }
 
+// ディズニーリゾートラインのような片方向のみの環状線は、記録の有無に関わらず常にこの向きで確定させる
+function getCircularFixedDirectionName(routeName, routeMaster) {
+  const row = routeMaster.find(r => r["路線"] === routeName);
+  if (!row) return null;
+  const v = String(row["環状方向限定"] || "").trim();
+  if (v.includes("外回り")) return "外回り";
+  if (v.includes("内回り")) return "内回り";
+  return null;
+}
+
 const TRANSFERS_URL = "https://script.google.com/macros/s/AKfycbwOzhHMk2WRtcUHvSMfnrimIQxUk-_dZN_43I-m8fpMNVxomE7emhevGGyC3UnLR3ejBw/exec";
 // 読み込みはopensheet経由にする（GASのdoGetがアクセスできない状態でも読めるように）
 const TRANSFERS_READ_URL = TRANSFERS_URL; // GASのdoGetが復旧したので、opensheetの反映ラグを避けてこちらに戻す
@@ -615,14 +627,18 @@ function computeAllRiddenSegments(mine, myTransfers, stationData, routeMaster) {
       if (isCircularRouteName(leg.route, routeMaster)) {
         // 環状線：外回り＝インデックス増加方向、内回り＝減少方向、という固定の向きで扱う
         // （route シートの「環状反転」がTRUEなら、これを逆にする）。
-        // 降車駅記録時に方向を明示的に選んでいれば（1つ目の区間のみ）それを優先し、
-        // 無ければ短い方の弧（乗り換え無しで進んだと思われる方向）を推測して塗る
+        // 優先順位：①路線が片方向のみ運行（環状方向限定）なら常にそれ　②降車駅記録時に
+        // 明示的に選んだ方向（1つ目の区間のみ）　③どちらも無ければ短い方の弧を推測
         const forwardDist = (alightIdx - boardIdx + total) % total;
         const backwardDist = total - forwardDist;
+        const fixedDir = getCircularFixedDirectionName(leg.route, routeMaster);
+        const reversed = isCircularReversedName(leg.route, routeMaster);
         let goForward;
-        if (legIdx === 0 && chain.circularDir) {
+        if (fixedDir) {
+          const wantsOuter = fixedDir === "外回り";
+          goForward = reversed ? !wantsOuter : wantsOuter;
+        } else if (legIdx === 0 && chain.circularDir) {
           const wantsOuter = chain.circularDir === "外回り";
-          const reversed = isCircularReversedName(leg.route, routeMaster);
           goForward = reversed ? !wantsOuter : wantsOuter;
         } else {
           goForward = forwardDist <= backwardDist;

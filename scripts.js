@@ -1,6 +1,7 @@
-// version: 1.16.6
-// 1.16.6: 乗車投稿・降車登録どちらも「1秒だけ送信中を表示→裏で送信→キャッシュから消す」という
-//         同じパターンに統一。実際の送信完了を待たず、常に1秒でUIを先に進める
+// version: 1.17.0
+// 1.17.0: ディズニーリゾートラインのような「片方向のみ運行」の環状線に対応。routeシートの
+//         「環状方向限定」列に「外回りのみ」／「内回りのみ」と入れておくと、方面を聞かず
+//         自動でその方向として扱う（乗車時の方面選択・降車駅記録どちらもスキップされる）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -816,6 +817,18 @@ function isCircularReversed(routeVal) {
   return v === true || v === 1 || ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
 }
 
+// ディズニーリゾートラインのような「片方向のみ運行」の環状線に対応。
+// route シートの「環状方向限定」列に「外回りのみ」または「内回りのみ」と入れておくと、
+// 方面を聞かずに自動でその方向として扱う（null＝両方向あり、通常通り方面を聞く）
+function getCircularFixedDirection(routeVal) {
+  const row = (allrouteData || []).find(r => r["路線"] === routeVal);
+  if (!row) return null;
+  const v = String(row["環状方向限定"] || "").trim();
+  if (v.includes("外回り")) return "外回り";
+  if (v.includes("内回り")) return "内回り";
+  return null;
+}
+
 // 環状線で「外回り／内回り」を選ぶ時、実際にどっちへ行くか分かるよう隣の駅名を添える
 function circularNeighborLabel(routeVal, boardingStation, wantOuter) {
   const rows = (allstationData || []).filter(r => r["路線"] === routeVal).map(r => r["駅名"]).filter(n => !isViaEntry(n));
@@ -843,7 +856,13 @@ function startStationPopupFlow() {
   // 環状線（山手線・大阪環状線など）は「両端」という概念が無いので、
   // 内回り／外回りの2択で方面を選ぶ専用のフローに分ける
   if (isCircularRoute(routeVal)) {
-    showCircularDirectionPopup(routeVal, boardingStation);
+    const fixedDir = getCircularFixedDirection(routeVal);
+    if (fixedDir) {
+      // ディズニーリゾートラインのような片方向のみの路線は、方面を聞かず自動で確定させる
+      loadAndShowHistoryPopup(routeVal, boardingStation, fixedDir === "外回り" ? "__outer__" : "__inner__");
+    } else {
+      showCircularDirectionPopup(routeVal, boardingStation);
+    }
     return;
   }
 
@@ -1273,8 +1292,9 @@ function openDescentPopup(prev) {
   const chain = []; // [{ junction, nextRoute }, ...]
   let currentRoute = prev.route;
   let legRefStation = prev.station; // 今の路線に入ってきた側の基準駅（方向判定に使う）
-  let circularDir = null; // 最初の路線が環状線の場合の内回り／外回り
-  let mode = isCircularRoute(prev.route) ? "circularDir" : "station"; // "circularDir" | "station" | "junction" | "route"
+  const circularFixedDir = isCircularRoute(prev.route) ? getCircularFixedDirection(prev.route) : null;
+  let circularDir = circularFixedDir; // 片方向のみの路線は自動確定、それ以外は選択後にセット
+  let mode = (isCircularRoute(prev.route) && !circularFixedDir) ? "circularDir" : "station"; // "circularDir" | "station" | "junction" | "route"
   let submitting = false;
 
   function breadcrumbHTML() {
@@ -1367,11 +1387,6 @@ function openDescentPopup(prev) {
         ? `↑${currentRoute}のどこで降りましたか？`
         : "↑この乗車、どこで降りましたか？";
       items = buildStationItems(currentRoute);
-      items.push({
-        label: "🔀 別路線に直通する",
-        extraClass: "descent-transfer-btn",
-        onClick: () => { mode = "junction"; render(); }
-      });
     } else if (mode === "junction") {
       promptText = `↑${currentRoute}のどの駅で乗り換え・直通しますか？`;
       items = stationNamesFor(currentRoute)
@@ -1817,3 +1832,5 @@ async function applyAdminStation(areaVal, typeVal, countryVal, routeVal, station
   // 「最寄り駅から選択」経由の時と同じく、続けて方面・履歴ポップアップを開く
   startStationPopupFlow();
 }
+
+
