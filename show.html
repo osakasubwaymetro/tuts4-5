@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.9.2 -->
+<!-- version: 1.9.3 -->
+<!-- 1.9.3: 環状線のvia_接続駅探索で、方向の解釈が逆だったバグを修正
+           （forward方向に進む場合、via_の直前の駅はbackward側にある） -->
 <!-- 1.9.2: 環状線でvia_の接続駅を探す時、直線用の判定がループでは通用しないバグを修正。
            内回り／外回りの向きをそのまま使って接続駅を探すように変更 -->
 <!-- 1.9.1: routeシートの「環状反転」列に対応。内回り／外回りのボタンに「（隣の駅）方面」の
@@ -585,7 +587,7 @@ function openDescentModal(row) {
         if (circular && circularDir) {
           const wantsOuter = circularDir === "外回り";
           const goForward = reversed ? !wantsOuter : wantsOuter;
-          neighbor = goForward ? (tryForward() || tryBackward()) : (tryBackward() || tryForward());
+          neighbor = goForward ? (tryBackward() || tryForward()) : (tryForward() || tryBackward());
         } else if (refRawIdx !== -1) {
           neighbor = refRawIdx > rawIdx ? (tryForward() || tryBackward()) : (tryBackward() || tryForward());
         } else {
