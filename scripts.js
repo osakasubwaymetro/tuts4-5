@@ -1,8 +1,6 @@
-// version: 1.16.1
-// 1.16.1: 環状線の場合、降車駅を記録する時に「内回り／外回り」も一緒に聞くように変更。
-//         過去の投稿にも遡って正確な方向を記録できる（[環状:外回り]のようなタグとして
-//         降車駅欄に保存）。統計側はこの明示的な方向があればそちらを優先し、無ければ
-//         今まで通り短い方の弧を推測して使う
+// version: 1.16.2
+// 1.16.2: routeシートに「環状反転」列を追加し、路線ごとに外回り／内回りの向きを反転できるように
+//         対応。内回り／外回りを選ぶ時、実際にどっちへ行くか分かるよう「（隣の駅）方面」を表示
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -810,6 +808,26 @@ function isCircularRoute(routeVal) {
   return v === true || v === 1 || ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
 }
 
+// route シートの「環状反転」がTRUEなら、内部の「外回り＝インデックス増加方向」の決め打ちを逆にする
+function isCircularReversed(routeVal) {
+  const row = (allrouteData || []).find(r => r["路線"] === routeVal);
+  if (!row) return false;
+  const v = row["環状反転"];
+  return v === true || v === 1 || ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
+}
+
+// 環状線で「外回り／内回り」を選ぶ時、実際にどっちへ行くか分かるよう隣の駅名を添える
+function circularNeighborLabel(routeVal, boardingStation, wantOuter) {
+  const rows = (allstationData || []).filter(r => r["路線"] === routeVal).map(r => r["駅名"]).filter(n => !isViaEntry(n));
+  const idx = rows.indexOf(boardingStation);
+  if (idx === -1 || rows.length < 2) return "";
+  const reversed = isCircularReversed(routeVal);
+  const goForward = reversed ? !wantOuter : wantOuter;
+  const total = rows.length;
+  const neighborIdx = goForward ? (idx + 1) % total : (idx - 1 + total) % total;
+  return rows[neighborIdx] || "";
+}
+
 function startStationPopupFlow() {
   const routeVal = document.getElementById("route").value;
   const stationSelects = document.querySelectorAll(".station-select");
@@ -866,10 +884,11 @@ function showCircularDirectionPopup(routeVal, boardingStation) {
   const list = document.getElementById("historyModalList");
   list.innerHTML = "";
 
-  [["外回り", "__outer__"], ["内回り", "__inner__"]].forEach(([label, dirVal]) => {
+  [["外回り", "__outer__", true], ["内回り", "__inner__", false]].forEach(([label, dirVal, wantOuter]) => {
+    const neighbor = circularNeighborLabel(routeVal, boardingStation, wantOuter);
     const item = document.createElement("button");
     item.type = "button";
-    item.textContent = label;
+    item.textContent = neighbor ? `${label}（${neighbor}方面）` : label;
     item.onclick = () => loadAndShowHistoryPopup(routeVal, boardingStation, dirVal);
     list.appendChild(item);
   });
@@ -1325,10 +1344,13 @@ function openDescentPopup(prev) {
 
     if (mode === "circularDir") {
       promptText = `↑${currentRoute}は環状線です。この乗車はどちら回りでしたか？`;
-      items = ["外回り", "内回り"].map(label => ({
-        label,
-        onClick: () => { circularDir = label; mode = "station"; render(); }
-      }));
+      items = [["外回り", true], ["内回り", false]].map(([label, wantOuter]) => {
+        const neighbor = circularNeighborLabel(currentRoute, prev.station, wantOuter);
+        return {
+          label: neighbor ? `${label}（${neighbor}方面）` : label,
+          onClick: () => { circularDir = label; mode = "station"; render(); }
+        };
+      });
     } else if (mode === "station") {
       promptText = chain.length
         ? `↑${currentRoute}のどこで降りましたか？`
@@ -1772,5 +1794,3 @@ async function applyAdminStation(areaVal, typeVal, countryVal, routeVal, station
   // 「最寄り駅から選択」経由の時と同じく、続けて方面・履歴ポップアップを開く
   startStationPopupFlow();
 }
-
-
