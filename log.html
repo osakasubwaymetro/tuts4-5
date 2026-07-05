@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="ja">
-<!-- version: 1.1.0 -->
+<!-- version: 1.2.0 -->
+<!-- 1.2.0: checkLogin()等の重複定義をやめ、logs.js（共通ファイル）を読み込む形に統一 -->
 <!-- 1.1.0: loginVersionマーカーを必須化（Google/運営ログイン方式への切り替えに伴う強制再ログイン） -->
 <head>
 <meta charset="UTF-8">
@@ -289,41 +290,9 @@
 </main>
 
 <script src="nav.js"></script>
+<script src="logs.js"></script>
 <script>initNav("アクセスログ");</script>
 <script>
-// ===== logs.js (inlined) =====
-const GAS_LOG_URL = "https://script.google.com/macros/s/AKfycbzly7vRlMrEqI0D156pHJMaAlcYmiQM98n0N9rKpfDt_UKFQsA5kcGyHjpQx5uwJyD3/exec";
-const VALID_KEYS = ["00002025"];
-
-const REQUIRED_LOGIN_VERSION = "2";
-function checkLogin() {
-  const username = localStorage.getItem("username");
-  const accessKey = localStorage.getItem("accessKey");
-  const loginVersion = localStorage.getItem("loginVersion");
-  if (!username || !VALID_KEYS.includes(accessKey) || loginVersion !== REQUIRED_LOGIN_VERSION) {
-    alert("ログインが必要です。");
-    window.location.href = "login.html";
-    return null;
-  }
-  return username;
-}
-
-function logAction(action, details = "") {
-  const u = localStorage.getItem("username") || "未ログイン";
-  fetch(GAS_LOG_URL, {
-    method: "POST", mode: "no-cors",
-    body: JSON.stringify({ action, username: u, details, timestamp: new Date().toISOString(), userAgent: navigator.userAgent })
-  }).catch(() => {});
-}
-
-function logout() {
-  logAction("logout", `${localStorage.getItem("username")} がログアウトしました`);
-  localStorage.removeItem("username");
-  localStorage.removeItem("accessKey");
-  alert("ログアウトしました。");
-  window.location.href = "login.html";
-}
-
 document.addEventListener("DOMContentLoaded", () => {
   logAction("view", "ページ閲覧: log.html");
 });

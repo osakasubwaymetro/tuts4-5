@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="ja">
-<!-- version: 1.1.0 -->
+<!-- version: 1.3.0 -->
+<!-- 1.3.0: 「Googleアカウントを変更」機能を追加。checkLogin()等の重複定義をやめ、
+           logs.js（共通ファイル）を読み込む形に統一 -->
 <!-- 1.1.0: loginVersionマーカーを必須化（Google/運営ログイン方式への切り替えに伴う強制再ログイン） -->
 <head>
 <meta charset="UTF-8">
@@ -207,6 +209,13 @@
 <body>
 
 <main>
+  <h2>🔐 アカウント</h2>
+  <p class="section-desc">ログイン中のユーザー名に、別のGoogleアカウントを紐付け直すことができます。</p>
+  <div id="googleAccountArea" style="margin-bottom:30px;">
+    <div id="googleRelinkBtn"></div>
+    <p id="relinkMsg" class="section-desc"></p>
+  </div>
+
   <h2>⚡ 入力ショートカット</h2>
   <p class="section-desc">よく使う入力内容をショートカットとして登録すると、投稿フォームでワンタップで入力できます。</p>
 
@@ -274,48 +283,64 @@
 
 <div class="save-toast" id="saveToast"></div>
 
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="nav.js"></script>
+<script src="logs.js"></script>
 <script>initNav("設定");</script>
 <script>
-// ===== logs.js (inlined) =====
-const GAS_LOG_URL = "https://script.google.com/macros/s/AKfycbzly7vRlMrEqI0D156pHJMaAlcYmiQM98n0N9rKpfDt_UKFQsA5kcGyHjpQx5uwJyD3/exec";
-const VALID_KEYS = ["00002025"];
-
-const REQUIRED_LOGIN_VERSION = "2";
-function checkLogin() {
-  const username = localStorage.getItem("username");
-  const accessKey = localStorage.getItem("accessKey");
-  const loginVersion = localStorage.getItem("loginVersion");
-  if (!username || !VALID_KEYS.includes(accessKey) || loginVersion !== REQUIRED_LOGIN_VERSION) {
-    alert("ログインが必要です。");
-    window.location.href = "login.html";
-    return null;
-  }
-  return username;
-}
-
-function logAction(action, details = "") {
-  const username = localStorage.getItem("username") || "未ログイン";
-  fetch(GAS_LOG_URL, {
-    method: "POST", mode: "no-cors",
-    body: JSON.stringify({ action, username, details, timestamp: new Date().toISOString(), userAgent: navigator.userAgent })
-  }).catch(err => console.error("ログ送信エラー:", err));
-}
-
-function logout() {
-  logAction("logout", `${localStorage.getItem("username")} がログアウトしました`);
-  localStorage.removeItem("username");
-  localStorage.removeItem("accessKey");
-  alert("ログアウトしました。");
-  window.location.href = "login.html";
-}
-
 document.addEventListener("DOMContentLoaded", () => {
   logAction("view", `ページ閲覧: settings.html`);
 });
 </script>
 <script>
 checkLogin();
+
+// ===== Googleアカウントの変更 =====
+const GOOGLE_CLIENT_ID = "63849227908-th525fl0grpko8l0m78m98rbp03fnni7.apps.googleusercontent.com";
+const ACCOUNTS_URL = "https://script.google.com/macros/s/AKfycbzwk-HQDX1CzntauLlQQxstoTkrfjrnfu8yhzjyei-qZbK8JDWppRtHk-SS87QfO8gm/exec";
+
+window.addEventListener("load", () => {
+  if (window.google && google.accounts) {
+    google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: handleRelink
+    });
+    google.accounts.id.renderButton(
+      document.getElementById("googleRelinkBtn"),
+      { theme: "outline", size: "medium", text: "continue_with", width: 260 }
+    );
+  }
+});
+
+async function handleRelink(response) {
+  const relinkMsg = document.getElementById("relinkMsg");
+  relinkMsg.style.color = "#666";
+  relinkMsg.textContent = "確認中...";
+
+  const currentUsername = localStorage.getItem("username");
+
+  try {
+    const res = await fetch(ACCOUNTS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: "relink", idToken: response.credential, username: currentUsername })
+    });
+    const data = await res.json();
+
+    if (data.result !== "success") {
+      relinkMsg.style.color = "red";
+      relinkMsg.textContent = "変更に失敗しました: " + (data.message || "");
+      return;
+    }
+
+    relinkMsg.style.color = "green";
+    relinkMsg.textContent = "このGoogleアカウントを紐付けました。次回からこちらでログインできます。";
+  } catch (e) {
+    relinkMsg.style.color = "red";
+    relinkMsg.textContent = "通信エラーが発生しました。";
+    console.error(e);
+  }
+}
 
 // ===== ショートカットの読み書き（localStorage使用） =====
 const STORAGE_KEY = "tuts4_shortcuts";
