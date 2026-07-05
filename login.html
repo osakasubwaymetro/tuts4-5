@@ -4,6 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ログイン | tuts4</title>
+<!-- version: 2.0.0 -->
+<!-- 2.0.0: Googleログインを追加。初回のみ「今までのユーザー名」を紐付けることで、
+           過去データ（ユーザー名ベース）をそのまま引き継げるようにした。
+           運営アカウントは従来通りのユーザー名＋アクセスキー方式を別枠で維持 -->
+<!-- 1.0.0: ユーザー名＋共通アクセスキーのみのログイン -->
 <style>
   body {
     font-family: "Hiragino Sans", "Segoe UI", sans-serif;
@@ -13,7 +18,9 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    height: 100vh;
+    min-height: 100vh;
+    padding: 20px 0;
+    box-sizing: border-box;
   }
 
   main {
@@ -38,6 +45,7 @@
     border: 1px solid #ccc;
     border-radius: 6px;
     font-size: 14px;
+    box-sizing: border-box;
   }
 
   button {
@@ -60,22 +68,199 @@
     font-size: 13px;
     color: #666;
   }
+
+  #googleSignInDiv {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 14px;
+  }
+
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #aaa;
+    font-size: 12px;
+    margin: 18px 0;
+  }
+  .divider::before, .divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: #e0e0e0;
+  }
+
+  .admin-toggle {
+    background: none;
+    color: #888;
+    text-decoration: underline;
+    font-size: 12px;
+    padding: 4px;
+    margin-top: 10px;
+  }
+  .admin-toggle:hover { background: none; color: #E60012; }
+
+  #adminForm { display: none; }
+
+  #linkForm { display: none; }
 </style>
 </head>
 <body>
 
   <main>
     <h2>🔐 ログイン</h2>
-    <input type="text" id="username" placeholder="ユーザー名">
-    <input type="password" id="accessKey" placeholder="アクセスキー（8桁）">
-    <button onclick="login()">ログイン</button>
-    <p id="msg"></p>
+
+    <!-- Googleログイン（メイン） -->
+    <div id="googleLoginArea">
+      <div id="googleSignInDiv"></div>
+      <p id="googleMsg"></p>
+    </div>
+
+    <!-- 初回のみ：既存ユーザー名との紐付け -->
+    <div id="linkForm">
+      <p style="color:#004C97; font-weight:bold;">初めてのログインですね！<br>今までお使いのユーザー名を入力してください。</p>
+      <input type="text" id="linkUsername" placeholder="今までのユーザー名">
+      <button onclick="submitLink()">このユーザー名で紐付ける</button>
+      <p id="linkMsg"></p>
+    </div>
+
+    <div class="divider">または</div>
+    <button type="button" class="admin-toggle" onclick="toggleAdminForm()">運営アカウントでログイン</button>
+
+    <!-- 運営ログイン（従来方式） -->
+    <div id="adminForm">
+      <input type="text" id="username" placeholder="ユーザー名">
+      <input type="password" id="accessKey" placeholder="アクセスキー（8桁）">
+      <button onclick="login()">ログイン</button>
+      <p id="msg"></p>
+    </div>
   </main>
 
+  <!-- Google Identity Services -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script>
+// ▼Google Cloud Consoleで発行したOAuthクライアントIDに書き換えてください
+const GOOGLE_CLIENT_ID = "63849227908-th525fl0grpko8l0m78m98rbp03fnni7.apps.googleusercontent.com";
+// ▼accounts_gas.gs をデプロイしたURLに書き換えてください
+const ACCOUNTS_URL = "https://script.google.com/macros/s/AKfycbzwk-HQDX1CzntauLlQQxstoTkrfjrnfu8yhzjyei-qZbK8JDWppRtHk-SS87QfO8gm/exec";
+
 const GAS_LOG_URL = "https://script.google.com/macros/s/AKfycbwDjgFbOxG6K22TdgbVZ1FJvEtpjZPAI1KArnvLgitFH3lS7yGb_JaQ-LpcgaFTiac7/exec";
 const VALID_KEYS = ["00002025"];
 
+let pendingIdToken = null;
+
+window.onload = function () {
+  if (window.google && google.accounts) {
+    google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: handleGoogleLogin
+    });
+    google.accounts.id.renderButton(
+      document.getElementById("googleSignInDiv"),
+      { theme: "outline", size: "large", width: 280 }
+    );
+  }
+};
+
+async function handleGoogleLogin(response) {
+  const googleMsg = document.getElementById("googleMsg");
+  googleMsg.style.color = "#666";
+  googleMsg.textContent = "確認中...";
+
+  pendingIdToken = response.credential;
+
+  try {
+    const res = await fetch(ACCOUNTS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: "lookup", idToken: pendingIdToken })
+    });
+    const data = await res.json();
+
+    if (data.result !== "success") {
+      googleMsg.style.color = "red";
+      googleMsg.textContent = "確認に失敗しました: " + (data.message || "");
+      return;
+    }
+
+    if (data.linked) {
+      // 既に紐付け済み → そのユーザー名でログイン完了
+      finishLogin(data.username);
+    } else {
+      // 初回：既存のユーザー名との紐付けを求める
+      document.getElementById("googleLoginArea").style.display = "none";
+      document.getElementById("linkForm").style.display = "block";
+    }
+  } catch (e) {
+    googleMsg.style.color = "red";
+    googleMsg.textContent = "通信エラーが発生しました。";
+    console.error(e);
+  }
+}
+
+async function submitLink() {
+  const usernameInput = document.getElementById("linkUsername").value.trim();
+  const linkMsg = document.getElementById("linkMsg");
+
+  if (!usernameInput) {
+    linkMsg.style.color = "red";
+    linkMsg.textContent = "ユーザー名を入力してください。";
+    return;
+  }
+  if (!pendingIdToken) {
+    linkMsg.style.color = "red";
+    linkMsg.textContent = "Googleログインをやり直してください。";
+    return;
+  }
+
+  linkMsg.style.color = "#666";
+  linkMsg.textContent = "登録中...";
+
+  try {
+    const res = await fetch(ACCOUNTS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: "link", idToken: pendingIdToken, username: usernameInput })
+    });
+    const data = await res.json();
+
+    if (data.result !== "success") {
+      linkMsg.style.color = "red";
+      linkMsg.textContent = "登録に失敗しました: " + (data.message || "");
+      return;
+    }
+
+    finishLogin(data.username);
+  } catch (e) {
+    linkMsg.style.color = "red";
+    linkMsg.textContent = "通信エラーが発生しました。";
+    console.error(e);
+  }
+}
+
+function finishLogin(usernameValue) {
+  localStorage.setItem("username", usernameValue);
+  localStorage.setItem("accessKey", VALID_KEYS[0]); // 既存機能との互換のため設定
+
+  fetch(GAS_LOG_URL, {
+    method: "POST",
+    body: JSON.stringify({ action: "login", username: usernameValue, details: "Googleログイン成功" }),
+  }).catch(() => {});
+
+  const googleMsg = document.getElementById("googleMsg");
+  const linkMsg = document.getElementById("linkMsg");
+  if (googleMsg) { googleMsg.style.color = "green"; googleMsg.textContent = `ログイン成功！（${usernameValue}）`; }
+  if (linkMsg) { linkMsg.style.color = "green"; linkMsg.textContent = `ログイン成功！（${usernameValue}）`; }
+
+  setTimeout(() => window.location.href = "index.html", 800);
+}
+
+function toggleAdminForm() {
+  const form = document.getElementById("adminForm");
+  form.style.display = form.style.display === "block" ? "none" : "block";
+}
+
+// ===== 運営ログイン（従来方式） =====
 function login() {
   const username = document.getElementById("username").value.trim();
   const key = document.getElementById("accessKey").value.trim();
@@ -91,15 +276,14 @@ function login() {
     localStorage.setItem("username", username);
     localStorage.setItem("accessKey", key);
 
-    // ✅ ログ送信
     fetch(GAS_LOG_URL, {
       method: "POST",
       body: JSON.stringify({
         action: "login",
         username: username,
-        details: "ログイン成功"
+        details: "運営ログイン成功"
       }),
-    });
+    }).catch(() => {});
 
     msg.style.color = "green";
     msg.textContent = "ログイン成功！";
