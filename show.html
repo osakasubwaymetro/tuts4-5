@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.8.7 -->
+<!-- version: 1.9.0 -->
+<!-- 1.9.0: 環状線の場合、降車駅を記録する時に「内回り／外回り」も一緒に聞くように変更。
+           過去の投稿にも遡って正確な方向を記録できる（route取得を追加） -->
 <!-- 1.8.7: 位置ベースのvia_解決で方向判定が抜けていたバグを修正（常に後方優先になってしまい、
            敦賀発で近江塩津ではなく余呉が出ていた）。基準駅の位置を見て正しい方向を優先するように復活 -->
 <!-- 1.8.6: 降車駅ポップアップのvia_解決を、名前検索ではなくシート上の実際の位置から
@@ -293,6 +295,14 @@ localStorage.removeItem("tuts4_show_cache");
 let allData = [];
 let stationMaster = [];
 let myTransfers = [];
+let routeMaster = [];
+
+function isCircularRoute(routeVal) {
+  const row = (routeMaster || []).find(r => r["路線"] === routeVal);
+  if (!row) return false;
+  const v = row["環状"];
+  return v === true || v === 1 || ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
+}
 
 function timeKeyMatch(a, b) {
   if (!a || !b) return false;
@@ -336,24 +346,29 @@ function getPendingTransferFor(uname, rideTime) {
 
 // スプシに保存されてる生の値（"接続駅@次路線|接続駅@次路線|最終降車駅"）を解析する
 function parseDescentChain(raw) {
-  const s = typeof raw === "string" ? raw : "";
-  if (!s.includes("|") && !s.includes("@")) return { hops: [], finalStation: s };
+  let s = typeof raw === "string" ? raw : "";
+  let circularDir = null;
+  const m = s.match(/^\[環状:(外回り|内回り)\](.*)$/);
+  if (m) { circularDir = m[1]; s = m[2]; }
+
+  if (!s.includes("|") && !s.includes("@")) return { hops: [], finalStation: s, circularDir };
   const parts = s.split("|");
   const finalStation = parts.pop();
   const hops = parts.map(p => {
     const [junction, nextRoute] = p.split("@");
     return { junction, nextRoute };
   }).filter(h => h.junction && h.nextRoute);
-  return { hops, finalStation };
+  return { hops, finalStation, circularDir };
 }
 
 // 表示専用の整形：直通が絡む場合は「路線1・路線2直通 降車駅」のようにまとめる
 // （スプレッドシート側の生データはそのまま。見た目だけ変える）
 function formatAlightDisplay(raw) {
   const chain = parseDescentChain(raw);
-  if (!chain.hops.length) return raw; // 直通なし・単純な駅名ならそのまま
+  const dirPrefix = chain.circularDir ? `【${chain.circularDir}】` : "";
+  if (!chain.hops.length) return dirPrefix + chain.finalStation; // 直通なし・単純な駅名ならそのまま
   const routes = chain.hops.map(h => h.nextRoute);
-  return `${routes.join("・")}直通 ${chain.finalStation}`;
+  return `${dirPrefix}${routes.join("・")}直通 ${chain.finalStation}`;
 }
 
 // transfers用GASへの送信は no-cors をやめて、実際に成否を確認できる形で送る
@@ -374,11 +389,15 @@ function stripRideTimePrefix(v) {
   return typeof v === "string" && v.indexOf(RIDE_TIME_PREFIX) === 0 ? v.slice(RIDE_TIME_PREFIX.length) : v;
 }
 
+const ROUTE_URL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
+
 Promise.all([
   fetch(STATION_URL).then(r => r.json()).catch(() => []),
-  fetch(TRANSFERS_READ_URL).then(r => r.json()).catch(() => [])
-]).then(([stationData, transfersData]) => {
+  fetch(TRANSFERS_READ_URL).then(r => r.json()).catch(() => []),
+  fetch(ROUTE_URL).then(r => r.json()).catch(() => [])
+]).then(([stationData, transfersData, routeData]) => {
   stationMaster = stationData;
+  routeMaster = routeData;
   myTransfers = transfersData
     .filter(t => String(t["ユーザー名"]) === String(username))
     .map(t => ({ ...t, "元の乗車時刻": stripRideTimePrefix(t["元の乗車時刻"]) }));
@@ -507,7 +526,8 @@ function openDescentModal(row) {
   const chain = []; // [{ junction, nextRoute }, ...]
   let currentRoute = row["路線"];
   let legRefStation = row["乗車駅"]; // 今の路線に入ってきた側の基準駅（方向判定に使う）
-  let mode = "station"; // "station" | "junction" | "route"
+  let circularDir = null; // 最初の路線が環状線の場合の内回り／外回り
+  let mode = isCircularRoute(row["路線"]) ? "circularDir" : "station"; // "circularDir" | "station" | "junction" | "route"
   let submitting = false;
 
   function breadcrumbHTML() {
@@ -576,7 +596,13 @@ function openDescentModal(row) {
     let promptText = "";
     let items = [];
 
-    if (mode === "station") {
+    if (mode === "circularDir") {
+      promptText = `↑${currentRoute}は環状線です。この乗車はどちら回りでしたか？`;
+      items = ["外回り", "内回り"].map(label => ({
+        label,
+        onClick: () => { circularDir = label; mode = "station"; render(); }
+      }));
+    } else if (mode === "station") {
       items = buildStationItems(currentRoute);
       items.push({
         label: "🔀 別路線に直通する",
@@ -639,6 +665,9 @@ function openDescentModal(row) {
     let alightStation = finalStation;
     if (chain.length) {
       alightStation = chain.map(h => `${h.junction}@${h.nextRoute}`).join("|") + "|" + finalStation;
+    }
+    if (circularDir) {
+      alightStation = `[環状:${circularDir}]${alightStation}`;
     }
 
     submitting = true;
