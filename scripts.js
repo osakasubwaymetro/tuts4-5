@@ -1,7 +1,7 @@
-// version: 1.15.3
-// 1.15.3: 位置ベースのvia_解決で方向判定が抜けていたバグを修正（常に後方優先になってしまい、
-//         敦賀発で近江塩津ではなく余呉が出ていた）。基準駅（乗車駅／前の乗換駅）がvia_より
-//         前か後ろかを見て、正しい方向を優先するように復活させた（東西線パターンとも両立）
+// version: 1.16.0
+// 1.16.0: 環状線（山手線・大阪環状線など）に対応。routeシートに「環状」列（TRUE）があると、
+//         方面選択が「両端駅」ではなく「内回り／外回り」の2択になり、過去の乗車記録も
+//         環状（一周する方向）を考慮して絞り込むように変更
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -802,6 +802,13 @@ async function applyGeoStation(match) {
       （ループ線・支線・直通運転先の駅は正しく判定できない場合がある）
 ---------------------------------------- */
 
+function isCircularRoute(routeVal) {
+  const row = (allrouteData || []).find(r => r["路線"] === routeVal);
+  if (!row) return false;
+  const v = row["環状"];
+  return v === true || v === 1 || ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
+}
+
 function startStationPopupFlow() {
   const routeVal = document.getElementById("route").value;
   const stationSelects = document.querySelectorAll(".station-select");
@@ -813,6 +820,13 @@ function startStationPopupFlow() {
 
   const stationsOnRoute = (allstationData || []).filter(r => r["路線"] === routeVal);
   if (stationsOnRoute.length < 2) return;
+
+  // 環状線（山手線・大阪環状線など）は「両端」という概念が無いので、
+  // 内回り／外回りの2択で方面を選ぶ専用のフローに分ける
+  if (isCircularRoute(routeVal)) {
+    showCircularDirectionPopup(routeVal, boardingStation);
+    return;
+  }
 
   const first = stationsOnRoute[0]["駅名"];
   const last = stationsOnRoute[stationsOnRoute.length - 1]["駅名"];
@@ -843,6 +857,23 @@ function startStationPopupFlow() {
   } else {
     showDirectionChoicePopup(routeVal, boardingStation, termini);
   }
+}
+
+// 環状線用：内回り／外回りの2択を出す（"__inner__" / "__outer__" という特別なdirValを使う）
+function showCircularDirectionPopup(routeVal, boardingStation) {
+  setModalTitle("方面を選択（環状線）");
+  const list = document.getElementById("historyModalList");
+  list.innerHTML = "";
+
+  [["外回り", "__outer__"], ["内回り", "__inner__"]].forEach(([label, dirVal]) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.textContent = label;
+    item.onclick = () => loadAndShowHistoryPopup(routeVal, boardingStation, dirVal);
+    list.appendChild(item);
+  });
+
+  document.getElementById("historyModalOverlay").classList.add("show");
 }
 
 function showDirectionChoicePopup(routeVal, boardingStation, termini) {
@@ -974,8 +1005,19 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
 
   const stationsOnRoute = (allstationData || []).filter(r => r["路線"] === routeVal);
   const indexOf = name => stationsOnRoute.findIndex(r => r["駅名"] === name);
-  const dirIndex = indexOf(dirVal);
+  const isCircular = dirVal === "__outer__" || dirVal === "__inner__";
+  const dirIndex = isCircular ? null : indexOf(dirVal);
   const boardingIndex = indexOf(boardingStation);
+  const totalStations = stationsOnRoute.length;
+
+  // 環状線用：ボーディング駅から見て「外回り方向」に何駅で着くか（乗り換え無しの短い方を採用）
+  function circularMatchesDirection(bIndex) {
+    if (bIndex === -1 || boardingIndex === -1 || totalStations < 2) return true;
+    const forwardDist = (bIndex - boardingIndex + totalStations) % totalStations;
+    const backwardDist = totalStations - forwardDist;
+    const isOuterForBound = forwardDist <= backwardDist; // 短い方を「外回り」寄りとみなす簡易判定
+    return dirVal === "__outer__" ? isOuterForBound : !isOuterForBound;
+  }
 
   // route シートに「ダイヤ改正日」が入っていれば、それ以降の記録だけを対象にする
   const routeRow = (allrouteData || []).find(r => r["路線"] === routeVal);
@@ -1007,7 +1049,9 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
         // 行先が方面判定できる（駅リストにある）場合のみ方向でも絞り込む。
         // 判定できない場合（直通運転先など）はとりあえず候補に含める
         let matchesDirection = true;
-        if (bIndex !== -1 && boardingIndex !== -1) {
+        if (isCircular) {
+          matchesDirection = circularMatchesDirection(bIndex);
+        } else if (bIndex !== -1 && boardingIndex !== -1) {
           matchesDirection = (dirIndex > boardingIndex) ? (bIndex > boardingIndex) : (bIndex < boardingIndex);
         }
 
