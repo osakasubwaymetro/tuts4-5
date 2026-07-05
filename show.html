@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.9.0 -->
+<!-- version: 1.9.1 -->
+<!-- 1.9.1: routeシートの「環状反転」列に対応。内回り／外回りのボタンに「（隣の駅）方面」の
+           ヒントを表示するように変更 -->
 <!-- 1.9.0: 環状線の場合、降車駅を記録する時に「内回り／外回り」も一緒に聞くように変更。
            過去の投稿にも遡って正確な方向を記録できる（route取得を追加） -->
 <!-- 1.8.7: 位置ベースのvia_解決で方向判定が抜けていたバグを修正（常に後方優先になってしまい、
@@ -304,6 +306,24 @@ function isCircularRoute(routeVal) {
   return v === true || v === 1 || ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
 }
 
+function isCircularReversed(routeVal) {
+  const row = (routeMaster || []).find(r => r["路線"] === routeVal);
+  if (!row) return false;
+  const v = row["環状反転"];
+  return v === true || v === 1 || ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
+}
+
+function circularNeighborLabel(routeVal, boardingStation, wantOuter) {
+  const rows = stationMaster.filter(r => r["路線"] === routeVal).map(r => r["駅名"]).filter(n => !isViaEntry(n));
+  const idx = rows.indexOf(boardingStation);
+  if (idx === -1 || rows.length < 2) return "";
+  const reversed = isCircularReversed(routeVal);
+  const goForward = reversed ? !wantOuter : wantOuter;
+  const total = rows.length;
+  const neighborIdx = goForward ? (idx + 1) % total : (idx - 1 + total) % total;
+  return rows[neighborIdx] || "";
+}
+
 function timeKeyMatch(a, b) {
   if (!a || !b) return false;
   if (String(a) === String(b)) return true;
@@ -598,10 +618,13 @@ function openDescentModal(row) {
 
     if (mode === "circularDir") {
       promptText = `↑${currentRoute}は環状線です。この乗車はどちら回りでしたか？`;
-      items = ["外回り", "内回り"].map(label => ({
-        label,
-        onClick: () => { circularDir = label; mode = "station"; render(); }
-      }));
+      items = [["外回り", true], ["内回り", false]].map(([label, wantOuter]) => {
+        const neighbor = circularNeighborLabel(currentRoute, row["乗車駅"], wantOuter);
+        return {
+          label: neighbor ? `${label}（${neighbor}方面）` : label,
+          onClick: () => { circularDir = label; mode = "station"; render(); }
+        };
+      });
     } else if (mode === "station") {
       items = buildStationItems(currentRoute);
       items.push({
