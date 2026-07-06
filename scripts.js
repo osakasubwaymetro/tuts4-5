@@ -1,6 +1,6 @@
-// version: 1.18.0
-// 1.18.0: 車両検索機能を追加。numberシートの「各号車」列（スラッシュ区切りの各号車車番）を
-//         見て、今選んでいる路線の車両形式に絞りつつ、入力した車番を含む編成を一覧表示する
+// version: 1.18.1
+// 1.18.1: 各号車の車番を「スラッシュ区切りの1列」ではなく「1号車・2号車…と1セルずつ」の
+//         列構成で読み取るように変更（列名の末尾が「号車」のものを自動で拾って番号順に並べる）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -1857,6 +1857,14 @@ function openCarSearchPopup() {
   setTimeout(() => document.getElementById("carSearchInput")?.focus(), 100);
 }
 
+function getCarNumbers(r) {
+  const carKeys = Object.keys(r)
+    .filter(k => /号車$/.test(k))
+    .sort((a, b) => (parseInt(a) || 0) - (parseInt(b) || 0));
+  const cars = carKeys.map(k => String(r[k] || "").trim()).filter(Boolean);
+  return cars.length ? cars : [String(r["車番"] || "").trim()].filter(Boolean);
+}
+
 function runCarSearch() {
   const query = document.getElementById("carSearchInput").value.trim();
   const resultsDiv = document.getElementById("carSearchResults");
@@ -1872,7 +1880,7 @@ function runCarSearch() {
 
   const matches = (allnumberData || []).filter(r => {
     if (routeVal && !modelsOnRoute.has(r["車両形式"])) return false;
-    const cars = String(r["各号車"] || r["車番"] || "").split("/").map(s => s.trim()).filter(Boolean);
+    const cars = getCarNumbers(r);
     return cars.some(c => c.includes(query));
   });
 
@@ -1882,7 +1890,7 @@ function runCarSearch() {
   }
 
   resultsDiv.innerHTML = matches.map((r, i) => {
-    const cars = String(r["各号車"] || r["車番"] || "").split("/").map(s => s.trim()).filter(Boolean);
+    const cars = getCarNumbers(r);
     const chips = cars.map(c => `<span class="csr-car${c.includes(query) ? " highlight" : ""}">${c}</span>`).join("");
     return `
       <div class="car-search-result" data-i="${i}">
