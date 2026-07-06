@@ -1,7 +1,6 @@
-// version: 1.17.0
-// 1.17.0: ディズニーリゾートラインのような「片方向のみ運行」の環状線に対応。routeシートの
-//         「環状方向限定」列に「外回りのみ」／「内回りのみ」と入れておくと、方面を聞かず
-//         自動でその方向として扱う（乗車時の方面選択・降車駅記録どちらもスキップされる）
+// version: 1.18.0
+// 1.18.0: 車両検索機能を追加。numberシートの「各号車」列（スラッシュ区切りの各号車車番）を
+//         見て、今選んでいる路線の車両形式に絞りつつ、入力した車番を含む編成を一覧表示する
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -1831,6 +1830,85 @@ async function applyAdminStation(areaVal, typeVal, countryVal, routeVal, station
 
   // 「最寄り駅から選択」経由の時と同じく、続けて方面・履歴ポップアップを開く
   startStationPopupFlow();
+}
+
+
+/* ----------------------------------------
+   車両検索：入力した車番（各号車のいずれか）を含む編成を、今選んでいる路線に
+   走ってる車両形式に絞って検索し、一覧表示する
+---------------------------------------- */
+function openCarSearchPopup() {
+  setModalTitle("🔍 車両検索");
+  const list = document.getElementById("historyModalList");
+
+  list.innerHTML = `
+    <input type="text" id="carSearchInput" placeholder="車番を入力（部分一致）"
+      style="width:100%; padding:9px; border-radius:8px; border:1px solid #ccc; margin-bottom:10px; box-sizing:border-box;">
+    <button type="button" id="carSearchGoBtn" style="width:100%; margin-bottom:12px;">検索</button>
+    <div id="carSearchResults"></div>
+  `;
+
+  document.getElementById("carSearchGoBtn").onclick = runCarSearch;
+  document.getElementById("carSearchInput").addEventListener("keydown", e => {
+    if (e.key === "Enter") runCarSearch();
+  });
+
+  document.getElementById("historyModalOverlay").classList.add("show");
+  setTimeout(() => document.getElementById("carSearchInput")?.focus(), 100);
+}
+
+function runCarSearch() {
+  const query = document.getElementById("carSearchInput").value.trim();
+  const resultsDiv = document.getElementById("carSearchResults");
+  const routeVal = document.getElementById("route").value;
+
+  if (!query) {
+    resultsDiv.innerHTML = '<p class="modal-loading">車番を入力してください</p>';
+    return;
+  }
+
+  // 今選んでいる路線で使われている車両形式に絞る
+  const modelsOnRoute = new Set((allmodelData || []).filter(r => r["路線"] === routeVal).map(r => r["車両形式"]));
+
+  const matches = (allnumberData || []).filter(r => {
+    if (routeVal && !modelsOnRoute.has(r["車両形式"])) return false;
+    const cars = String(r["各号車"] || r["車番"] || "").split("/").map(s => s.trim()).filter(Boolean);
+    return cars.some(c => c.includes(query));
+  });
+
+  if (!matches.length) {
+    resultsDiv.innerHTML = '<p class="modal-loading">見つかりませんでした</p>';
+    return;
+  }
+
+  resultsDiv.innerHTML = matches.map((r, i) => {
+    const cars = String(r["各号車"] || r["車番"] || "").split("/").map(s => s.trim()).filter(Boolean);
+    const chips = cars.map(c => `<span class="csr-car${c.includes(query) ? " highlight" : ""}">${c}</span>`).join("");
+    return `
+      <div class="car-search-result" data-i="${i}">
+        <div class="csr-header">
+          <span>${r["車両形式"]}</span>
+          <span class="csr-number">${r["車番"]}編成</span>
+        </div>
+        <div class="csr-cars">${chips}</div>
+      </div>
+    `;
+  }).join("");
+
+  resultsDiv.querySelectorAll(".car-search-result").forEach((el, i) => {
+    el.onclick = () => {
+      const chosen = matches[i];
+      const modelSelect = document.getElementById("model");
+      modelSelect.value = chosen["車両形式"];
+      modelSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      setTimeout(() => {
+        const numberSelect = document.getElementById("number");
+        numberSelect.value = chosen["車番"];
+        numberSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      }, 300);
+      closeHistoryModal();
+    };
+  });
 }
 
 

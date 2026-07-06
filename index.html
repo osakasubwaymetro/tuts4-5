@@ -4,7 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.7.7 -->
+  <!-- version: 1.8.0 -->
+  <!-- 1.8.0: 車番プルダウンの右下に「🔍 車両検索」ボタンを追加。numberシートの「各号車」列を
+             使って、入力した車番を含む編成を今の路線の車両形式に絞って一覧表示できるように -->
   <!-- 1.7.7: 車両形式のみ選択・車番未選択で投稿した場合、編成全体（車番問わず）の乗車回数を
              表示するように対応。車両形式が無い投稿は、スタンプ帳を出さずそのまま降車ポップアップの
              確認へ進むように修正（今まで早期returnで確認自体が止まっていた） -->
@@ -477,6 +479,53 @@
       color: #17324f;
       margin-bottom: 10px;
     }
+    .secondary-btn {
+      background: #EEF4FF;
+      color: #004C97;
+      border: none;
+      border-radius: 8px;
+      padding: 7px 12px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .secondary-btn:hover { background: #d9e6fb; }
+    .car-search-result {
+      background: #fff;
+      border: 1.5px solid #E3E8F0;
+      border-radius: 10px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+      cursor: pointer;
+    }
+    .car-search-result:hover, .car-search-result:active {
+      border-color: #004C97;
+      background: #EEF4FF;
+    }
+    .csr-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      color: #666;
+      margin-bottom: 6px;
+    }
+    .csr-number { font-weight: bold; color: #004C97; }
+    .csr-cars {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .csr-car {
+      background: #f2f2f2;
+      color: #444;
+      border-radius: 6px;
+      padding: 3px 8px;
+      font-size: 12px;
+    }
+    .csr-car.highlight {
+      background: #FFF3CD;
+      color: #7a5b00;
+      font-weight: bold;
+    }
     .descent-breadcrumb {
       background: #FFF7E6;
       border: 1.5px solid #f0dca0;
@@ -584,6 +633,9 @@
 
   <label><h3>車番</h3></label>
   <select id="number"></select>
+  <div style="text-align:right; margin-top:6px;">
+    <button type="button" id="carSearchBtn" class="secondary-btn" onclick="openCarSearchPopup()">🔍 車両検索</button>
+  </div>
 
   <label><h3>メモ</h3></label>
   <small>プルダウンにない場合はここに入力してください</small>
