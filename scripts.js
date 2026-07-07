@@ -1,6 +1,6 @@
-// version: 1.18.1
-// 1.18.1: 各号車の車番を「スラッシュ区切りの1列」ではなく「1号車・2号車…と1セルずつ」の
-//         列構成で読み取るように変更（列名の末尾が「号車」のものを自動で拾って番号順に並べる）
+// version: 1.18.2
+// 1.18.2: 車両検索の結果表示で、車番がすでに「F」で終わってる/「編成」を含んでる場合は
+//         「編成」を二重に付けないように修正（例: 32656F編成 にならないように）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -1857,6 +1857,13 @@ function openCarSearchPopup() {
   setTimeout(() => document.getElementById("carSearchInput")?.focus(), 100);
 }
 
+function formatFormationLabel(num) {
+  const s = String(num || "").trim();
+  if (!s) return s;
+  if (s.includes("編成") || /F$/i.test(s)) return s; // 既に「F」や「編成」で終わってるなら重複させない
+  return `${s}編成`;
+}
+
 function getCarNumbers(r) {
   const carKeys = Object.keys(r)
     .filter(k => /号車$/.test(k))
@@ -1896,7 +1903,7 @@ function runCarSearch() {
       <div class="car-search-result" data-i="${i}">
         <div class="csr-header">
           <span>${r["車両形式"]}</span>
-          <span class="csr-number">${r["車番"]}編成</span>
+          <span class="csr-number">${formatFormationLabel(r["車番"])}</span>
         </div>
         <div class="csr-cars">${chips}</div>
       </div>
