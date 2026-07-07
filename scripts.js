@@ -1,6 +1,7 @@
-// version: 1.18.2
-// 1.18.2: 車両検索の結果表示で、車番がすでに「F」で終わってる/「編成」を含んでる場合は
-//         「編成」を二重に付けないように修正（例: 32656F編成 にならないように）
+// version: 1.18.3
+// 1.18.3: 車両検索の結果カードに編成のアイコン画像を表示。優先順位は①numberシートの「画像URL」
+//         （その編成専用）②modelシートの「画像URL」（形式の基本）③フォールバック画像。
+//         Google Driveの共有リンクは自動でサムネイル直リンクに変換。画像形式はpng/jpeg/webp等自由
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -1864,6 +1865,37 @@ function formatFormationLabel(num) {
   return `${s}編成`;
 }
 
+// 画像が無い時に表示するフォールバック画像
+const FALLBACK_TRAIN_IMAGE = "https://img.elesite-next.com/hatena.webp";
+
+// Google Driveの共有リンク（.../file/d/【ID】/view?... など）を、<img>で直接表示できる
+// サムネイルURLに変換する。既に直リンクや通常のhttp(s)画像URLならそのまま返す
+function toDisplayableImageUrl(url) {
+  const s = String(url || "").trim();
+  if (!s) return "";
+  // https://drive.google.com/file/d/【ID】/view?usp=sharing 形式
+  let m = s.match(/drive\.google\.com\/file\/d\/([^/]+)/);
+  if (m) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w300`;
+  // https://drive.google.com/open?id=【ID】 や ...?id=【ID】 形式
+  m = s.match(/[?&]id=([^&]+)/);
+  if (m && s.includes("drive.google.com")) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w300`;
+  return s; // それ以外のURLはそのまま
+}
+
+// 編成の画像URLを決める（優先順位：①その編成専用 ②形式の基本 ③フォールバック）
+function resolveTrainImage(numberRow) {
+  if (numberRow) {
+    const own = toDisplayableImageUrl(numberRow["画像URL"]);
+    if (own) return own;
+    const modelRow = (allmodelData || []).find(r => r["車両形式"] === numberRow["車両形式"]);
+    if (modelRow) {
+      const modelImg = toDisplayableImageUrl(modelRow["画像URL"]);
+      if (modelImg) return modelImg;
+    }
+  }
+  return FALLBACK_TRAIN_IMAGE;
+}
+
 function getCarNumbers(r) {
   const carKeys = Object.keys(r)
     .filter(k => /号車$/.test(k))
@@ -1901,11 +1933,17 @@ function runCarSearch() {
     const chips = cars.map(c => `<span class="csr-car${c.includes(query) ? " highlight" : ""}">${c}</span>`).join("");
     return `
       <div class="car-search-result" data-i="${i}">
-        <div class="csr-header">
-          <span>${r["車両形式"]}</span>
-          <span class="csr-number">${formatFormationLabel(r["車番"])}</span>
+        <div class="csr-main">
+          <img class="csr-icon" src="${resolveTrainImage(r)}" loading="lazy"
+               onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';">
+          <div class="csr-info">
+            <div class="csr-header">
+              <span>${r["車両形式"]}</span>
+              <span class="csr-number">${formatFormationLabel(r["車番"])}</span>
+            </div>
+            <div class="csr-cars">${chips}</div>
+          </div>
         </div>
-        <div class="csr-cars">${chips}</div>
       </div>
     `;
   }).join("");

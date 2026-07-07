@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.8.0 -->
+  <!-- version: 1.8.1 -->
+  <!-- 1.8.1: 車両検索の結果カードに編成アイコン画像を表示するためのスタイルを追加 -->
   <!-- 1.8.0: 車番プルダウンの右下に「🔍 車両検索」ボタンを追加。numberシートの「各号車」列を
              使って、入力した車番を含む編成を今の路線の車両形式に絞って一覧表示できるように -->
   <!-- 1.7.7: 車両形式のみ選択・車番未選択で投稿した場合、編成全体（車番問わず）の乗車回数を
@@ -508,6 +509,20 @@
       color: #666;
       margin-bottom: 6px;
     }
+    .csr-main {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .csr-icon {
+      width: 56px;
+      height: 56px;
+      object-fit: contain;
+      border-radius: 8px;
+      background: #f7f7f7;
+      flex-shrink: 0;
+    }
+    .csr-info { flex: 1; min-width: 0; }
     .csr-number { font-weight: bold; color: #004C97; }
     .csr-cars {
       display: flex;
