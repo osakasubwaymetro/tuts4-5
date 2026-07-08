@@ -1,7 +1,8 @@
-// version: 1.20.3
-// 1.20.3: 環状線でも直通先（この路線の駅リストには無い駅）の方向判定ができるように対応。
-//         今まで環状線の場合は判定不能→常にtrueのフォールバックで、どちらの方面を選んでも
-//         直通先の候補が両方に出てしまっていた（大阪環状線→加茂 等）
+// version: 1.21.0
+// 1.21.0: 直通先の判定を「1段先のvia_だけ見る」から「via_を再帰的に辿って、その先の
+//         via_のそのまた先も探す」方式に変更（東京の「5直」のような多段の直通運転にも対応）。
+//         大阪環状線→大和路線→(さらに先のvia_)のように、直通先自体に実駅が登録されておらず
+//         さらにvia_で繋がっている場合でも方向判定できるように
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -814,6 +815,28 @@ function isCircularRoute(routeVal) {
 }
 
 // route シートの「環状反転」がTRUEなら、内部の「外回り＝インデックス増加方向」の決め打ちを逆にする
+// 駅名が routeName（またはそこから via_ でさらに繋がる先の路線）に実在するかを再帰的に探す。
+// 東京の「5直」のような多段の直通運転にも対応できるよう、via_を辿り続ける
+// （visitedで既に通った路線を記録し、無限ループ・同じ路線の重複探索を防ぐ）
+function isStationReachableViaChain(routeName, boundNameTrim, visited) {
+  if (!routeName || visited.has(routeName)) return false;
+  visited.add(routeName);
+
+  const rows = (allstationData || []).filter(r => r["路線"] === routeName);
+  const stations = rows.map(r => String(r["駅名"] || "").trim());
+  const found = stations.some(s => s && !isViaEntry(s) &&
+    (s === boundNameTrim || boundNameTrim.includes(s) || s.includes(boundNameTrim)));
+  if (found) return true;
+
+  for (const r of rows) {
+    const name = r["駅名"];
+    if (isViaEntry(name)) {
+      if (isStationReachableViaChain(viaTargetRoute(name), boundNameTrim, visited)) return true;
+    }
+  }
+  return false;
+}
+
 function isCircularReversed(routeVal) {
   const row = (allrouteData || []).find(r => r["路線"] === routeVal);
   if (!row) return false;
@@ -1073,10 +1096,7 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
     for (let i = 0; i < rawRowNames.length; i++) {
       if (!isViaEntry(rawRowNames[i])) continue;
       const targetRoute = viaTargetRoute(rawRowNames[i]);
-      const targetStations = (allstationData || [])
-        .filter(r => r["路線"] === targetRoute)
-        .map(r => String(r["駅名"] || "").trim());
-      const found = targetStations.some(s => s && (s === bTrim || bTrim.includes(s) || s.includes(bTrim)));
+      const found = isStationReachableViaChain(targetRoute, bTrim, new Set([routeVal]));
       if (!found) continue;
 
       const forwardDist = (i - boardRawIdx + totalStations) % totalStations;
@@ -1105,12 +1125,9 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
     for (let i = 0; i < rawRowNames.length; i++) {
       if (!isViaEntry(rawRowNames[i])) continue;
       const targetRoute = viaTargetRoute(rawRowNames[i]);
-      const targetStations = (allstationData || [])
-        .filter(r => r["路線"] === targetRoute)
-        .map(r => String(r["駅名"] || "").trim());
-      // 完全一致だけでなく、多少の表記ゆれ（「行き」等の付加）も許容してマッチさせる
-      const found = targetStations.some(s => s && (s === bTrim || bTrim.includes(s) || s.includes(bTrim)));
-      if (!found) continue; // この直通先はこのvia_の路線には無い
+      // 直接この路線に無くても、さらに先のvia_を辿った先に見つかればOK（多段直通対応）
+      const found = isStationReachableViaChain(targetRoute, bTrim, new Set([routeVal]));
+      if (!found) continue; // この直通先はこのvia_の路線（の先）には無い
 
       const viaGoesForward = i > boardRawIdx;
       return viaGoesForward === dirGoesForward;
