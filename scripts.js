@@ -1,8 +1,6 @@
-// version: 1.22.1
-// 1.22.1: numberシートの"****7連****"のような行を「注目編成マーカー」ではなく
-//         「グループ見出し行」として扱うように作り直した。見出し行から次の見出しまでの
-//         編成がそのグループに属する扱いになり、編成選択ポップアップのプルダウンには
-//         実際の見出し名（7連・4連など）がそのまま選択肢として並ぶ
+// version: 1.22.2
+// 1.22.2: 編成グループの絞り込みプルダウンが潰れて見える不具合を修正
+//         （インラインstyleから専用CSSクラスに変更、高さ・行間・矢印表示を明示指定）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -2044,7 +2042,7 @@ function openFormationPicker() {
 
   list.innerHTML = `
     ${namedGroups.length ? `
-      <select id="formationFilterSelect" style="width:100%; padding:8px; border-radius:8px; border:1px solid #ccc; margin-bottom:10px;">
+      <select id="formationFilterSelect" class="formation-filter-select">
         <option value="all">すべて表示</option>
         ${namedGroups.map(g => `<option value="${g.label}">${g.label}</option>`).join("")}
       </select>
