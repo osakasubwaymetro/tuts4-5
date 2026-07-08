@@ -1,10 +1,15 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.11.4 -->
+<!-- version: 1.11.5 -->
+<!-- 1.11.5: キャッシュ対策（no-cacheメタタグ、logs.js/nav.jsのバージョンクエリ）を追加 -->
 <!-- 1.11.4: opensheetがレート制限等で配列以外（エラーオブジェクト）を返すと、
            stationMaster等が壊れて降車登録・編集ボタンが使えなくなるバグを修正。
            配列チェック＋1回だけの自動リトライを追加 -->
@@ -337,9 +342,9 @@
   <span id="updateMsg">最新データ取得中...</span>
 </div>
 
-<script src="nav.js"></script>
+<script src="nav.js?v=1.3.0"></script>
 <script>initNav("投稿履歴");</script>
-<script src="logs.js"></script>
+<script src="logs.js?v=1.1.0"></script>
 <script>
 const username = checkLogin();
 
