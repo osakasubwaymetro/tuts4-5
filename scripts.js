@@ -1,7 +1,6 @@
-// version: 1.18.4
-// 1.18.4: 直通で同じ車両形式が複数路線の行にまたがっている場合、画像URLがどれか1行にでも
-//         設定されていれば拾えるように修正（今までは最初に見つかった行だけしか見ておらず、
-//         その行が空だと他の行に画像URLがあっても使われなかった）
+// version: 1.19.0
+// 1.19.0: 車番プルダウンを、選んだ形式の全編成をアイコン画像＋編成番号で一覧表示する
+//         ポップアップ選択方式に変更（車両検索の結果表示と統一感のあるUI）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -401,7 +400,7 @@ function updatenumberList() {
   select.innerHTML = '<option value="">選択してください</option>';
 
   // 両方選ばれていなければ終了
-  if (!modelVal) return;
+  if (!modelVal) { updateNumberTriggerLabel(); return; }
 
   // スプレッドシートの number シート構成が:
   // 車両形式 | 車番
@@ -418,6 +417,8 @@ function updatenumberList() {
     opt.textContent = c;
     select.appendChild(opt);
   });
+
+  updateNumberTriggerLabel();
 }
 
 
@@ -1838,6 +1839,61 @@ async function applyAdminStation(areaVal, typeVal, countryVal, routeVal, station
    車両検索：入力した車番（各号車のいずれか）を含む編成を、今選んでいる路線に
    走ってる車両形式に絞って検索し、一覧表示する
 ---------------------------------------- */
+function updateNumberTriggerLabel() {
+  const btn = document.getElementById("numberTriggerBtn");
+  if (!btn) return;
+  const val = document.getElementById("number").value;
+  btn.textContent = val ? formatFormationLabel(val) : "選択してください";
+  btn.classList.toggle("placeholder", !val);
+}
+document.getElementById("number")?.addEventListener("change", updateNumberTriggerLabel);
+
+function openFormationPicker() {
+  const modelVal = document.getElementById("model").value;
+  if (!modelVal) {
+    alert("先に車両形式を選んでください");
+    return;
+  }
+
+  setModalTitle(`${modelVal} の編成を選択`);
+  const list = document.getElementById("historyModalList");
+
+  const formations = (allnumberData || []).filter(r => r["車両形式"] === modelVal);
+
+  if (!formations.length) {
+    list.innerHTML = '<p class="modal-loading">この形式の編成データがありません</p>';
+  } else {
+    list.innerHTML = formations.map((r, i) => {
+      const cars = getCarNumbers(r);
+      const chips = cars.map(c => `<span class="csr-car">${c}</span>`).join("");
+      return `
+        <div class="car-search-result" data-i="${i}">
+          <div class="csr-main">
+            <img class="csr-icon" src="${resolveTrainImage(r)}" loading="lazy"
+                 onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';">
+            <div class="csr-info">
+              <div class="csr-header"><span>${formatFormationLabel(r["車番"])}</span></div>
+              <div class="csr-cars">${chips}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    list.querySelectorAll(".car-search-result").forEach((el, i) => {
+      el.onclick = () => {
+        const chosen = formations[i];
+        const numberSelect = document.getElementById("number");
+        numberSelect.value = chosen["車番"];
+        numberSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        closeHistoryModal();
+      };
+    });
+  }
+
+  document.getElementById("historyModalOverlay").classList.add("show");
+}
+
 function openCarSearchPopup() {
   setModalTitle("🔍 車両検索");
   const list = document.getElementById("historyModalList");
