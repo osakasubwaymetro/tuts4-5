@@ -1,7 +1,7 @@
-// version: 1.18.3
-// 1.18.3: 車両検索の結果カードに編成のアイコン画像を表示。優先順位は①numberシートの「画像URL」
-//         （その編成専用）②modelシートの「画像URL」（形式の基本）③フォールバック画像。
-//         Google Driveの共有リンクは自動でサムネイル直リンクに変換。画像形式はpng/jpeg/webp等自由
+// version: 1.18.4
+// 1.18.4: 直通で同じ車両形式が複数路線の行にまたがっている場合、画像URLがどれか1行にでも
+//         設定されていれば拾えるように修正（今までは最初に見つかった行だけしか見ておらず、
+//         その行が空だと他の行に画像URLがあっても使われなかった）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -1887,9 +1887,12 @@ function resolveTrainImage(numberRow) {
   if (numberRow) {
     const own = toDisplayableImageUrl(numberRow["画像URL"]);
     if (own) return own;
-    const modelRow = (allmodelData || []).find(r => r["車両形式"] === numberRow["車両形式"]);
-    if (modelRow) {
-      const modelImg = toDisplayableImageUrl(modelRow["画像URL"]);
+
+    // 直通等で同じ車両形式が複数路線の行にまたがっていることがあるため、
+    // 該当する全行の中から画像URLが設定されている行をどれか1つでも探す
+    const modelRows = (allmodelData || []).filter(r => r["車両形式"] === numberRow["車両形式"]);
+    for (const row of modelRows) {
+      const modelImg = toDisplayableImageUrl(row["画像URL"]);
       if (modelImg) return modelImg;
     }
   }
