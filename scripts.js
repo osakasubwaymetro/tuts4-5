@@ -1,7 +1,7 @@
-// version: 1.20.2
-// 1.20.2: 直通先の行先マッチングを完全一致から、多少の表記ゆれ（前後の空白・「行き」の
-//         付加など）も許容するように緩和。マッチングに失敗して方向判定不能になり、
-//         両方の方面に出てしまうケースを減らす
+// version: 1.20.3
+// 1.20.3: 環状線でも直通先（この路線の駅リストには無い駅）の方向判定ができるように対応。
+//         今まで環状線の場合は判定不能→常にtrueのフォールバックで、どちらの方面を選んでも
+//         直通先の候補が両方に出てしまっていた（大阪環状線→加茂 等）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -1063,6 +1063,35 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
     return dirVal === "__outer__" ? isOuterForBound : !isOuterForBound;
   }
 
+  // 環状線版：行先が直通先（この路線の駅リストには無い駅）の場合、その行先がどのvia_の
+  // 先にある駅かを調べて、そのvia_が外回り／内回りどちら寄りかを判定し、選んでいる方面と比較する
+  function circularViaThroughServiceMatchesDirection(boundName) {
+    if (boardRawIdx === -1 || totalStations < 2) return null;
+    const bTrim = String(boundName || "").trim();
+    if (!bTrim) return null;
+
+    for (let i = 0; i < rawRowNames.length; i++) {
+      if (!isViaEntry(rawRowNames[i])) continue;
+      const targetRoute = viaTargetRoute(rawRowNames[i]);
+      const targetStations = (allstationData || [])
+        .filter(r => r["路線"] === targetRoute)
+        .map(r => String(r["駅名"] || "").trim());
+      const found = targetStations.some(s => s && (s === bTrim || bTrim.includes(s) || s.includes(bTrim)));
+      if (!found) continue;
+
+      const forwardDist = (i - boardRawIdx + totalStations) % totalStations;
+      const backwardDist = totalStations - forwardDist;
+      const viaGoesForward = forwardDist <= backwardDist; // このvia_へは前方向で行く方が近いか
+
+      const reversed = isCircularReversed(routeVal);
+      const wantsOuter = dirVal === "__outer__";
+      const dirGoesForward = reversed ? !wantsOuter : wantsOuter;
+
+      return viaGoesForward === dirGoesForward;
+    }
+    return null;
+  }
+
   // 行先が直通先（この路線の駅リストには無い駅）の場合、その行先がどのvia_の
   // 先にある駅かを調べて、選んでいる方面（前方向／後方向）と一致するか判定する
   const rawRowNames = stationsOnRoute.map(r => r["駅名"]); // via_の目印も含めた生の並び
@@ -1122,6 +1151,10 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
         let matchesDirection = true;
         if (isCircular) {
           matchesDirection = circularMatchesDirection(bIndex);
+          if (bIndex === -1) {
+            const viaMatch = circularViaThroughServiceMatchesDirection(b);
+            if (viaMatch !== null) matchesDirection = viaMatch;
+          }
         } else if (bIndex !== -1 && boardingIndex !== -1) {
           matchesDirection = (dirIndex > boardingIndex) ? (bIndex > boardingIndex) : (bIndex < boardingIndex);
         } else if (bIndex === -1) {
