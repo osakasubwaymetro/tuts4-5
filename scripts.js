@@ -1,8 +1,8 @@
-// version: 1.21.0
-// 1.21.0: 直通先の判定を「1段先のvia_だけ見る」から「via_を再帰的に辿って、その先の
-//         via_のそのまた先も探す」方式に変更（東京の「5直」のような多段の直通運転にも対応）。
-//         大阪環状線→大和路線→(さらに先のvia_)のように、直通先自体に実駅が登録されておらず
-//         さらにvia_で繋がっている場合でも方向判定できるように
+// version: 1.22.0
+// 1.22.0: ①直通先の方向判定で、via_マーカー自身の行位置ではなく隣接する実駅（例:天王寺）の
+//         位置を基準に計算するよう修正（同じ場所に複数のvia_が並んでると誤判定していた）。
+//         ②車両画像は、同じ形式が複数路線にまたがる場合「今選んでいる路線」の画像を優先。
+//         ③編成選択ポップアップに「すべて／注目編成のみ」の絞り込みプルダウンを追加
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -818,6 +818,19 @@ function isCircularRoute(routeVal) {
 // 駅名が routeName（またはそこから via_ でさらに繋がる先の路線）に実在するかを再帰的に探す。
 // 東京の「5直」のような多段の直通運転にも対応できるよう、via_を辿り続ける
 // （visitedで既に通った路線を記録し、無限ループ・同じ路線の重複探索を防ぐ）
+// via_マーカーの隣にある実駅（via_ではない駅）のraw indexを探す。
+// via_自身の行位置は隣同士でもほぼ同じ場所になりがちで方向判定の基準にならないため、
+// 実際に隣接する実駅（例: 天王寺）の位置を基準に使う
+function findViaNeighborRawIdx(rawNames, viaRawIdx) {
+  for (let i = viaRawIdx - 1; i >= 0; i--) {
+    if (!isViaEntry(rawNames[i])) return i;
+  }
+  for (let i = viaRawIdx + 1; i < rawNames.length; i++) {
+    if (!isViaEntry(rawNames[i])) return i;
+  }
+  return viaRawIdx; // 見つからなければ妥協でそのまま
+}
+
 function isStationReachableViaChain(routeName, boundNameTrim, visited) {
   if (!routeName || visited.has(routeName)) return false;
   visited.add(routeName);
@@ -1099,9 +1112,10 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
       const found = isStationReachableViaChain(targetRoute, bTrim, new Set([routeVal]));
       if (!found) continue;
 
-      const forwardDist = (i - boardRawIdx + totalStations) % totalStations;
+      const neighborIdx = findViaNeighborRawIdx(rawRowNames, i);
+      const forwardDist = (neighborIdx - boardRawIdx + totalStations) % totalStations;
       const backwardDist = totalStations - forwardDist;
-      const viaGoesForward = forwardDist <= backwardDist; // このvia_へは前方向で行く方が近いか
+      const viaGoesForward = forwardDist <= backwardDist; // このvia_（の隣接実駅）へは前方向で行く方が近いか
 
       const reversed = isCircularReversed(routeVal);
       const wantsOuter = dirVal === "__outer__";
@@ -1129,7 +1143,8 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
       const found = isStationReachableViaChain(targetRoute, bTrim, new Set([routeVal]));
       if (!found) continue; // この直通先はこのvia_の路線（の先）には無い
 
-      const viaGoesForward = i > boardRawIdx;
+      const neighborIdx = findViaNeighborRawIdx(rawRowNames, i);
+      const viaGoesForward = neighborIdx > boardRawIdx;
       return viaGoesForward === dirGoesForward;
     }
     return null; // 対応するvia_が見つからない＝判定不能
@@ -1959,7 +1974,7 @@ function openModelPicker() {
     list.innerHTML = models.map((m, i) => `
         <div class="car-search-result" data-i="${i}">
           <div class="csr-main">
-            <img class="csr-icon" src="${resolveTrainImage({ 車両形式: m })}" loading="lazy"
+            <img class="csr-icon" src="${resolveTrainImage({ 車両形式: m }, routeVal)}" loading="lazy"
                  onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';">
             <div class="csr-info">
               <div class="csr-header"><span>${m}</span></div>
@@ -1989,6 +2004,7 @@ function isFeaturedFormation(num) {
 
 function openFormationPicker() {
   const modelVal = document.getElementById("model").value;
+  const routeVal = document.getElementById("route").value;
   if (!modelVal) {
     alert("先に車両形式を選んでください");
     return;
@@ -1997,17 +2013,38 @@ function openFormationPicker() {
   setModalTitle(`${modelVal} の編成を選択`);
   const list = document.getElementById("historyModalList");
 
-  const formations = (allnumberData || [])
+  const allFormations = (allnumberData || [])
     .filter(r => r["車両形式"] === modelVal)
     .sort((a, b) => (isFeaturedFormation(b["車番"]) ? 1 : 0) - (isFeaturedFormation(a["車番"]) ? 1 : 0));
 
-  if (!formations.length) {
-    list.innerHTML = '<p class="modal-loading">この形式の編成データがありません</p>';
-  } else {
-    list.innerHTML = formations.map((r, i) => `
+  const hasFeatured = allFormations.some(r => isFeaturedFormation(r["車番"]));
+
+  list.innerHTML = `
+    ${hasFeatured ? `
+      <select id="formationFilterSelect" style="width:100%; padding:8px; border-radius:8px; border:1px solid #ccc; margin-bottom:10px;">
+        <option value="all">すべて表示</option>
+        <option value="featured">注目編成のみ</option>
+      </select>
+    ` : ""}
+    <div id="formationResultsArea"></div>
+  `;
+
+  function render(filterMode) {
+    const formations = filterMode === "featured"
+      ? allFormations.filter(r => isFeaturedFormation(r["車番"]))
+      : allFormations;
+
+    const area = document.getElementById("formationResultsArea");
+
+    if (!formations.length) {
+      area.innerHTML = '<p class="modal-loading">該当する編成がありません</p>';
+      return;
+    }
+
+    area.innerHTML = formations.map((r, i) => `
         <div class="car-search-result" data-i="${i}">
           <div class="csr-main">
-            <img class="csr-icon" src="${resolveTrainImage(r)}" loading="lazy"
+            <img class="csr-icon" src="${resolveTrainImage(r, routeVal)}" loading="lazy"
                  onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';">
             <div class="csr-info">
               <div class="csr-header"><span>${formatFormationLabel(r["車番"])}</span></div>
@@ -2016,7 +2053,7 @@ function openFormationPicker() {
         </div>
       `).join("");
 
-    list.querySelectorAll(".car-search-result").forEach((el, i) => {
+    area.querySelectorAll(".car-search-result").forEach((el, i) => {
       el.onclick = () => {
         const chosen = formations[i];
         const numberSelect = document.getElementById("number");
@@ -2026,6 +2063,11 @@ function openFormationPicker() {
       };
     });
   }
+
+  if (hasFeatured) {
+    document.getElementById("formationFilterSelect").onchange = e => render(e.target.value);
+  }
+  render("all");
 
   document.getElementById("historyModalOverlay").classList.add("show");
 }
@@ -2079,14 +2121,21 @@ function toDisplayableImageUrl(url) {
 }
 
 // 編成の画像URLを決める（優先順位：①その編成専用 ②形式の基本 ③フォールバック）
-function resolveTrainImage(numberRow) {
+function resolveTrainImage(numberRow, routeVal) {
   if (numberRow) {
     const own = toDisplayableImageUrl(numberRow["画像URL"]);
     if (own) return own;
 
     // 直通等で同じ車両形式が複数路線の行にまたがっていることがあるため、
-    // 該当する全行の中から画像URLが設定されている行をどれか1つでも探す
+    // まず「今選んでいる路線」の行を優先してチェックし、無ければ他のどの行でもいいので探す
     const modelRows = (allmodelData || []).filter(r => r["車両形式"] === numberRow["車両形式"]);
+    if (routeVal) {
+      const preferred = modelRows.find(r => r["路線"] === routeVal);
+      if (preferred) {
+        const preferredImg = toDisplayableImageUrl(preferred["画像URL"]);
+        if (preferredImg) return preferredImg;
+      }
+    }
     for (const row of modelRows) {
       const modelImg = toDisplayableImageUrl(row["画像URL"]);
       if (modelImg) return modelImg;
@@ -2133,7 +2182,7 @@ function runCarSearch() {
     return `
       <div class="car-search-result" data-i="${i}">
         <div class="csr-main">
-          <img class="csr-icon" src="${resolveTrainImage(r)}" loading="lazy"
+          <img class="csr-icon" src="${resolveTrainImage(r, routeVal)}" loading="lazy"
                onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';">
           <div class="csr-info">
             <div class="csr-header">
