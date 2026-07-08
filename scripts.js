@@ -1,6 +1,9 @@
-// version: 1.22.3
-// 1.22.3: 編成グループの絞り込みプルダウンを開いた時・切り替えた時に、常に一覧の先頭が
-//         見えるようにスクロール位置をリセットするように対応
+// version: 1.22.5
+// 1.22.5: 最寄り駅選択時のえりあ自動判定バグを再修正。「現在時刻を入力」ボタン側で
+//         GPS→都道府県→地方のマッピングにより既に正しいえりあが設定されているのに、
+//         その後の駅選択処理（applyGeoStation）が会社名からの逆引きで上書きしてしまい、
+//         複数えりあにまたがる会社（JR西日本等）の場合に間違ったえりあになっていた。
+//         えりあの上書きをやめ、区分・会社・路線・乗車駅だけを埋めるように変更
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -776,11 +779,9 @@ async function applyGeoStation(match) {
   const typeVal = routeRow["区分"];
   const companyVal = routeRow["会社"];
 
-  // 区分・会社から えりあ を特定
-  const countryRow = (allCountryData || []).find(r => r["区分"] === typeVal && r["会社"] === companyVal);
-  const areaVal = countryRow ? countryRow["えりあ"] : "";
-
-  setAndTrigger("area", areaVal);
+  // えりあは「現在時刻を入力」ボタン側でGPS→都道府県→地方のマッピングにより
+  // 既に正しく設定済みのはずなので、ここでは上書きしない
+  // （会社名だけから逆引きすると、複数えりあにまたがる会社の場合に間違ったえりあになるため）
   setAndTrigger("type", typeVal);
   await wait(300);
   setAndTrigger("country", companyVal);
