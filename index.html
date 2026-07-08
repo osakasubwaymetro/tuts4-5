@@ -4,7 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.8.1 -->
+  <!-- version: 1.9.0 -->
+  <!-- 1.9.0: 車番プルダウンを、選んだ形式の全編成をアイコン画像＋編成番号で一覧表示する
+             ポップアップ選択方式に変更 -->
   <!-- 1.8.1: 車両検索の結果カードに編成アイコン画像を表示するためのスタイルを追加 -->
   <!-- 1.8.0: 車番プルダウンの右下に「🔍 車両検索」ボタンを追加。numberシートの「各号車」列を
              使って、入力した車番を含む編成を今の路線の車両形式に絞って一覧表示できるように -->
@@ -490,6 +492,21 @@
       cursor: pointer;
     }
     .secondary-btn:hover { background: #d9e6fb; }
+    .number-trigger-btn {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: #fff;
+      color: #222;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-size: 14px;
+      cursor: pointer;
+      box-sizing: border-box;
+    }
+    .number-trigger-btn.placeholder { color: #999; }
+    .number-trigger-btn:hover, .number-trigger-btn:active { border-color: #004C97; }
     .car-search-result {
       background: #fff;
       border: 1.5px solid #E3E8F0;
@@ -647,7 +664,8 @@
   <select id="model"></select>
 
   <label><h3>車番</h3></label>
-  <select id="number"></select>
+  <select id="number" style="display:none;"></select>
+  <button type="button" id="numberTriggerBtn" class="number-trigger-btn placeholder" onclick="openFormationPicker()">選択してください</button>
   <div style="text-align:right; margin-top:6px;">
     <button type="button" id="carSearchBtn" class="secondary-btn" onclick="openCarSearchPopup()">🔍 車両検索</button>
   </div>
