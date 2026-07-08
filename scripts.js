@@ -1,8 +1,8 @@
-// version: 1.22.0
-// 1.22.0: ①直通先の方向判定で、via_マーカー自身の行位置ではなく隣接する実駅（例:天王寺）の
-//         位置を基準に計算するよう修正（同じ場所に複数のvia_が並んでると誤判定していた）。
-//         ②車両画像は、同じ形式が複数路線にまたがる場合「今選んでいる路線」の画像を優先。
-//         ③編成選択ポップアップに「すべて／注目編成のみ」の絞り込みプルダウンを追加
+// version: 1.22.1
+// 1.22.1: numberシートの"****7連****"のような行を「注目編成マーカー」ではなく
+//         「グループ見出し行」として扱うように作り直した。見出し行から次の見出しまでの
+//         編成がそのグループに属する扱いになり、編成選択ポップアップのプルダウンには
+//         実際の見出し名（7連・4連など）がそのまま選択肢として並ぶ
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -408,11 +408,12 @@ function updatenumberList() {
 
   // スプレッドシートの number シート構成が:
   // 車両形式 | 車番
+  // "****7連****" のようなグループ見出し行は実際の編成では無いので除外する
   const filtered = allnumberData.filter(row =>
-    row["車両形式"] === modelVal
+    row["車両形式"] === modelVal && formationGroupHeaderLabel(row["車番"]) === null
   );
 
-  // 重複を排除（"*"（注目編成マーカー）は実際の値としては使わないので取り除く）
+  // 重複を排除
   const companies = [...new Set(filtered.map(r => cleanFormationNumber(r["車番"])))].filter(Boolean);
 
   companies.forEach(c => {
@@ -1998,8 +1999,32 @@ function openModelPicker() {
 
 // number シートの車番が "*" で囲まれている（例: ***32651***）ものは「注目の編成」として
 // 一覧の先頭に来るようにソートする
-function isFeaturedFormation(num) {
-  return /\*/.test(String(num || ""));
+// number シートの車番が "****7連****" のように"*"で囲まれている行は、実際の編成ではなく
+// 「ここから次の見出しまでは7連グループ」というグループ見出し行として扱う
+function formationGroupHeaderLabel(raw) {
+  const m = String(raw || "").trim().match(/^\*+(.+?)\*+$/);
+  return m ? m[1].trim() : null;
+}
+
+// 指定した車両形式の number シート行を、見出し行を区切りにしてグループ分けする
+// （見出し行自体は編成としては返さない。見出しが無い状態の行は label:null のグループに入る）
+function parseFormationGroups(modelVal) {
+  const rows = (allnumberData || []).filter(r => r["車両形式"] === modelVal);
+  const groups = [];
+  let current = { label: null, formations: [] };
+
+  rows.forEach(r => {
+    const headerLabel = formationGroupHeaderLabel(r["車番"]);
+    if (headerLabel !== null) {
+      if (current.formations.length) groups.push(current);
+      current = { label: headerLabel, formations: [] };
+    } else {
+      current.formations.push(r);
+    }
+  });
+  if (current.formations.length) groups.push(current);
+
+  return groups;
 }
 
 function openFormationPicker() {
@@ -2013,25 +2038,23 @@ function openFormationPicker() {
   setModalTitle(`${modelVal} の編成を選択`);
   const list = document.getElementById("historyModalList");
 
-  const allFormations = (allnumberData || [])
-    .filter(r => r["車両形式"] === modelVal)
-    .sort((a, b) => (isFeaturedFormation(b["車番"]) ? 1 : 0) - (isFeaturedFormation(a["車番"]) ? 1 : 0));
-
-  const hasFeatured = allFormations.some(r => isFeaturedFormation(r["車番"]));
+  const groups = parseFormationGroups(modelVal);
+  const allFormations = groups.flatMap(g => g.formations);
+  const namedGroups = groups.filter(g => g.label); // ドロップダウンに出すのは見出し付きグループのみ
 
   list.innerHTML = `
-    ${hasFeatured ? `
+    ${namedGroups.length ? `
       <select id="formationFilterSelect" style="width:100%; padding:8px; border-radius:8px; border:1px solid #ccc; margin-bottom:10px;">
         <option value="all">すべて表示</option>
-        <option value="featured">注目編成のみ</option>
+        ${namedGroups.map(g => `<option value="${g.label}">${g.label}</option>`).join("")}
       </select>
     ` : ""}
     <div id="formationResultsArea"></div>
   `;
 
-  function render(filterMode) {
-    const formations = filterMode === "featured"
-      ? allFormations.filter(r => isFeaturedFormation(r["車番"]))
+  function render(filterLabel) {
+    const formations = (filterLabel && filterLabel !== "all")
+      ? (namedGroups.find(g => g.label === filterLabel)?.formations || [])
       : allFormations;
 
     const area = document.getElementById("formationResultsArea");
@@ -2064,7 +2087,7 @@ function openFormationPicker() {
     });
   }
 
-  if (hasFeatured) {
+  if (namedGroups.length) {
     document.getElementById("formationFilterSelect").onchange = e => render(e.target.value);
   }
   render("all");
@@ -2166,6 +2189,7 @@ function runCarSearch() {
   const modelsOnRoute = new Set((allmodelData || []).filter(r => r["路線"] === routeVal).map(r => r["車両形式"]));
 
   const matches = (allnumberData || []).filter(r => {
+    if (formationGroupHeaderLabel(r["車番"]) !== null) return false; // グループ見出し行は除外
     if (routeVal && !modelsOnRoute.has(r["車両形式"])) return false;
     const cars = getCarNumbers(r);
     return cars.some(c => c.includes(query));
