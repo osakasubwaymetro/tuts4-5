@@ -1,6 +1,6 @@
-// version: 1.22.2
-// 1.22.2: 編成グループの絞り込みプルダウンが潰れて見える不具合を修正
-//         （インラインstyleから専用CSSクラスに変更、高さ・行間・矢印表示を明示指定）
+// version: 1.22.3
+// 1.22.3: 編成グループの絞り込みプルダウンを開いた時・切り替えた時に、常に一覧の先頭が
+//         見えるようにスクロール位置をリセットするように対応
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -2085,10 +2085,18 @@ function openFormationPicker() {
     });
   }
 
+  function scrollToTop() {
+    const listEl = document.getElementById("historyModalList");
+    if (listEl) listEl.scrollTop = 0;
+    const panelEl = document.querySelector(".modal-panel");
+    if (panelEl) panelEl.scrollTop = 0;
+  }
+
   if (namedGroups.length) {
-    document.getElementById("formationFilterSelect").onchange = e => render(e.target.value);
+    document.getElementById("formationFilterSelect").onchange = e => { render(e.target.value); scrollToTop(); };
   }
   render("all");
+  scrollToTop();
 
   document.getElementById("historyModalOverlay").classList.add("show");
 }
