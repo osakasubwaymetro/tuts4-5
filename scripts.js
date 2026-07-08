@@ -1,6 +1,8 @@
-// version: 1.19.0
-// 1.19.0: 車番プルダウンを、選んだ形式の全編成をアイコン画像＋編成番号で一覧表示する
-//         ポップアップ選択方式に変更（車両検索の結果表示と統一感のあるUI）
+// version: 1.20.0
+// 1.20.0: ①各号車の車番チップは車両検索の結果のみ表示（編成一覧ポップアップからは削除）。
+//         ②numberシートで車番が"*"で囲まれている編成は「注目編成」として一覧の先頭にソート。
+//         実際の値・表示は"*"を除いたものを使う。③車両形式プルダウンも編成選択と同じ
+//         アイコン付きポップアップ選択方式に変更
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -151,7 +153,7 @@ function updatemodelList() {
   select.innerHTML = '<option value="">選択してください</option>';
 
   // 両方選ばれていなければ終了
-  if (!routeVal) return;
+  if (!routeVal) { updateModelTriggerLabel(); return; }
 
   // スプレッドシートの model シート構成が:
   // 区分 | 車両形式
@@ -168,6 +170,8 @@ function updatemodelList() {
     opt.textContent = c;
     select.appendChild(opt);
   });
+
+  updateModelTriggerLabel();
 }
 
 
@@ -408,8 +412,8 @@ function updatenumberList() {
     row["車両形式"] === modelVal
   );
 
-  // 重複を排除
-  const companies = [...new Set(filtered.map(r => r["車番"]))];
+  // 重複を排除（"*"（注目編成マーカー）は実際の値としては使わないので取り除く）
+  const companies = [...new Set(filtered.map(r => cleanFormationNumber(r["車番"])))].filter(Boolean);
 
   companies.forEach(c => {
     const opt = document.createElement("option");
@@ -1848,6 +1852,61 @@ function updateNumberTriggerLabel() {
 }
 document.getElementById("number")?.addEventListener("change", updateNumberTriggerLabel);
 
+function updateModelTriggerLabel() {
+  const btn = document.getElementById("modelTriggerBtn");
+  if (!btn) return;
+  const val = document.getElementById("model").value;
+  btn.textContent = val || "選択してください";
+  btn.classList.toggle("placeholder", !val);
+}
+document.getElementById("model")?.addEventListener("change", updateModelTriggerLabel);
+
+function openModelPicker() {
+  const routeVal = document.getElementById("route").value;
+  if (!routeVal) {
+    alert("先に路線を選んでください");
+    return;
+  }
+
+  setModalTitle("車両形式を選択");
+  const list = document.getElementById("historyModalList");
+
+  const models = [...new Set((allmodelData || []).filter(r => r["路線"] === routeVal).map(r => r["車両形式"]))].filter(Boolean);
+
+  if (!models.length) {
+    list.innerHTML = '<p class="modal-loading">この路線の車両形式データがありません</p>';
+  } else {
+    list.innerHTML = models.map((m, i) => `
+        <div class="car-search-result" data-i="${i}">
+          <div class="csr-main">
+            <img class="csr-icon" src="${resolveTrainImage({ 車両形式: m })}" loading="lazy"
+                 onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';">
+            <div class="csr-info">
+              <div class="csr-header"><span>${m}</span></div>
+            </div>
+          </div>
+        </div>
+      `).join("");
+
+    list.querySelectorAll(".car-search-result").forEach((el, i) => {
+      el.onclick = () => {
+        const modelSelect = document.getElementById("model");
+        modelSelect.value = models[i];
+        modelSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        closeHistoryModal();
+      };
+    });
+  }
+
+  document.getElementById("historyModalOverlay").classList.add("show");
+}
+
+// number シートの車番が "*" で囲まれている（例: ***32651***）ものは「注目の編成」として
+// 一覧の先頭に来るようにソートする
+function isFeaturedFormation(num) {
+  return /\*/.test(String(num || ""));
+}
+
 function openFormationPicker() {
   const modelVal = document.getElementById("model").value;
   if (!modelVal) {
@@ -1858,33 +1917,30 @@ function openFormationPicker() {
   setModalTitle(`${modelVal} の編成を選択`);
   const list = document.getElementById("historyModalList");
 
-  const formations = (allnumberData || []).filter(r => r["車両形式"] === modelVal);
+  const formations = (allnumberData || [])
+    .filter(r => r["車両形式"] === modelVal)
+    .sort((a, b) => (isFeaturedFormation(b["車番"]) ? 1 : 0) - (isFeaturedFormation(a["車番"]) ? 1 : 0));
 
   if (!formations.length) {
     list.innerHTML = '<p class="modal-loading">この形式の編成データがありません</p>';
   } else {
-    list.innerHTML = formations.map((r, i) => {
-      const cars = getCarNumbers(r);
-      const chips = cars.map(c => `<span class="csr-car">${c}</span>`).join("");
-      return `
+    list.innerHTML = formations.map((r, i) => `
         <div class="car-search-result" data-i="${i}">
           <div class="csr-main">
             <img class="csr-icon" src="${resolveTrainImage(r)}" loading="lazy"
                  onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';">
             <div class="csr-info">
               <div class="csr-header"><span>${formatFormationLabel(r["車番"])}</span></div>
-              <div class="csr-cars">${chips}</div>
             </div>
           </div>
         </div>
-      `;
-    }).join("");
+      `).join("");
 
     list.querySelectorAll(".car-search-result").forEach((el, i) => {
       el.onclick = () => {
         const chosen = formations[i];
         const numberSelect = document.getElementById("number");
-        numberSelect.value = chosen["車番"];
+        numberSelect.value = cleanFormationNumber(chosen["車番"]);
         numberSelect.dispatchEvent(new Event("change", { bubbles: true }));
         closeHistoryModal();
       };
@@ -1914,8 +1970,12 @@ function openCarSearchPopup() {
   setTimeout(() => document.getElementById("carSearchInput")?.focus(), 100);
 }
 
+function cleanFormationNumber(num) {
+  return String(num || "").trim().replace(/\*/g, "");
+}
+
 function formatFormationLabel(num) {
-  const s = String(num || "").trim();
+  const s = cleanFormationNumber(num);
   if (!s) return s;
   if (s.includes("編成") || /F$/i.test(s)) return s; // 既に「F」や「編成」で終わってるなら重複させない
   return `${s}編成`;
@@ -2015,7 +2075,7 @@ function runCarSearch() {
       modelSelect.dispatchEvent(new Event("change", { bubbles: true }));
       setTimeout(() => {
         const numberSelect = document.getElementById("number");
-        numberSelect.value = chosen["車番"];
+        numberSelect.value = cleanFormationNumber(chosen["車番"]);
         numberSelect.dispatchEvent(new Event("change", { bubbles: true }));
       }, 300);
       closeHistoryModal();
