@@ -1,9 +1,7 @@
-// version: 1.22.5
-// 1.22.5: 最寄り駅選択時のえりあ自動判定バグを再修正。「現在時刻を入力」ボタン側で
-//         GPS→都道府県→地方のマッピングにより既に正しいえりあが設定されているのに、
-//         その後の駅選択処理（applyGeoStation）が会社名からの逆引きで上書きしてしまい、
-//         複数えりあにまたがる会社（JR西日本等）の場合に間違ったえりあになっていた。
-//         えりあの上書きをやめ、区分・会社・路線・乗車駅だけを埋めるように変更
+// version: 1.23.0
+// 1.23.0: ①過去の乗車記録の候補選定を「±30分の固定窓」から「現在時刻の5分前を基準に、
+//         時間帯が近い順に10件」方式に変更。②近くの駅を選択ポップアップに、各駅の
+//         右側にグレーの小さい文字で距離（例: 350m / 1.2km）を表示するように対応
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -701,7 +699,7 @@ async function findNearbyStationsFromPosition(lat, lon) {
         const key = st.name + "|" + hitRow["路線"];
         if (!seen.has(key)) {
           seen.add(key);
-          matches.push({ name: st.name, line: hitRow["路線"], confident: true });
+          matches.push({ name: st.name, line: hitRow["路線"], confident: true, distance: st.distance });
         }
       } else {
         // 路線名の表記があまりに違って一致判定できない場合のフォールバック：
@@ -711,7 +709,7 @@ async function findNearbyStationsFromPosition(lat, lon) {
           const key = st.name + "|" + row["路線"];
           if (!seen.has(key)) {
             seen.add(key);
-            matches.push({ name: st.name, line: row["路線"], apiLine: st.line, confident: false });
+            matches.push({ name: st.name, line: row["路線"], apiLine: st.line, confident: false, distance: st.distance });
           }
         });
       }
@@ -725,6 +723,13 @@ async function findNearbyStationsFromPosition(lat, lon) {
     if (list) list.innerHTML = '<p class="modal-loading">近くの駅の取得に失敗しました。</p>';
     if (resultBox) resultBox.textContent = "近くの駅の取得に失敗しました。";
   }
+}
+
+function formatDistanceLabel(raw) {
+  const s = String(raw || "").trim();
+  const m = parseInt(s, 10);
+  if (isNaN(m)) return "";
+  return m >= 1000 ? (m / 1000).toFixed(1) + "km" : m + "m";
 }
 
 function renderGeoStationResult(matches) {
@@ -745,9 +750,18 @@ function renderGeoStationResult(matches) {
   matches.forEach(m => {
     const item = document.createElement("button");
     item.type = "button";
-    item.textContent = m.confident
+    const label = m.confident
       ? `${m.name}（${m.line}）`
       : `${m.name}（${m.line}）※駅名のみ一致・正式名称「${m.apiLine}」`;
+    const distLabel = formatDistanceLabel(m.distance);
+    item.style.display = "flex";
+    item.style.justifyContent = "space-between";
+    item.style.alignItems = "center";
+    item.style.gap = "8px";
+    item.innerHTML = `
+      <span>${label}</span>
+      ${distLabel ? `<span style="color:#999; font-size:12px; white-space:nowrap;">${distLabel}</span>` : ""}
+    `;
     item.onclick = () => {
       applyGeoStation(m);
       closeHistoryModal();
@@ -1212,14 +1226,14 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
   const sameDayType = raw.filter(c => c.isWeekendType === todayIsWeekendType);
   const dayTypePool = sameDayType.length ? sameDayType : raw;
 
+  // 現在時刻の5分前を基準にして、そこから時間帯が近い順に10件表示する
   const nowMin = timeOfDayMinutes(new Date());
-  const windowed = dayTypePool.filter(c => {
-    if (!c.time) return false;
-    const diff = (timeOfDayMinutes(c.time) - nowMin + 1440) % 1440;
-    return diff <= 30;
-  });
-
-  const pool = (windowed.length ? windowed : dayTypePool).slice(0, 10);
+  const refMin = (nowMin - 5 + 1440) % 1440;
+  const pool = dayTypePool
+    .filter(c => c.time)
+    .map(c => ({ ...c, _diff: (timeOfDayMinutes(c.time) - refMin + 1440) % 1440 }))
+    .sort((a, b) => (a._diff - b._diff) || (b.time - a.time))
+    .slice(0, 10);
 
   // 種別・行先の組み合わせで重複除去
   const seen = new Set();
