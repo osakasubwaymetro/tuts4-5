@@ -8,7 +8,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.11.6 -->
+<!-- version: 1.11.7 -->
+<!-- 1.11.7: 降車データ（transfers）もローカルキャッシュに保存し、乗車記録と同じく
+           ページを開いた瞬間に即表示→裏で最新に更新するように変更。取得中は進捗率も表示 -->
 <!-- 1.11.6: 「最新データ取得中...」→「✅最新です」の表示が、乗車記録だけでなく降車データ
            （transfers）の取得完了も待ってから出るように変更。片方だけ終わった状態で
            「最新です」と出てしまうのを防ぐ -->
@@ -368,6 +370,16 @@ localStorage.removeItem("tuts4_show_cache");
 let allData = [];
 let stationMaster = [];
 let myTransfers = [];
+
+// 降車データもキャッシュしておき、乗車記録と同様に即表示→裏で更新できるようにする
+const TRANSFERS_CACHE_KEY = "tuts4_transfers_cache_" + username;
+try {
+  const cachedTransfers = localStorage.getItem(TRANSFERS_CACHE_KEY);
+  if (cachedTransfers) myTransfers = JSON.parse(cachedTransfers);
+} catch (e) {
+  localStorage.removeItem(TRANSFERS_CACHE_KEY);
+}
+
 let routeMaster = [];
 
 function isCircularRoute(routeVal) {
@@ -534,24 +546,42 @@ let _ridesFetchDone = false;
 let _masterFetchDone = false;
 let _pendingUpdateMsg = "";
 let _updateBarErrored = false;
+let _updateBarFinished = false;
 
 function maybeFinishUpdateBar() {
   if (_updateBarErrored) return;
   if (!_ridesFetchDone || !_masterFetchDone) return;
+  _updateBarFinished = true;
   finishUpdateBar(_pendingUpdateMsg);
 }
 
+// ===== 進捗率表示（乗車記録1件＋マスタ/降車データ10件＝計11件の取得をカウント） =====
+const _TOTAL_FETCH_COUNT = 11;
+let _completedFetchCount = 0;
+
+function trackFetchProgress(promise) {
+  return promise.then(result => {
+    _completedFetchCount++;
+    const pct = Math.min(100, Math.round((_completedFetchCount / _TOTAL_FETCH_COUNT) * 100));
+    const msgEl = document.getElementById("updateMsg");
+    if (msgEl && !_updateBarFinished) {
+      msgEl.textContent = `最新データ取得中...（残り${100 - pct}%）`;
+    }
+    return result;
+  });
+}
+
 Promise.all([
-  fetchJsonArrayWithRetry(STATION_URL),
-  fetch(TRANSFERS_READ_URL).then(r => r.json()).catch(() => []),
-  fetchJsonArrayWithRetry(ROUTE_URL),
-  fetchJsonArrayWithRetry(AREA_URL),
-  fetchJsonArrayWithRetry(TYPE_URL),
-  fetchJsonArrayWithRetry(COUNTRY_URL),
-  fetchJsonArrayWithRetry(SUJITYPE_URL),
-  fetchJsonArrayWithRetry(BOUND_URL),
-  fetchJsonArrayWithRetry(MODEL_URL),
-  fetchJsonArrayWithRetry(NUMBER_URL)
+  trackFetchProgress(fetchJsonArrayWithRetry(STATION_URL)),
+  trackFetchProgress(fetch(TRANSFERS_READ_URL).then(r => r.json()).catch(() => [])),
+  trackFetchProgress(fetchJsonArrayWithRetry(ROUTE_URL)),
+  trackFetchProgress(fetchJsonArrayWithRetry(AREA_URL)),
+  trackFetchProgress(fetchJsonArrayWithRetry(TYPE_URL)),
+  trackFetchProgress(fetchJsonArrayWithRetry(COUNTRY_URL)),
+  trackFetchProgress(fetchJsonArrayWithRetry(SUJITYPE_URL)),
+  trackFetchProgress(fetchJsonArrayWithRetry(BOUND_URL)),
+  trackFetchProgress(fetchJsonArrayWithRetry(MODEL_URL)),
+  trackFetchProgress(fetchJsonArrayWithRetry(NUMBER_URL))
 ]).then(([stationData, transfersData, routeData, areaData, typeData, countryData, sujitypeData, boundData, modelData, numberData]) => {
   const asArray = v => Array.isArray(v) ? v : [];
   stationMaster = asArray(stationData);
@@ -566,6 +596,7 @@ Promise.all([
   myTransfers = asArray(transfersData)
     .filter(t => String(t["ユーザー名"]) === String(username))
     .map(t => ({ ...t, "元の乗車時刻": stripRideTimePrefix(t["元の乗車時刻"]) }));
+  try { localStorage.setItem(TRANSFERS_CACHE_KEY, JSON.stringify(myTransfers)); } catch (e) { /* 容量超過等は無視 */ }
   // 既に描画済みなら降車駅の状態を反映して再描画
   if (allData.length) applyMonthFilter();
 }).finally(() => {
@@ -1092,10 +1123,7 @@ if (cached) {
 showUpdateBar("最新データ取得中...");
 
 fetch(GAS_URL)
-  .then(res => {
-    // レスポンスサイズが不明なのでXHRでプログレスを擬似表示
-    return res.json();
-  })
+  .then(res => trackFetchProgress(res.json()))
   .then(rawData => {
     // 自分の投稿のみに絞り込んでから保存・表示する
     const data = rawData.filter(r => String(r["ユーザー名"]) === String(username));
