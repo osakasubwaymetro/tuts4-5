@@ -8,7 +8,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.10.1 -->
+  <!-- version: 1.10.2 -->
+  <!-- 1.10.2: 編成グループ絞り込みプルダウンの幅がSafariで無視される問題を修正
+             （appearance:menulistがネイティブ矢印を強制し幅指定を無視していたのが原因。
+             appearance:noneのカスタム矢印方式に変更） -->
   <!-- 1.10.1: 編成グループの絞り込みプルダウンが潰れて見える不具合を修正 -->
   <!-- 1.10.0: 車両形式プルダウンもアイコン付きポップアップ選択方式に変更。
              全ページにキャッシュ対策（no-cacheメタタグ、共有JSのバージョンクエリ）を追加 -->
@@ -507,12 +510,16 @@
       padding: 8px 32px 8px 12px;
       border-radius: 8px;
       border: 1px solid #ccc;
-      background: #fff;
+      background-color: #fff;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23666'><path d='M7 10l5 5 5-5z'/></svg>");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      background-size: 18px;
       font-size: 14px;
       margin-bottom: 12px;
       box-sizing: border-box;
-      -webkit-appearance: menulist;
-      appearance: menulist;
+      -webkit-appearance: none;
+      appearance: none;
     }
     .number-trigger-btn {
       display: block;
@@ -738,7 +745,7 @@
   }
 </script>
 <script src="logs.js?v=1.1.0"></script>
-<script src="scripts.js?v=1.22.2"></script>
+<script src="scripts.js?v=1.22.3"></script>
 <script>
   const username = checkLogin();
 
