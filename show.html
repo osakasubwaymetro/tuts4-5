@@ -8,7 +8,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.11.5 -->
+<!-- version: 1.11.6 -->
+<!-- 1.11.6: 「最新データ取得中...」→「✅最新です」の表示が、乗車記録だけでなく降車データ
+           （transfers）の取得完了も待ってから出るように変更。片方だけ終わった状態で
+           「最新です」と出てしまうのを防ぐ -->
 <!-- 1.11.5: キャッシュ対策（no-cacheメタタグ、logs.js/nav.jsのバージョンクエリ）を追加 -->
 <!-- 1.11.4: opensheetがレート制限等で配列以外（エラーオブジェクト）を返すと、
            stationMaster等が壊れて降車登録・編集ボタンが使えなくなるバグを修正。
@@ -526,6 +529,18 @@ const NUMBER_URL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJ
 
 let allAreaData = [], allTypeData = [], allCountryData = [], allSujitypeData = [], allBoundData = [], allModelData = [], allNumberData = [];
 
+// ===== update バーは、乗車記録と降車データ（transfers含む）の両方が揃ってから完了扱いにする =====
+let _ridesFetchDone = false;
+let _masterFetchDone = false;
+let _pendingUpdateMsg = "";
+let _updateBarErrored = false;
+
+function maybeFinishUpdateBar() {
+  if (_updateBarErrored) return;
+  if (!_ridesFetchDone || !_masterFetchDone) return;
+  finishUpdateBar(_pendingUpdateMsg);
+}
+
 Promise.all([
   fetchJsonArrayWithRetry(STATION_URL),
   fetch(TRANSFERS_READ_URL).then(r => r.json()).catch(() => []),
@@ -553,6 +568,9 @@ Promise.all([
     .map(t => ({ ...t, "元の乗車時刻": stripRideTimePrefix(t["元の乗車時刻"]) }));
   // 既に描画済みなら降車駅の状態を反映して再描画
   if (allData.length) applyMonthFilter();
+}).finally(() => {
+  _masterFetchDone = true;
+  maybeFinishUpdateBar();
 });
 
 // ===== 更新バー =====
@@ -1092,12 +1110,16 @@ fetch(GAS_URL)
     buildMonthFilter(data);
     applyMonthFilter();
 
-    finishUpdateBar(isSame ? "✅ 最新です" : `✅ ${data.length} 件に更新しました`);
+    _pendingUpdateMsg = isSame ? "✅ 最新です（降車データ含む）" : `✅ ${data.length} 件に更新しました`;
+    _ridesFetchDone = true;
+    maybeFinishUpdateBar();
   })
   .catch(() => {
     if (!cached) {
       document.getElementById("reload").textContent = "データ取得エラーが発生しました。";
     }
+    _ridesFetchDone = true;
+    _updateBarErrored = true;
     finishUpdateBar("⚠️ 更新失敗（キャッシュを表示中）");
   });
 </script>
