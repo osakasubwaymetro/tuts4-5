@@ -1,8 +1,7 @@
-// version: 1.20.0
-// 1.20.0: ①各号車の車番チップは車両検索の結果のみ表示（編成一覧ポップアップからは削除）。
-//         ②numberシートで車番が"*"で囲まれている編成は「注目編成」として一覧の先頭にソート。
-//         実際の値・表示は"*"を除いたものを使う。③車両形式プルダウンも編成選択と同じ
-//         アイコン付きポップアップ選択方式に変更
+// version: 1.20.1
+// 1.20.1: 過去の乗車記録から選ぶ機能で、直通先の行先（この路線の駅リストには無い駅）が
+//         どちらの方面を選んでも両方に出てしまうバグを修正。行先がどのvia_（直通先）の
+//         路線にある駅かを調べて、選んでいる方面と一致するかをちゃんと判定するように変更
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -1051,16 +1050,39 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
   const indexOf = name => stationsOnRoute.findIndex(r => r["駅名"] === name);
   const isCircular = dirVal === "__outer__" || dirVal === "__inner__";
   const dirIndex = isCircular ? null : indexOf(dirVal);
-  const boardingIndex = indexOf(boardingStation);
+  const boardingIndex = isCircular ? null : indexOf(boardingStation);
   const totalStations = stationsOnRoute.length;
 
   // 環状線用：ボーディング駅から見て「外回り方向」に何駅で着くか（乗り換え無しの短い方を採用）
   function circularMatchesDirection(bIndex) {
-    if (bIndex === -1 || boardingIndex === -1 || totalStations < 2) return true;
-    const forwardDist = (bIndex - boardingIndex + totalStations) % totalStations;
+    const circBoardingIndex = indexOf(boardingStation);
+    if (bIndex === -1 || circBoardingIndex === -1 || totalStations < 2) return true;
+    const forwardDist = (bIndex - circBoardingIndex + totalStations) % totalStations;
     const backwardDist = totalStations - forwardDist;
     const isOuterForBound = forwardDist <= backwardDist; // 短い方を「外回り」寄りとみなす簡易判定
     return dirVal === "__outer__" ? isOuterForBound : !isOuterForBound;
+  }
+
+  // 行先が直通先（この路線の駅リストには無い駅）の場合、その行先がどのvia_の
+  // 先にある駅かを調べて、選んでいる方面（前方向／後方向）と一致するか判定する
+  const rawRowNames = stationsOnRoute.map(r => r["駅名"]); // via_の目印も含めた生の並び
+  const boardRawIdx = rawRowNames.indexOf(boardingStation);
+  function viaThroughServiceMatchesDirection(boundName) {
+    if (isCircular || boardRawIdx === -1 || dirIndex === -1) return null; // 判定材料が無い
+    const dirGoesForward = dirIndex > boardingIndex;
+
+    for (let i = 0; i < rawRowNames.length; i++) {
+      if (!isViaEntry(rawRowNames[i])) continue;
+      const targetRoute = viaTargetRoute(rawRowNames[i]);
+      const targetStations = (allstationData || [])
+        .filter(r => r["路線"] === targetRoute)
+        .map(r => r["駅名"]);
+      if (!targetStations.includes(boundName)) continue; // この直通先はこのvia_の路線には無い
+
+      const viaGoesForward = i > boardRawIdx;
+      return viaGoesForward === dirGoesForward;
+    }
+    return null; // 対応するvia_が見つからない＝判定不能
   }
 
   // route シートに「ダイヤ改正日」が入っていれば、それ以降の記録だけを対象にする
@@ -1091,12 +1113,16 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
         const bIndex = indexOf(b);
 
         // 行先が方面判定できる（駅リストにある）場合のみ方向でも絞り込む。
-        // 判定できない場合（直通運転先など）はとりあえず候補に含める
+        // 直通先（このルート上には無い駅）は、対応するvia_を探して方向を判定する。
+        // それも判定できない場合はとりあえず候補に含める
         let matchesDirection = true;
         if (isCircular) {
           matchesDirection = circularMatchesDirection(bIndex);
         } else if (bIndex !== -1 && boardingIndex !== -1) {
           matchesDirection = (dirIndex > boardingIndex) ? (bIndex > boardingIndex) : (bIndex < boardingIndex);
+        } else if (bIndex === -1) {
+          const viaMatch = viaThroughServiceMatchesDirection(b);
+          if (viaMatch !== null) matchesDirection = viaMatch;
         }
 
         if (matchesDirection) {
