@@ -8,7 +8,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.10.0 -->
+  <!-- version: 1.10.1 -->
+  <!-- 1.10.1: 編成グループの絞り込みプルダウンが潰れて見える不具合を修正 -->
   <!-- 1.10.0: 車両形式プルダウンもアイコン付きポップアップ選択方式に変更。
              全ページにキャッシュ対策（no-cacheメタタグ、共有JSのバージョンクエリ）を追加 -->
   <!-- 1.9.0: 車番プルダウンを、選んだ形式の全編成をアイコン画像＋編成番号で一覧表示する
@@ -498,6 +499,21 @@
       cursor: pointer;
     }
     .secondary-btn:hover { background: #d9e6fb; }
+    .formation-filter-select {
+      display: block;
+      width: 100%;
+      height: 42px;
+      line-height: 1.4;
+      padding: 8px 32px 8px 12px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      background: #fff;
+      font-size: 14px;
+      margin-bottom: 12px;
+      box-sizing: border-box;
+      -webkit-appearance: menulist;
+      appearance: menulist;
+    }
     .number-trigger-btn {
       display: block;
       width: 100%;
@@ -722,7 +738,7 @@
   }
 </script>
 <script src="logs.js?v=1.1.0"></script>
-<script src="scripts.js?v=1.22.1"></script>
+<script src="scripts.js?v=1.22.2"></script>
 <script>
   const username = checkLogin();
 
