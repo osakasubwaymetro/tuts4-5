@@ -1,7 +1,7 @@
-// version: 1.20.1
-// 1.20.1: 過去の乗車記録から選ぶ機能で、直通先の行先（この路線の駅リストには無い駅）が
-//         どちらの方面を選んでも両方に出てしまうバグを修正。行先がどのvia_（直通先）の
-//         路線にある駅かを調べて、選んでいる方面と一致するかをちゃんと判定するように変更
+// version: 1.20.2
+// 1.20.2: 直通先の行先マッチングを完全一致から、多少の表記ゆれ（前後の空白・「行き」の
+//         付加など）も許容するように緩和。マッチングに失敗して方向判定不能になり、
+//         両方の方面に出てしまうケースを減らす
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -1070,14 +1070,18 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
   function viaThroughServiceMatchesDirection(boundName) {
     if (isCircular || boardRawIdx === -1 || dirIndex === -1) return null; // 判定材料が無い
     const dirGoesForward = dirIndex > boardingIndex;
+    const bTrim = String(boundName || "").trim();
+    if (!bTrim) return null;
 
     for (let i = 0; i < rawRowNames.length; i++) {
       if (!isViaEntry(rawRowNames[i])) continue;
       const targetRoute = viaTargetRoute(rawRowNames[i]);
       const targetStations = (allstationData || [])
         .filter(r => r["路線"] === targetRoute)
-        .map(r => r["駅名"]);
-      if (!targetStations.includes(boundName)) continue; // この直通先はこのvia_の路線には無い
+        .map(r => String(r["駅名"] || "").trim());
+      // 完全一致だけでなく、多少の表記ゆれ（「行き」等の付加）も許容してマッチさせる
+      const found = targetStations.some(s => s && (s === bTrim || bTrim.includes(s) || s.includes(bTrim)));
+      if (!found) continue; // この直通先はこのvia_の路線には無い
 
       const viaGoesForward = i > boardRawIdx;
       return viaGoesForward === dirGoesForward;
