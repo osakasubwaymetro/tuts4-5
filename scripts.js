@@ -1,5 +1,6 @@
-// version: 1.24.2
-// 1.24.2: 手入力フォームの種別・行先を自由入力（datalist）からプルダウン選択に変更
+// version: 1.24.3
+// 1.24.3: 過去の乗車記録の候補を「5分前〜1時間後」の窓の中だけに絞ってから10件まで表示する
+//         ように変更。窓の中に10件未満しか無ければ、無理に10件まで広げず、その分だけ表示する
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -1227,12 +1228,15 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
   const sameDayType = raw.filter(c => c.isWeekendType === todayIsWeekendType);
   const dayTypePool = sameDayType.length ? sameDayType : raw;
 
-  // 現在時刻の5分前を基準にして、そこから時間帯が近い順に10件表示する
+  // 「5分前〜1時間後」の窓の中にある記録だけを対象にし、近い順に並べる。
+  // 窓の中に10件以上あれば近い方から10件、10件未満ならその窓の中の分だけ全部出す
   const nowMin = timeOfDayMinutes(new Date());
   const refMin = (nowMin - 5 + 1440) % 1440;
+  const WINDOW_MINUTES = 65; // 5分前 〜 1時間後 ＝ 合計65分の窓
   const pool = dayTypePool
     .filter(c => c.time)
     .map(c => ({ ...c, _diff: (timeOfDayMinutes(c.time) - refMin + 1440) % 1440 }))
+    .filter(c => c._diff <= WINDOW_MINUTES)
     .sort((a, b) => (a._diff - b._diff) || (b.time - a.time))
     .slice(0, 10);
 
