@@ -1,7 +1,7 @@
-// version: 1.23.0
-// 1.23.0: ①過去の乗車記録の候補選定を「±30分の固定窓」から「現在時刻の5分前を基準に、
-//         時間帯が近い順に10件」方式に変更。②近くの駅を選択ポップアップに、各駅の
-//         右側にグレーの小さい文字で距離（例: 350m / 1.2km）を表示するように対応
+// version: 1.24.1
+// 1.24.1: ショートカットに任意の時刻を設定できるように対応。時刻を設定した場合は
+//         その前後90分以内の時だけ候補に出るように変更（未設定なら今まで通り常時表示）。
+//         選択時は発車時刻欄にもその時刻を自動入力する
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -1164,6 +1164,23 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
     return null; // 対応するvia_が見つからない＝判定不能
   }
 
+  function computeMatchesDirection(bIndex, b) {
+    let matchesDirection = true;
+    if (isCircular) {
+      matchesDirection = circularMatchesDirection(bIndex);
+      if (bIndex === -1) {
+        const viaMatch = circularViaThroughServiceMatchesDirection(b);
+        if (viaMatch !== null) matchesDirection = viaMatch;
+      }
+    } else if (bIndex !== -1 && boardingIndex !== -1) {
+      matchesDirection = (dirIndex > boardingIndex) ? (bIndex > boardingIndex) : (bIndex < boardingIndex);
+    } else if (bIndex === -1) {
+      const viaMatch = viaThroughServiceMatchesDirection(b);
+      if (viaMatch !== null) matchesDirection = viaMatch;
+    }
+    return matchesDirection;
+  }
+
   // route シートに「ダイヤ改正日」が入っていれば、それ以降の記録だけを対象にする
   const routeRow = (allrouteData || []).find(r => r["路線"] === routeVal);
   const revisionRaw = routeRow ? routeRow["ダイヤ改正日"] : "";
@@ -1194,21 +1211,7 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
         // 行先が方面判定できる（駅リストにある）場合のみ方向でも絞り込む。
         // 直通先（このルート上には無い駅）は、対応するvia_を探して方向を判定する。
         // それも判定できない場合はとりあえず候補に含める
-        let matchesDirection = true;
-        if (isCircular) {
-          matchesDirection = circularMatchesDirection(bIndex);
-          if (bIndex === -1) {
-            const viaMatch = circularViaThroughServiceMatchesDirection(b);
-            if (viaMatch !== null) matchesDirection = viaMatch;
-          }
-        } else if (bIndex !== -1 && boardingIndex !== -1) {
-          matchesDirection = (dirIndex > boardingIndex) ? (bIndex > boardingIndex) : (bIndex < boardingIndex);
-        } else if (bIndex === -1) {
-          const viaMatch = viaThroughServiceMatchesDirection(b);
-          if (viaMatch !== null) matchesDirection = viaMatch;
-        }
-
-        if (matchesDirection) {
+        if (computeMatchesDirection(bIndex, b)) {
           raw.push({ type: t, bound: b, time, isWeekendType: time ? isWeekendType(time, holidaySet) : null });
         }
       });
@@ -1235,35 +1238,124 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
     .sort((a, b) => (a._diff - b._diff) || (b.time - a.time))
     .slice(0, 10);
 
-  // 種別・行先の組み合わせで重複除去
+  // 種別・行先の組み合わせで重複除去（ショートカットを優先して先に登録）
   const seen = new Set();
   const candidates = [];
+
+  // 事前登録しておいたショートカット。時刻を設定していれば、その時間帯に近い時だけ候補に混ぜる
+  // （設定していなければ今まで通り常に候補に混ぜる）
+  function shortcutTimeDiffMinutes(hhmm) {
+    const parts = String(hhmm || "").split(":").map(Number);
+    if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) return Infinity;
+    const t = parts[0] * 60 + parts[1];
+    const diff = Math.abs(t - nowMin);
+    return Math.min(diff, 1440 - diff);
+  }
+
+  let savedShortcuts = [];
+  try { savedShortcuts = JSON.parse(localStorage.getItem("tuts4_shortcuts") || "[]"); } catch (e) { /* ignore */ }
+  savedShortcuts
+    .filter(s => s.route === routeVal && s.station === boardingStation && s.bound)
+    .filter(s => computeMatchesDirection(indexOf(s.bound), s.bound))
+    .filter(s => !s.time || shortcutTimeDiffMinutes(s.time) <= 90) // 時刻設定ありは前後90分以内だけ
+    .forEach(s => {
+      const key = s.sujitype + "|" + s.bound;
+      if (!seen.has(key)) {
+        seen.add(key);
+        candidates.push({
+          type: s.sujitype || "", bound: s.bound, time: null,
+          isShortcut: true, shortcutName: s.name, shortcutTime: s.time || ""
+        });
+      }
+    });
+
   pool.forEach(c => {
     const key = c.type + "|" + c.bound;
     if (!seen.has(key)) { seen.add(key); candidates.push(c); }
   });
 
-  renderHistoryPopupList(candidates);
+  renderHistoryPopupList(candidates, routeVal, boardingStation, dirVal);
 }
 
-function renderHistoryPopupList(candidates) {
+function renderHistoryPopupList(candidates, routeVal, boardingStation, dirVal) {
   const list = document.getElementById("historyModalList");
   list.innerHTML = "";
 
   if (!candidates.length) {
     list.innerHTML = '<p class="modal-loading">この方面での過去の乗車記録が見つかりませんでした。</p>';
-    return;
+  } else {
+    candidates.forEach(c => {
+      const item = document.createElement("button");
+      item.type = "button";
+      const timeLabel = formatHM(c.time);
+      const dest = c.type ? `${c.type}${c.bound}行き` : `${c.bound}行き`;
+      item.textContent = c.isShortcut
+        ? `📌 ${c.shortcutTime ? c.shortcutTime + " " : ""}${dest}（${c.shortcutName}）`
+        : (timeLabel ? `${timeLabel} ${dest}` : dest);
+      item.onclick = () => applyHistoryCandidate(c);
+      list.appendChild(item);
+    });
   }
 
-  candidates.forEach(c => {
-    const item = document.createElement("button");
-    item.type = "button";
-    const timeLabel = formatHM(c.time);
-    const dest = c.type ? `${c.type}${c.bound}行き` : `${c.bound}行き`;
-    item.textContent = timeLabel ? `${timeLabel} ${dest}` : dest;
-    item.onclick = () => applyHistoryCandidate(c);
-    list.appendChild(item);
-  });
+  const manualBtn = document.createElement("button");
+  manualBtn.type = "button";
+  manualBtn.className = "descent-transfer-btn";
+  manualBtn.textContent = "✏️ この中に無い場合はこちら（手入力）";
+  manualBtn.onclick = () => renderManualEntryForm(routeVal);
+  list.appendChild(manualBtn);
+}
+
+// 候補に無い場合の手入力フォーム（ポップアップを閉じずにその場で種別・行先・時刻を入力できる）
+function renderManualEntryForm(routeVal) {
+  setModalTitle("種別・行先を入力");
+  const list = document.getElementById("historyModalList");
+
+  const sujitypes = [...new Set((allsujitypeData || []).filter(r => r["路線"] === routeVal).map(r => r["種別"]))].filter(Boolean);
+  const bounds = [...new Set((allboundData || []).filter(r => r["路線"] === routeVal).map(r => r["行先"]))].filter(Boolean);
+
+  const now = new Date();
+  const pad = n => String(n).padStart(2, "0");
+  const nowVal = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+
+  list.innerHTML = `
+    <label class="edit-field-label">発車時刻</label>
+    <input type="datetime-local" id="manualTimeInput" value="${nowVal}">
+    <label class="edit-field-label">種別（無ければ空欄でOK）</label>
+    <input type="text" id="manualTypeInput" list="manualTypeList" placeholder="例: 快速">
+    <datalist id="manualTypeList">${sujitypes.map(s => `<option value="${s}">`).join("")}</datalist>
+    <label class="edit-field-label">行先</label>
+    <input type="text" id="manualBoundInput" list="manualBoundList" placeholder="行先を入力">
+    <datalist id="manualBoundList">${bounds.map(b => `<option value="${b}">`).join("")}</datalist>
+    <div style="margin-top:14px;">
+      <button type="button" id="manualApplyBtn" class="save-btn">この内容で入力する</button>
+      <button type="button" id="manualBackBtn" class="cancel-btn">← 戻る</button>
+    </div>
+  `;
+
+  document.getElementById("manualBackBtn").onclick = closeHistoryModal;
+
+  document.getElementById("manualApplyBtn").onclick = () => {
+    const timeVal = document.getElementById("manualTimeInput").value;
+    const typeVal = document.getElementById("manualTypeInput").value.trim();
+    const boundVal = document.getElementById("manualBoundInput").value.trim();
+
+    if (!boundVal) {
+      alert("行先を入力してください");
+      return;
+    }
+
+    const typeSel = document.querySelector(".sujitype-select");
+    const boundSel = document.querySelector(".bound-select");
+    if (typeSel) { typeSel.value = typeVal; typeSel.dispatchEvent(new Event("change", { bubbles: true })); }
+    if (boundSel) { boundSel.value = boundVal; boundSel.dispatchEvent(new Event("change", { bubbles: true })); }
+
+    if (timeVal) {
+      const timeEl = document.getElementById("departing_time");
+      if (timeEl) timeEl.value = timeVal;
+    }
+
+    closeHistoryModal();
+  };
 }
 
 function closeHistoryModal() {
@@ -1285,13 +1377,19 @@ function applyHistoryCandidate(c) {
   }
 
   // 発車時刻も、選んだ記録の時刻（今日の日付換算）に合わせる
+  const pad = n => String(n).padStart(2, "0");
   if (c.time) {
     const now = new Date();
     const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), c.time.getHours(), c.time.getMinutes());
-    const pad = n => String(n).padStart(2, "0");
     const timeEl = document.getElementById("departing_time");
     if (timeEl) {
       timeEl.value = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+    }
+  } else if (c.shortcutTime) {
+    const now = new Date();
+    const timeEl = document.getElementById("departing_time");
+    if (timeEl) {
+      timeEl.value = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${c.shortcutTime}`;
     }
   }
 
