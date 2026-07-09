@@ -8,7 +8,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.11.7 -->
+<!-- version: 1.11.8 -->
+<!-- 1.11.8: 運営アカウントでは全ユーザーの投稿を閲覧できるように対応（ユーザーで絞り込み可）。
+           運営アカウントは乗車・降車データのキャッシュ保存を行わず、常に最新を取得する。
+           編集・削除も、行の実際の投稿者名で送信するように修正（運営が他ユーザーの投稿を
+           編集・削除できるように） -->
 <!-- 1.11.7: 降車データ（transfers）もローカルキャッシュに保存し、乗車記録と同じく
            ページを開いた瞬間に即表示→裏で最新に更新するように変更。取得中は進捗率も表示 -->
 <!-- 1.11.6: 「最新データ取得中...」→「✅最新です」の表示が、乗車記録だけでなく降車データ
@@ -336,6 +340,10 @@
   <select id="monthFilter">
     <option value="all">すべて表示</option>
   </select>
+  <label id="userFilterLabel" style="display:none; margin-left:14px;">ユーザーで絞り込み：</label>
+  <select id="userFilter" style="display:none;">
+    <option value="all">全ユーザー</option>
+  </select>
 </div>
 
 <p id="reload">読み込み中...</p>
@@ -347,11 +355,12 @@
   <span id="updateMsg">最新データ取得中...</span>
 </div>
 
-<script src="nav.js?v=1.3.0"></script>
+<script src="nav.js?v=1.4.0"></script>
 <script>initNav("投稿履歴");</script>
 <script src="logs.js?v=1.1.0"></script>
 <script>
 const username = checkLogin();
+const IS_ADMIN = (username === "運営" || username === "ぴなお");
 
 const GAS_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
 // 編集・削除の書き込みは、投稿フォーム（index.html）が使っているのと同じGASのデプロイ先へ送る
@@ -372,12 +381,15 @@ let stationMaster = [];
 let myTransfers = [];
 
 // 降車データもキャッシュしておき、乗車記録と同様に即表示→裏で更新できるようにする
+// （運営アカウントは全ユーザー分を常に最新で見たいので、キャッシュは使わない）
 const TRANSFERS_CACHE_KEY = "tuts4_transfers_cache_" + username;
-try {
-  const cachedTransfers = localStorage.getItem(TRANSFERS_CACHE_KEY);
-  if (cachedTransfers) myTransfers = JSON.parse(cachedTransfers);
-} catch (e) {
-  localStorage.removeItem(TRANSFERS_CACHE_KEY);
+if (!IS_ADMIN) {
+  try {
+    const cachedTransfers = localStorage.getItem(TRANSFERS_CACHE_KEY);
+    if (cachedTransfers) myTransfers = JSON.parse(cachedTransfers);
+  } catch (e) {
+    localStorage.removeItem(TRANSFERS_CACHE_KEY);
+  }
 }
 
 let routeMaster = [];
@@ -594,9 +606,11 @@ Promise.all([
   allModelData = asArray(modelData);
   allNumberData = asArray(numberData);
   myTransfers = asArray(transfersData)
-    .filter(t => String(t["ユーザー名"]) === String(username))
+    .filter(t => IS_ADMIN || String(t["ユーザー名"]) === String(username))
     .map(t => ({ ...t, "元の乗車時刻": stripRideTimePrefix(t["元の乗車時刻"]) }));
-  try { localStorage.setItem(TRANSFERS_CACHE_KEY, JSON.stringify(myTransfers)); } catch (e) { /* 容量超過等は無視 */ }
+  if (!IS_ADMIN) {
+    try { localStorage.setItem(TRANSFERS_CACHE_KEY, JSON.stringify(myTransfers)); } catch (e) { /* 容量超過等は無視 */ }
+  }
   // 既に描画済みなら降車駅の状態を反映して再描画
   if (allData.length) applyMonthFilter();
 }).finally(() => {
@@ -679,8 +693,11 @@ function renderCards(data) {
     // ===== 降車駅の記録（すでに記録済みならそれを表示、無ければ記録用ボタン） =====
     // 複数回記録されている場合は最新（最後に送信されたもの）を採用＝再記録＝上書き扱いにする
     const rideTime = row["時刻"];
-    const existing = [...myTransfers].reverse().find(t => timeKeyMatch(t["元の乗車時刻"], rideTime));
-    const pendingEntry = getPendingTransferFor(username, rideTime);
+    const rowUsername = row["ユーザー名"] || username;
+    const existing = [...myTransfers].reverse().find(t =>
+      String(t["ユーザー名"]) === String(rowUsername) && timeKeyMatch(t["元の乗車時刻"], rideTime)
+    );
+    const pendingEntry = getPendingTransferFor(rowUsername, rideTime);
 
     if (existing || pendingEntry) {
       const p = document.createElement("p");
@@ -843,7 +860,7 @@ function openEditModal(row) {
     saveBtn.disabled = true;
     saveBtn.textContent = "保存中...";
 
-    const payload = { action: "edit", usernameValue: username, originalTimeValue: originalTime };
+    const payload = { action: "edit", usernameValue: row["ユーザー名"] || username, originalTimeValue: originalTime };
     fieldIds.forEach(id => { payload[id] = document.getElementById(`edit_${id}`).value; });
 
     try {
@@ -869,7 +886,7 @@ async function deleteRide(row) {
   try {
     await postToRidesGAS({
       action: "delete",
-      usernameValue: username,
+      usernameValue: row["ユーザー名"] || username,
       originalTimeValue: row["時刻"]
     });
     localStorage.removeItem(CACHE_KEY);
@@ -1098,58 +1115,99 @@ window.addEventListener("online", flushPendingTransfers);
 
 function applyMonthFilter() {
   const selected = document.getElementById("monthFilter").value;
-  renderCards(selected === "all"
-    ? allData
-    : allData.filter(r => String(r["時刻"]).startsWith(selected))
-  );
+  let rows = selected === "all" ? allData : allData.filter(r => String(r["時刻"]).startsWith(selected));
+
+  if (IS_ADMIN) {
+    const userSel = document.getElementById("userFilter").value;
+    if (userSel !== "all") rows = rows.filter(r => String(r["ユーザー名"]) === userSel);
+  }
+
+  renderCards(rows);
 }
 
 document.getElementById("monthFilter").addEventListener("change", applyMonthFilter);
+document.getElementById("userFilter").addEventListener("change", applyMonthFilter);
 
-// ===== ① キャッシュがあれば即表示 =====
-const cached = localStorage.getItem(CACHE_KEY);
-if (cached) {
-  try {
-    allData = JSON.parse(cached);
-    buildMonthFilter(allData);
-    renderCards(allData);
-    document.getElementById("reload").textContent = "";
-  } catch(e) {
-    localStorage.removeItem(CACHE_KEY);
-  }
+function buildUserFilter(data) {
+  if (!IS_ADMIN) return;
+  const sel = document.getElementById("userFilter");
+  const current = sel.value;
+  const users = [...new Set(data.map(r => String(r["ユーザー名"] || "")))].filter(Boolean).sort();
+  sel.innerHTML = '<option value="all">全ユーザー</option>' + users.map(u => `<option value="${u}">${u}</option>`).join("");
+  if (users.includes(current)) sel.value = current;
+  document.getElementById("userFilterLabel").style.display = "";
+  sel.style.display = "";
 }
 
-// ===== ② バックグラウンドで最新データを取得 =====
-showUpdateBar("最新データ取得中...");
+if (IS_ADMIN) {
+  // 運営アカウントは常に全ユーザーの最新データを取得する（キャッシュ保存はしない）
+  showUpdateBar("全ユーザーのデータ取得中...");
 
-fetch(GAS_URL)
-  .then(res => trackFetchProgress(res.json()))
-  .then(rawData => {
-    // 自分の投稿のみに絞り込んでから保存・表示する
-    const data = rawData.filter(r => String(r["ユーザー名"]) === String(username));
-    data.reverse();
+  fetch(GAS_URL)
+    .then(res => trackFetchProgress(res.json()))
+    .then(rawData => {
+      const data = [...rawData].reverse();
+      allData = data;
+      buildMonthFilter(data);
+      buildUserFilter(data);
+      applyMonthFilter();
 
-    // キャッシュと件数が変わっていれば更新
-    const isSame = allData.length === data.length &&
-      JSON.stringify(data[0]) === JSON.stringify(allData[0]);
-
-    localStorage.setItem(CACHE_KEY, JSON.stringify(data));
-    allData = data;
-    buildMonthFilter(data);
-    applyMonthFilter();
-
-    _pendingUpdateMsg = isSame ? "✅ 最新です（降車データ含む）" : `✅ ${data.length} 件に更新しました`;
-    _ridesFetchDone = true;
-    maybeFinishUpdateBar();
-  })
-  .catch(() => {
-    if (!cached) {
+      _pendingUpdateMsg = `✅ 全ユーザー ${data.length} 件を取得しました`;
+      _ridesFetchDone = true;
+      maybeFinishUpdateBar();
+    })
+    .catch(() => {
       document.getElementById("reload").textContent = "データ取得エラーが発生しました。";
+      _ridesFetchDone = true;
+      _updateBarErrored = true;
+      maybeFinishUpdateBar();
+    });
+} else {
+  // ===== ① キャッシュがあれば即表示 =====
+  const cached = localStorage.getItem(CACHE_KEY);
+  if (cached) {
+    try {
+      allData = JSON.parse(cached);
+      buildMonthFilter(allData);
+      renderCards(allData);
+      document.getElementById("reload").textContent = "";
+    } catch(e) {
+      localStorage.removeItem(CACHE_KEY);
     }
-    _ridesFetchDone = true;
-    _updateBarErrored = true;
-    finishUpdateBar("⚠️ 更新失敗（キャッシュを表示中）");
-  });
+  }
+
+  // ===== ② バックグラウンドで最新データを取得 =====
+  showUpdateBar("最新データ取得中...");
+
+  fetch(GAS_URL)
+    .then(res => trackFetchProgress(res.json()))
+    .then(rawData => {
+      // 自分の投稿のみに絞り込んでから保存・表示する
+      const data = rawData.filter(r => String(r["ユーザー名"]) === String(username));
+      data.reverse();
+
+      // キャッシュと件数が変わっていれば更新
+      const isSame = allData.length === data.length &&
+        JSON.stringify(data[0]) === JSON.stringify(allData[0]);
+
+      localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+      allData = data;
+      buildMonthFilter(data);
+      applyMonthFilter();
+
+      _pendingUpdateMsg = isSame ? "✅ 最新です（降車データ含む）" : `✅ ${data.length} 件に更新しました`;
+      _ridesFetchDone = true;
+      maybeFinishUpdateBar();
+    })
+    .catch(() => {
+      if (!cached) {
+        document.getElementById("reload").textContent = "データ取得エラーが発生しました。";
+      }
+      _ridesFetchDone = true;
+      _updateBarErrored = true;
+      finishUpdateBar("⚠️ 更新失敗（キャッシュを表示中）");
+    });
+}
 </script>
 
 </body>

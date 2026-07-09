@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="ja">
-<!-- version: 1.2.1 -->
+<!-- version: 1.3.0 -->
+<!-- 1.3.0: 管理者チェックの対象に「運営」を追加（今まで特定ユーザー名のみアクセス可だった） -->
 <!-- 1.2.1: キャッシュ対策（no-cacheメタタグ、logs.js/nav.jsのバージョンクエリ）を追加 -->
 <!-- 1.2.0: checkLogin()等の重複定義をやめ、logs.js（共通ファイル）を読み込む形に統一 -->
 <!-- 1.1.0: loginVersionマーカーを必須化（Google/運営ログイン方式への切り替えに伴う強制再ログイン） -->
@@ -294,7 +295,7 @@
   </div>
 </main>
 
-<script src="nav.js?v=1.3.0"></script>
+<script src="nav.js?v=1.4.0"></script>
 <script src="logs.js?v=1.1.0"></script>
 <script>initNav("アクセスログ");</script>
 <script>
@@ -304,9 +305,9 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 <script>
 // ===== 管理者チェック =====
-const ADMIN_USER = "ぴなお";
+const ADMIN_USERS = ["ぴなお", "運営"];
 const currentUser = checkLogin();
-if (currentUser !== ADMIN_USER) {
+if (!ADMIN_USERS.includes(currentUser)) {
   alert("このページは管理者専用です。");
   window.location.href = "index.html";
 }
