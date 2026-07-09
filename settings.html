@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="ja">
-<!-- version: 1.3.1 -->
+<!-- version: 1.4.0 -->
+<!-- 1.4.0: ショートカットに任意の時刻（HH:MM）を設定できるように対応 -->
 <!-- 1.3.1: キャッシュ対策（no-cacheメタタグ、logs.js/nav.jsのバージョンクエリ）を追加 -->
 <!-- 1.3.0: 「Googleアカウントを変更」機能を追加。checkLogin()等の重複定義をやめ、
            logs.js（共通ファイル）を読み込む形に統一 -->
@@ -275,6 +276,11 @@
         <option value="">選択してください</option>
       </select>
     </div>
+    <div class="form-row">
+      <label>時刻（任意）</label>
+      <input type="time" id="sc_time">
+      <small class="section-desc">設定すると、その時間帯に近い時だけ候補に出るようになります。空欄なら常に候補に出ます。</small>
+    </div>
     <div class="btn-row">
       <button class="btn-primary" onclick="saveShortcut()">💾 保存する</button>
       <button class="btn-secondary" onclick="clearForm()">クリア</button>
@@ -457,6 +463,7 @@ function saveShortcut() {
     station:  document.getElementById("sc_station").value,
     sujitype: document.getElementById("sc_sujitype").value,
     bound:    document.getElementById("sc_bound").value,
+    time:     document.getElementById("sc_time").value,
   };
 
   const list = loadShortcuts();
@@ -475,7 +482,7 @@ function saveShortcut() {
 
 // ===== フォームクリア =====
 function clearForm() {
-  ["sc_name","sc_area","sc_type","sc_company","sc_route","sc_station","sc_sujitype","sc_bound"]
+  ["sc_name","sc_area","sc_type","sc_company","sc_route","sc_station","sc_sujitype","sc_bound","sc_time"]
     .forEach(id => {
       const el = document.getElementById(id);
       el.value = "";
@@ -511,6 +518,7 @@ async function editShortcut(index) {
   document.getElementById("sc_station").value  = sc.station;
   document.getElementById("sc_sujitype").value = sc.sujitype;
   document.getElementById("sc_bound").value    = sc.bound;
+  document.getElementById("sc_time").value     = sc.time || "";
 
   document.querySelector(".btn-primary").textContent = "✏️ 更新する";
   document.getElementById("sc_name").scrollIntoView({ behavior: "smooth" });
@@ -540,7 +548,7 @@ function renderList() {
 
   container.innerHTML = "";
   list.forEach((sc, i) => {
-    const parts = [sc.route, sc.station, sc.sujitype, sc.bound].filter(Boolean);
+    const parts = [sc.route, sc.station, sc.sujitype, sc.bound, sc.time ? `${sc.time}頃` : "常時"].filter(Boolean);
     const detail = parts.join(" / ") || "詳細なし";
     const card = document.createElement("div");
     card.className = "shortcut-card";
