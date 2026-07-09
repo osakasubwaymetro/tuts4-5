@@ -8,7 +8,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.10.2 -->
+  <!-- version: 1.11.0 -->
+  <!-- 1.11.0: 過去の乗車記録ポップアップにショートカット合流＋手入力オプションを追加するための
+             スタイル（edit-field-label, save-btn, cancel-btn 等）を追加 -->
   <!-- 1.10.2: 編成グループ絞り込みプルダウンの幅がSafariで無視される問題を修正
              （appearance:menulistがネイティブ矢印を強制し幅指定を無視していたのが原因。
              appearance:noneのカスタム矢印方式に変更） -->
@@ -607,6 +609,31 @@
       background: #f2f2f2 !important;
       color: #888 !important;
     }
+    .edit-field-label {
+      display: block;
+      font-size: 12px;
+      color: #888;
+      margin: 10px 0 3px;
+    }
+    #historyModalList input[type="text"],
+    #historyModalList input[type="datetime-local"] {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1.5px solid #E3E8F0;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    .save-btn, .cancel-btn {
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: none;
+      font-size: 14px;
+      cursor: pointer;
+      margin-right: 8px;
+    }
+    .save-btn { background: #004C97; color: white; }
+    .cancel-btn { background: #eee; color: #666; }
   </style>
 </head>
 <body>
@@ -745,7 +772,7 @@
   }
 </script>
 <script src="logs.js?v=1.1.0"></script>
-<script src="scripts.js?v=1.23.0"></script>
+<script src="scripts.js?v=1.24.1"></script>
 <script>
   const username = checkLogin();
 
