@@ -1,7 +1,5 @@
-// version: 1.24.1
-// 1.24.1: ショートカットに任意の時刻を設定できるように対応。時刻を設定した場合は
-//         その前後90分以内の時だけ候補に出るように変更（未設定なら今まで通り常時表示）。
-//         選択時は発車時刻欄にもその時刻を自動入力する
+// version: 1.24.2
+// 1.24.2: 手入力フォームの種別・行先を自由入力（datalist）からプルダウン選択に変更
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -1320,12 +1318,16 @@ function renderManualEntryForm(routeVal) {
   list.innerHTML = `
     <label class="edit-field-label">発車時刻</label>
     <input type="datetime-local" id="manualTimeInput" value="${nowVal}">
-    <label class="edit-field-label">種別（無ければ空欄でOK）</label>
-    <input type="text" id="manualTypeInput" list="manualTypeList" placeholder="例: 快速">
-    <datalist id="manualTypeList">${sujitypes.map(s => `<option value="${s}">`).join("")}</datalist>
+    <label class="edit-field-label">種別（無ければ「選択してください」のままでOK）</label>
+    <select id="manualTypeInput">
+      <option value="">選択してください</option>
+      ${sujitypes.map(s => `<option value="${s}">${s}</option>`).join("")}
+    </select>
     <label class="edit-field-label">行先</label>
-    <input type="text" id="manualBoundInput" list="manualBoundList" placeholder="行先を入力">
-    <datalist id="manualBoundList">${bounds.map(b => `<option value="${b}">`).join("")}</datalist>
+    <select id="manualBoundInput">
+      <option value="">選択してください</option>
+      ${bounds.map(b => `<option value="${b}">${b}</option>`).join("")}
+    </select>
     <div style="margin-top:14px;">
       <button type="button" id="manualApplyBtn" class="save-btn">この内容で入力する</button>
       <button type="button" id="manualBackBtn" class="cancel-btn">← 戻る</button>
@@ -1336,11 +1338,11 @@ function renderManualEntryForm(routeVal) {
 
   document.getElementById("manualApplyBtn").onclick = () => {
     const timeVal = document.getElementById("manualTimeInput").value;
-    const typeVal = document.getElementById("manualTypeInput").value.trim();
-    const boundVal = document.getElementById("manualBoundInput").value.trim();
+    const typeVal = document.getElementById("manualTypeInput").value;
+    const boundVal = document.getElementById("manualBoundInput").value;
 
     if (!boundVal) {
-      alert("行先を入力してください");
+      alert("行先を選択してください");
       return;
     }
 
