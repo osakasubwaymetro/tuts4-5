@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="ja">
-<!-- version: 1.4.0 -->
+<!-- version: 1.4.1 -->
+<!-- 1.4.1: スマホでテーブルが画面幅を超えると内容が見えなくなる問題を修正
+           （overflow:hiddenで単純に切れていたのを、横スクロールできる形に変更） -->
 <!-- 1.4.0: URL・リファラ・IPの列を追加表示（logs.js/log_write_gas.gsの拡張に対応） -->
 <!-- 1.3.1: 管理者チェックの対象を「運営」のみに限定 -->
 <!-- 1.3.0: 管理者チェックの対象に「運営」を追加（今まで特定ユーザー名のみアクセス可だった） -->
@@ -104,6 +106,11 @@
     overflow: hidden;
   }
 
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
   .table-header-row {
     display: flex;
     justify-content: space-between;
@@ -125,6 +132,7 @@
 
   table {
     width: 100%;
+    min-width: 900px;
     border-collapse: collapse;
     font-size: 13px;
   }
@@ -279,21 +287,23 @@
         <div class="table-title">📋 アクセスログ</div>
         <div class="record-count" id="recordCount"></div>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th onclick="sortBy('時刻')">時刻 ↕</th>
-            <th onclick="sortBy('ユーザー名')">ユーザー ↕</th>
-            <th>アクション</th>
-            <th>内容</th>
-            <th>UserAgent</th>
-            <th>URL</th>
-            <th>リファラ</th>
-            <th>IP</th>
-          </tr>
-        </thead>
-        <tbody id="logTableBody"></tbody>
-      </table>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th onclick="sortBy('時刻')">時刻 ↕</th>
+              <th onclick="sortBy('ユーザー名')">ユーザー ↕</th>
+              <th>アクション</th>
+              <th>内容</th>
+              <th>UserAgent</th>
+              <th>URL</th>
+              <th>リファラ</th>
+              <th>IP</th>
+            </tr>
+          </thead>
+          <tbody id="logTableBody"></tbody>
+        </table>
+      </div>
       <div class="pagination" id="pagination"></div>
     </div>
 
