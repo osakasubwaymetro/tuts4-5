@@ -8,7 +8,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.11.0 -->
+  <!-- version: 1.11.1 -->
+  <!-- 1.11.1: メモ欄・ユーザー名表示欄にautocomplete="off"を追加。ブラウザのオートフィルが
+             メモ欄にユーザー名等の無関係な値を提案・自動入力してしまう可能性への対策 -->
   <!-- 1.11.0: 過去の乗車記録ポップアップにショートカット合流＋手入力オプションを追加するための
              スタイル（edit-field-label, save-btn, cancel-btn 等）を追加 -->
   <!-- 1.10.2: 編成グループ絞り込みプルダウンの幅がSafariで無視される問題を修正
@@ -659,7 +661,7 @@
   </div>
   
   <label><h3>ユーザー名</h3></label>
-  <input type="text" id="username" readonly>
+  <input type="text" id="username" readonly autocomplete="off">
 
   
   <label><h3>発車時刻</h3></label>
@@ -730,7 +732,7 @@
 
   <label><h3>メモ</h3></label>
   <small>プルダウンにない場合はここに入力してください</small>
-  <input type="text" id="memo">
+  <input type="text" id="memo" name="ride_memo_note" autocomplete="off">
 
   <div class="notice-card">
     <h2 class="notice-title">お知らせ</h2>
@@ -760,7 +762,7 @@
   </div>
 </div>
 
-<script src="nav.js?v=1.4.1"></script>
+<script src="nav.js?v=1.5.0"></script>
 <script>initNav("新規投稿");</script>
 <script>
   const _urlParams = new URLSearchParams(location.search);
