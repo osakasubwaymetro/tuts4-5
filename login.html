@@ -8,7 +8,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ログイン | tuts4</title>
-<!-- version: 2.1.1 -->
+<!-- version: 2.2.0 -->
+<!-- 2.2.0: 運営ログインのユーザー名を固定（自由入力欄を廃止）。他の名前でこのフォームから
+           ログインできないように修正 -->
 <!-- 2.1.1: キャッシュ対策（no-cacheメタタグ）を追加 -->
 <!-- 2.1.0: ログイン成功時にloginVersion="2"を記録するように対応（旧キャッシュの強制ログアウト用） -->
 <!-- 2.0.0: Googleログインを追加。初回のみ「今までのユーザー名」を紐付けることで、
@@ -133,9 +135,8 @@
     <div class="divider">または</div>
     <button type="button" class="admin-toggle" onclick="toggleAdminForm()">運営アカウントでログイン</button>
 
-    <!-- 運営ログイン（従来方式） -->
+    <!-- 運営ログイン（従来方式・「運営」専用） -->
     <div id="adminForm">
-      <input type="text" id="username" placeholder="ユーザー名">
       <input type="password" id="accessKey" placeholder="アクセスキー（8桁）">
       <button onclick="login()">ログイン</button>
       <p id="msg"></p>
@@ -269,12 +270,12 @@ function toggleAdminForm() {
 
 // ===== 運営ログイン（従来方式） =====
 function login() {
-  const username = document.getElementById("username").value.trim();
+  const username = "運営"; // このフォームは運営専用（ユーザー名を自由に打てないようにしている）
   const key = document.getElementById("accessKey").value.trim();
   const msg = document.getElementById("msg");
 
-  if (!username || !key) {
-    msg.textContent = "ユーザー名とアクセスキーを入力してください。";
+  if (!key) {
+    msg.textContent = "アクセスキーを入力してください。";
     msg.style.color = "red";
     return;
   }
