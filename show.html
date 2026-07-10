@@ -8,7 +8,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.11.8 -->
+<!-- version: 1.11.9 -->
+<!-- 1.11.9: 管理者判定（全ユーザー閲覧）の対象を「運営」のみに限定 -->
 <!-- 1.11.8: 運営アカウントでは全ユーザーの投稿を閲覧できるように対応（ユーザーで絞り込み可）。
            運営アカウントは乗車・降車データのキャッシュ保存を行わず、常に最新を取得する。
            編集・削除も、行の実際の投稿者名で送信するように修正（運営が他ユーザーの投稿を
@@ -355,12 +356,12 @@
   <span id="updateMsg">最新データ取得中...</span>
 </div>
 
-<script src="nav.js?v=1.4.0"></script>
+<script src="nav.js?v=1.4.1"></script>
 <script>initNav("投稿履歴");</script>
 <script src="logs.js?v=1.1.0"></script>
 <script>
 const username = checkLogin();
-const IS_ADMIN = (username === "運営" || username === "ぴなお");
+const IS_ADMIN = (username === "運営");
 
 const GAS_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
 // 編集・削除の書き込みは、投稿フォーム（index.html）が使っているのと同じGASのデプロイ先へ送る
