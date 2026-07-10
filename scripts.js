@@ -1,6 +1,7 @@
-// version: 1.24.3
-// 1.24.3: 過去の乗車記録の候補を「5分前〜1時間後」の窓の中だけに絞ってから10件まで表示する
-//         ように変更。窓の中に10件未満しか無ければ、無理に10件まで広げず、その分だけ表示する
+// version: 1.24.4
+// 1.24.4: 下書き復元のタイミングを「読み込みから固定800ms後」から「実際に路線・車両形式の
+//         マスタデータが揃うまで待つ」方式に変更。マスタデータの読み込み項目が増えた影響で、
+//         固定時間待ちだと間に合わず復元に失敗することがあった
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -1871,10 +1872,23 @@ async function restoreDraft() {
   }
 }
 
-// マスタデータの読み込みが一段落する頃合いを見て下書きを復元する
+// マスタデータ（路線・車両形式）が実際に読み込まれるまで待ってから下書きを復元する
+// （固定時間待ちだと、マスタデータの読み込みが増えた分、間に合わず復元に失敗することがあった）
 window.addEventListener("load", () => {
-  setTimeout(restoreDraft, 800);
+  waitForMasterDataThenRestore();
 });
+
+async function waitForMasterDataThenRestore() {
+  const maxWaitMs = 6000;
+  const start = Date.now();
+  while (
+    (!allrouteData || !allrouteData.length || !allmodelData || !allmodelData.length) &&
+    (Date.now() - start < maxWaitMs)
+  ) {
+    await new Promise(r => setTimeout(r, 150));
+  }
+  restoreDraft();
+}
 
 
 
