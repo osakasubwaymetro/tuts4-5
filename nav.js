@@ -2,7 +2,8 @@
  * nav.js — 共通ヘッダー管理ファイル
  * 新しいページを追加するときは NAV_LINKS だけ編集してください
  *
- * version: 1.4.0
+ * version: 1.4.1
+ * 1.4.1: 管理者専用リンクの対象を「運営」のみに限定（他の特定ユーザー名の許可を削除）
  * 1.4.0: 管理者専用リンクの対象に「運営」を追加（今まで特定ユーザー名のみだった）
  * 1.3.0: 過去分の一括チェック機能を撤去（乗車履歴ページから個別に記録する方式に変更したため）
  */
@@ -165,7 +166,7 @@ function initNav(pageTitle) {
   const currentUser = localStorage.getItem("username") || "";
 
   // 管理者のみ表示するリンク
-  const ADMIN_USERS = ["ぴなお", "運営"];
+  const ADMIN_USERS = ["運営"];
   const adminLinks = ADMIN_USERS.includes(currentUser)
     ? [{ href: "log.html", icon: "🔍", label: "ログ管理" }]
     : [];
