@@ -1,5 +1,8 @@
 // logs.js
-// version: 1.1.0
+// version: 1.2.0
+// 1.2.0: IP取得をログ送信から切り離し、ページ読み込み時にバックグラウンドで先に済ませる方式に
+//        変更。IP取得完了を待ってからログを送っていたため、取得中にページ遷移されると
+//        ログ送信自体が飛ばずに消えてしまう問題があった
 // 1.1.0: loginVersionマーカーを必須化。Google/運営ログイン方式への切り替えに伴い、
 //        古いキャッシュのままのセッションを強制的にログインし直させる
 
@@ -27,6 +30,15 @@ function checkLogin() {
 }
 
 // ログ送信用関数（プリフライトを避けるため no-cors で送信）
+let _cachedClientIP = null;
+// ページ読み込み時に一度だけバックグラウンドで取得しておく。
+// ログ送信側はこれを待たない（待つと、取得中にページ遷移された時にログ送信自体が
+// 飛ばずに消えてしまうことがあったため）
+fetch("https://api.ipify.org?format=json")
+  .then(r => r.json())
+  .then(d => { _cachedClientIP = d.ip; })
+  .catch(() => { _cachedClientIP = "unknown"; });
+
 function logAction(action, details = "") {
   const username = localStorage.getItem("username") || "未ログイン";
   const payload = {
@@ -34,7 +46,10 @@ function logAction(action, details = "") {
     username,
     details,
     timestamp: new Date().toISOString(),
-    userAgent: navigator.userAgent
+    userAgent: navigator.userAgent,
+    url: location.href,
+    referrer: document.referrer || "(直接アクセス)",
+    ip: _cachedClientIP || "unknown"
   };
 
   // no-cors にすることでプリフライト(OPTIONS)を防ぎ、Apps Script に届くようにする
