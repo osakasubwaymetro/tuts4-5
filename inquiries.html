@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>お問い合わせ管理</title>
+<!-- version: 1.0.0 -->
+<style>
+  body {
+    font-family: "Hiragino Sans", "Segoe UI", sans-serif;
+    background: #F7F8FA;
+    margin: 0;
+    padding-bottom: 40px;
+  }
+  main { max-width: 700px; margin: 0 auto; padding: 16px; }
+  h2 { color: #004C97; margin: 24px 0 10px; }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+  }
+  .card-title { font-weight: bold; color: #004C97; }
+  .card-time { font-size: 12px; color: #999; margin: 2px 0 6px; }
+  .card-body { font-size: 14px; line-height: 1.6; white-space: pre-wrap; margin-bottom: 8px; }
+  .status-badge {
+    display: inline-block;
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin-left: 8px;
+    cursor: pointer;
+  }
+  .status-未対応 { background: #FFEBEB; color: #C0392B; }
+  .status-対応中 { background: #FFF3CD; color: #7a5b00; }
+  .status-対応済み { background: #E6F4EA; color: #1e8449; }
+  select.status-select {
+    font-size: 12px;
+    padding: 3px 6px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    margin-left: 8px;
+  }
+  .reply-box {
+    margin-top: 8px;
+    padding: 10px 12px;
+    background: #EEF4FF;
+    border-radius: 8px;
+    font-size: 13px;
+    white-space: pre-wrap;
+  }
+  textarea, input[type="text"] {
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1.5px solid #E3E8F0;
+    font-size: 14px;
+    box-sizing: border-box;
+    font-family: inherit;
+    margin-top: 6px;
+  }
+  textarea { min-height: 70px; resize: vertical; }
+  button {
+    margin-top: 8px;
+    background: #004C97;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button:hover { background: #003872; }
+  button.danger { background: #C0392B; }
+  button.danger:hover { background: #922b21; }
+  .empty-msg { color: #999; text-align: center; padding: 20px; }
+  .filter-row { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .filter-row button {
+    margin-top: 0;
+    background: #EEF4FF;
+    color: #004C97;
+  }
+  .filter-row button.active { background: #004C97; color: #fff; }
+  .announce-target { font-size: 12px; color: #888; }
+</style>
+</head>
+<body>
+
+<main>
+  <h2>📢 お知らせを送る</h2>
+  <div class="card">
+    <input type="text" id="announceTitle" placeholder="タイトル（例: アップデート情報）">
+    <textarea id="announceBody" placeholder="本文"></textarea>
+    <input type="text" id="announceTarget" placeholder="対象ユーザー名（空欄なら全員向け）">
+    <button type="button" onclick="postAnnouncement()">送信する</button>
+    <p id="announceMsg" style="font-size:13px;"></p>
+  </div>
+
+  <h2>📢 送信済みのお知らせ</h2>
+  <div id="announceList"><p class="empty-msg">読み込み中...</p></div>
+
+  <h2>📩 お問い合わせ一覧</h2>
+  <div class="filter-row" id="statusFilterRow">
+    <button type="button" data-status="all" class="active" onclick="setFilter('all')">すべて</button>
+    <button type="button" data-status="未対応" onclick="setFilter('未対応')">未対応</button>
+    <button type="button" data-status="対応中" onclick="setFilter('対応中')">対応中</button>
+    <button type="button" data-status="対応済み" onclick="setFilter('対応済み')">対応済み</button>
+  </div>
+  <div id="inquiryList"><p class="empty-msg">読み込み中...</p></div>
+</main>
+
+<script src="nav.js?v=1.5.0"></script>
+<script src="logs.js?v=1.1.0"></script>
+<script>initNav("お問い合わせ管理");</script>
+<script>
+const ADMIN_USERS = ["運営"];
+const currentUser = checkLogin();
+if (!ADMIN_USERS.includes(currentUser)) {
+  alert("このページは管理者専用です。");
+  window.location.href = "index.html";
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  logAction("view", "ページ閲覧: inquiries.html");
+});
+
+const FEEDBACK_URL = "https://script.google.com/macros/s/AKfycbwtVt6XHrMjd7UxKa-QwOZivYy5ksGTDpy8hqpiNS3EoTj4ye4WMZljBrV8g0WEiXaZ/exec";
+let allInquiries = [];
+let currentFilter = "all";
+
+function formatTime(t) {
+  if (!t) return "";
+  const d = new Date(t);
+  if (isNaN(d)) return String(t);
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function setFilter(status) {
+  currentFilter = status;
+  document.querySelectorAll("#statusFilterRow button").forEach(b => {
+    b.classList.toggle("active", b.dataset.status === status);
+  });
+  renderInquiries();
+}
+
+async function loadAnnouncements() {
+  const box = document.getElementById("announceList");
+  try {
+    const res = await fetch(`${FEEDBACK_URL}?type=announcements`);
+    const data = await res.json();
+    const list = [...data].reverse();
+
+    if (!list.length) {
+      box.innerHTML = '<p class="empty-msg">お知らせはまだありません</p>';
+      return;
+    }
+
+    box.innerHTML = list.map(a => `
+      <div class="card">
+        <div class="card-title">${a["タイトル"] || "お知らせ"}</div>
+        <div class="card-time">${formatTime(a["時刻"])}　<span class="announce-target">${a["対象ユーザー"] ? "宛先: " + a["対象ユーザー"] : "全員向け"}</span></div>
+        <div class="card-body">${a["本文"] || ""}</div>
+        <button type="button" class="danger" onclick="deleteAnnouncement('${a["ID"]}')">削除</button>
+      </div>
+    `).join("");
+  } catch (e) {
+    box.innerHTML = '<p class="empty-msg">お知らせの取得に失敗しました</p>';
+    console.error(e);
+  }
+}
+
+async function postAnnouncement() {
+  const title = document.getElementById("announceTitle").value.trim();
+  const body = document.getElementById("announceBody").value.trim();
+  const target = document.getElementById("announceTarget").value.trim();
+  const msg = document.getElementById("announceMsg");
+
+  if (!body) {
+    msg.style.color = "red";
+    msg.textContent = "本文を入力してください。";
+    return;
+  }
+
+  msg.style.color = "#666";
+  msg.textContent = "送信中...";
+
+  try {
+    const res = await fetch(FEEDBACK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: "postAnnouncement", title, body, targetUsername: target })
+    });
+    const data = await res.json();
+    if (data.result !== "success") throw new Error(data.message || "送信に失敗しました");
+
+    msg.style.color = "green";
+    msg.textContent = "送信しました。";
+    document.getElementById("announceTitle").value = "";
+    document.getElementById("announceBody").value = "";
+    document.getElementById("announceTarget").value = "";
+    loadAnnouncements();
+  } catch (e) {
+    msg.style.color = "red";
+    msg.textContent = "送信に失敗しました: " + e.message;
+    console.error(e);
+  }
+}
+
+async function deleteAnnouncement(id) {
+  if (!confirm("このお知らせを削除しますか？")) return;
+  try {
+    const res = await fetch(FEEDBACK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: "deleteAnnouncement", id })
+    });
+    const data = await res.json();
+    if (data.result !== "success") throw new Error(data.message || "削除に失敗しました");
+    loadAnnouncements();
+  } catch (e) {
+    alert("削除に失敗しました: " + e.message);
+    console.error(e);
+  }
+}
+
+async function loadInquiries() {
+  try {
+    const res = await fetch(FEEDBACK_URL);
+    const data = await res.json();
+    allInquiries = [...data].reverse();
+    renderInquiries();
+  } catch (e) {
+    document.getElementById("inquiryList").innerHTML = '<p class="empty-msg">お問い合わせの取得に失敗しました</p>';
+    console.error(e);
+  }
+}
+
+function renderInquiries() {
+  const box = document.getElementById("inquiryList");
+  const list = currentFilter === "all"
+    ? allInquiries
+    : allInquiries.filter(i => (i["状態"] || "未対応") === currentFilter);
+
+  if (!list.length) {
+    box.innerHTML = '<p class="empty-msg">該当するお問い合わせはありません</p>';
+    return;
+  }
+
+  box.innerHTML = list.map(i => `
+    <div class="card">
+      <div class="card-title">${i["ユーザー名"] || "(不明)"} さんより
+        <select class="status-select" onchange="updateStatus('${i["ID"]}', this.value)">
+          <option value="未対応" ${i["状態"]==="未対応"?"selected":""}>未対応</option>
+          <option value="対応中" ${i["状態"]==="対応中"?"selected":""}>対応中</option>
+          <option value="対応済み" ${i["状態"]==="対応済み"?"selected":""}>対応済み</option>
+        </select>
+      </div>
+      <div class="card-time">${formatTime(i["時刻"])}</div>
+      <div class="card-body">${i["内容"] || ""}</div>
+      ${i["返信"] ? `<div class="reply-box">💬 返信済み（${formatTime(i["返信日時"])}）<br>${i["返信"]}</div>` : `
+        <textarea id="reply_${i["ID"]}" placeholder="返信内容を入力"></textarea>
+        <button type="button" onclick="sendReply('${i["ID"]}')">返信を送信（自動で対応済みになります）</button>
+      `}
+    </div>
+  `).join("");
+}
+
+async function updateStatus(id, status) {
+  try {
+    const res = await fetch(FEEDBACK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: "updateInquiryStatus", id, status })
+    });
+    const data = await res.json();
+    if (data.result !== "success") throw new Error(data.message || "更新に失敗しました");
+    const target = allInquiries.find(i => i["ID"] === id);
+    if (target) target["状態"] = status;
+  } catch (e) {
+    alert("更新に失敗しました: " + e.message);
+    console.error(e);
+  }
+}
+
+async function sendReply(id) {
+  const textarea = document.getElementById(`reply_${id}`);
+  const reply = textarea.value.trim();
+  if (!reply) {
+    alert("返信内容を入力してください。");
+    return;
+  }
+
+  try {
+    const res = await fetch(FEEDBACK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: "replyInquiry", id, reply })
+    });
+    const data = await res.json();
+    if (data.result !== "success") throw new Error(data.message || "返信に失敗しました");
+    loadInquiries();
+  } catch (e) {
+    alert("返信に失敗しました: " + e.message);
+    console.error(e);
+  }
+}
+
+loadAnnouncements();
+loadInquiries();
+</script>
+
+</body>
+</html>

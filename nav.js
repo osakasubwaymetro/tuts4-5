@@ -2,7 +2,9 @@
  * nav.js — 共通ヘッダー管理ファイル
  * 新しいページを追加するときは NAV_LINKS だけ編集してください
  *
- * version: 1.4.1
+ * version: 1.5.0
+ * 1.5.0: お知らせ・お問い合わせページ（contact.html）をメニューに追加。
+ *        管理者メニューに「お問い合わせ管理」（inquiries.html）を追加
  * 1.4.1: 管理者専用リンクの対象を「運営」のみに限定（他の特定ユーザー名の許可を削除）
  * 1.4.0: 管理者専用リンクの対象に「運営」を追加（今まで特定ユーザー名のみだった）
  * 1.3.0: 過去分の一括チェック機能を撤去（乗車履歴ページから個別に記録する方式に変更したため）
@@ -15,6 +17,7 @@ const NAV_LINKS = [
   { href: "show.html",       icon: "📜", label: "投稿履歴" },
   { href: "statistick.html", icon: "📊", label: "統計情報" },
   { href: "stampbook.html",  icon: "🎫", label: "スタンプ帳" },
+  { href: "contact.html",    icon: "📩", label: "お知らせ・お問い合わせ" },
   { href: "settings.html",   icon: "⚙️", label: "設定" },
 ];
 
@@ -168,7 +171,10 @@ function initNav(pageTitle) {
   // 管理者のみ表示するリンク
   const ADMIN_USERS = ["運営"];
   const adminLinks = ADMIN_USERS.includes(currentUser)
-    ? [{ href: "log.html", icon: "🔍", label: "ログ管理" }]
+    ? [
+        { href: "log.html", icon: "🔍", label: "ログ管理" },
+        { href: "inquiries.html", icon: "📮", label: "お問い合わせ管理" },
+      ]
     : [];
 
   // メニューリンクを生成（通常リンク＋管理者リンク）

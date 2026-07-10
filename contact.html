@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>お知らせ・お問い合わせ</title>
+<!-- version: 1.0.0 -->
+<style>
+  body {
+    font-family: "Hiragino Sans", "Segoe UI", sans-serif;
+    background: #F7F8FA;
+    margin: 0;
+    padding-bottom: 40px;
+  }
+  main { max-width: 640px; margin: 0 auto; padding: 16px; }
+  h2 { color: #004C97; margin: 24px 0 10px; }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+  }
+  .card-title { font-weight: bold; color: #004C97; margin-bottom: 4px; }
+  .card-time { font-size: 12px; color: #999; margin-bottom: 6px; }
+  .card-body { font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
+  .status-badge {
+    display: inline-block;
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin-left: 8px;
+  }
+  .status-未対応 { background: #FFEBEB; color: #C0392B; }
+  .status-対応中 { background: #FFF3CD; color: #7a5b00; }
+  .status-対応済み { background: #E6F4EA; color: #1e8449; }
+  .reply-box {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: #EEF4FF;
+    border-radius: 8px;
+    font-size: 13px;
+    white-space: pre-wrap;
+  }
+  textarea, input[type="text"] {
+    width: 100%;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1.5px solid #E3E8F0;
+    font-size: 14px;
+    box-sizing: border-box;
+    font-family: inherit;
+  }
+  textarea { min-height: 100px; resize: vertical; margin-top: 8px; }
+  button {
+    margin-top: 10px;
+    background: #004C97;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button:hover { background: #003872; }
+  .empty-msg { color: #999; text-align: center; padding: 20px; }
+</style>
+</head>
+<body>
+
+<main>
+  <h2>📢 お知らせ</h2>
+  <div id="announceList"><p class="empty-msg">読み込み中...</p></div>
+
+  <h2>📩 お問い合わせ</h2>
+  <div class="card">
+    <label>内容</label>
+    <textarea id="inquiryContent" placeholder="ご意見・不具合報告・ご要望など、お気軽にどうぞ"></textarea>
+    <button type="button" onclick="submitInquiry()">送信する</button>
+    <p id="inquiryMsg" style="font-size:13px;"></p>
+  </div>
+
+  <h2>📜 過去のお問い合わせ</h2>
+  <div id="myInquiryList"><p class="empty-msg">読み込み中...</p></div>
+</main>
+
+<script src="nav.js?v=1.5.0"></script>
+<script src="logs.js?v=1.1.0"></script>
+<script>initNav("お知らせ・お問い合わせ");</script>
+<script>
+const username = checkLogin();
+const FEEDBACK_URL = "https://script.google.com/macros/s/AKfycbwtVt6XHrMjd7UxKa-QwOZivYy5ksGTDpy8hqpiNS3EoTj4ye4WMZljBrV8g0WEiXaZ/exec";
+
+document.addEventListener("DOMContentLoaded", () => {
+  logAction("view", "ページ閲覧: contact.html");
+});
+
+function statusBadge(status) {
+  const s = status || "未対応";
+  return `<span class="status-badge status-${s}">${s}</span>`;
+}
+
+function formatTime(t) {
+  if (!t) return "";
+  const d = new Date(t);
+  if (isNaN(d)) return String(t);
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function loadAnnouncements() {
+  const box = document.getElementById("announceList");
+  try {
+    const res = await fetch(`${FEEDBACK_URL}?type=announcements`);
+    const data = await res.json();
+    const mine = data
+      .filter(a => !a["対象ユーザー"] || String(a["対象ユーザー"]) === String(username))
+      .reverse();
+
+    if (!mine.length) {
+      box.innerHTML = '<p class="empty-msg">お知らせはまだありません</p>';
+      return;
+    }
+
+    box.innerHTML = mine.map(a => `
+      <div class="card">
+        <div class="card-title">${a["タイトル"] || "お知らせ"}</div>
+        <div class="card-time">${formatTime(a["時刻"])}${a["対象ユーザー"] ? "（あなた宛て）" : ""}</div>
+        <div class="card-body">${a["本文"] || ""}</div>
+      </div>
+    `).join("");
+  } catch (e) {
+    box.innerHTML = '<p class="empty-msg">お知らせの取得に失敗しました</p>';
+    console.error(e);
+  }
+}
+
+async function loadMyInquiries() {
+  const box = document.getElementById("myInquiryList");
+  try {
+    const res = await fetch(FEEDBACK_URL);
+    const data = await res.json();
+    const mine = data.filter(i => String(i["ユーザー名"]) === String(username)).reverse();
+
+    if (!mine.length) {
+      box.innerHTML = '<p class="empty-msg">お問い合わせ履歴はありません</p>';
+      return;
+    }
+
+    box.innerHTML = mine.map(i => `
+      <div class="card">
+        <div class="card-title">お問い合わせ ${statusBadge(i["状態"])}</div>
+        <div class="card-time">${formatTime(i["時刻"])}</div>
+        <div class="card-body">${i["内容"] || ""}</div>
+        ${i["返信"] ? `<div class="reply-box">💬 運営からの返信（${formatTime(i["返信日時"])}）<br>${i["返信"]}</div>` : ""}
+      </div>
+    `).join("");
+  } catch (e) {
+    box.innerHTML = '<p class="empty-msg">お問い合わせ履歴の取得に失敗しました</p>';
+    console.error(e);
+  }
+}
+
+async function submitInquiry() {
+  const content = document.getElementById("inquiryContent").value.trim();
+  const msg = document.getElementById("inquiryMsg");
+  if (!content) {
+    msg.style.color = "red";
+    msg.textContent = "内容を入力してください。";
+    return;
+  }
+
+  msg.style.color = "#666";
+  msg.textContent = "送信中...";
+
+  try {
+    const res = await fetch(FEEDBACK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: "submitInquiry", username, content })
+    });
+    const data = await res.json();
+    if (data.result !== "success") throw new Error(data.message || "送信に失敗しました");
+
+    msg.style.color = "green";
+    msg.textContent = "送信しました。ご連絡ありがとうございます。";
+    document.getElementById("inquiryContent").value = "";
+    loadMyInquiries();
+  } catch (e) {
+    msg.style.color = "red";
+    msg.textContent = "送信に失敗しました: " + e.message;
+    console.error(e);
+  }
+}
+
+loadAnnouncements();
+loadMyInquiries();
+</script>
+
+</body>
+</html>
