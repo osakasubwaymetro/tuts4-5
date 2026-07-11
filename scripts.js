@@ -1,7 +1,7 @@
-// version: 1.24.4
-// 1.24.4: 下書き復元のタイミングを「読み込みから固定800ms後」から「実際に路線・車両形式の
-//         マスタデータが揃うまで待つ」方式に変更。マスタデータの読み込み項目が増えた影響で、
-//         固定時間待ちだと間に合わず復元に失敗することがあった
+// version: 1.25.0
+// 1.25.0: マスタデータ（エリア・区分・会社・路線・車両形式・駅・種別・行先・車番・備考・
+//         路線名対応表など）を全部ローカルキャッシュ対応に変更。開いた瞬間はキャッシュを
+//         即表示し、裏で最新を取得して静かに差し替える（更新中表示は出さない）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -18,46 +18,57 @@ let lineAliasData = []; // 路線名の正式名称⇄通称対応表（linealia
 let linePrefixData = []; // 路線名の接頭辞（会社名部分）対応表（lineprefixシート）。例: 大阪→大阪メトロ
 document.getElementById("username").value = localStorage.getItem("username");
 
+// マスタデータ用の共通キャッシュ読み込み関数。
+// キャッシュがあれば即座にhandlerへ渡し（体感速度優先）、裏で最新を取得して
+// 取れ次第もう一度handlerへ渡す＋キャッシュを更新する（「更新中」表示等は出さず静かに行う）
+function fetchCachedMasterData(cacheKey, url, handler) {
+  const key = "tuts4_master_" + cacheKey;
+
+  try {
+    const cached = localStorage.getItem(key);
+    if (cached) handler(JSON.parse(cached));
+  } catch (e) { /* 壊れたキャッシュは無視 */ }
+
+  fetch(url)
+    .then(res => res.json())
+    .then(data => {
+      handler(data);
+      try { localStorage.setItem(key, JSON.stringify(data)); } catch (e) { /* 容量超過等は無視 */ }
+    })
+    .catch(err => console.error(cacheKey + "取得エラー:", err));
+}
+
 
 // areaの取得
-fetch("https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/area")
-  .then(res => res.json())
-  .then(data => {
-    const select = document.getElementById("area");
-    select.innerHTML = '<option value="">選択してください</option>';
-    data.forEach(row => {
-      const val = row["えりあ"];
-      const opt = document.createElement("option");
-      opt.textContent = val;
-      opt.value = val;
-      select.appendChild(opt);
-    });
-  })
-  .catch(err => console.error(err));
+fetchCachedMasterData("area", "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/area", data => {
+  const select = document.getElementById("area");
+  select.innerHTML = '<option value="">選択してください</option>';
+  data.forEach(row => {
+    const val = row["えりあ"];
+    const opt = document.createElement("option");
+    opt.textContent = val;
+    opt.value = val;
+    select.appendChild(opt);
+  });
+});
 
 // typeの取得
-fetch("https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/type")
-  .then(res => res.json())
-  .then(data => {
-    const select = document.getElementById("type");
-    select.innerHTML = '<option value="">選択してください</option>';
-    data.forEach(row => {
-      const val = row["区分"];
-      const opt = document.createElement("option");
-      opt.textContent = val;
-      opt.value = val;
-      select.appendChild(opt);
-    });
-  })
-  .catch(err => console.error(err));
+fetchCachedMasterData("type", "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/type", data => {
+  const select = document.getElementById("type");
+  select.innerHTML = '<option value="">選択してください</option>';
+  data.forEach(row => {
+    const val = row["区分"];
+    const opt = document.createElement("option");
+    opt.textContent = val;
+    opt.value = val;
+    select.appendChild(opt);
+  });
+});
 
 // countryデータをまとめて読み込み
-fetch(countryURL)
-  .then(res => res.json())
-  .then(data => {
-    allCountryData = data;
-  })
-  .catch(err => console.error(err));
+fetchCachedMasterData("country", countryURL, data => {
+  allCountryData = data;
+});
 
 // areaまたはtypeが変わったら、countryプルダウンを更新
 document.getElementById("area").addEventListener("change", updateCountryList);
@@ -93,13 +104,10 @@ function updateCountryList() {
 
 
 // routeデータをまとめて読み込み
-fetch(route)
-  .then(res => res.json())
-  .then(data => {
-    allrouteData = data;
-    updateCoupleButtonVisibility();
-  })
-  .catch(err => console.error(err));
+fetchCachedMasterData("route", route, data => {
+  allrouteData = data;
+  updateCoupleButtonVisibility();
+});
 
 // areaまたはtypeが変わったら、countryプルダウンを更新
 document.getElementById("type").addEventListener("change", updaterouteList);
@@ -135,12 +143,9 @@ function updaterouteList() {
 
 
 // modelデータをまとめて読み込み
-fetch(model)
-  .then(res => res.json())
-  .then(data => {
-    allmodelData = data;
-  })
-  .catch(err => console.error(err));
+fetchCachedMasterData("model", model, data => {
+  allmodelData = data;
+});
 
 // areaまたはtypeが変わったら、countryプルダウンを更新
 document.getElementById("route").addEventListener("change", updatemodelList);
@@ -176,13 +181,10 @@ function updatemodelList() {
 
 
 // stationデータをまとめて読み込み
-fetch("https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/station")
-  .then(res => res.json())
-  .then(data => {
-    allstationData = data;
-    updatestationList();
-  })
-  .catch(err => console.error(err));
+fetchCachedMasterData("station", "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/station", data => {
+  allstationData = data;
+  updatestationList();
+});
 
 document.getElementById("route").addEventListener("change", updatestationList);
 
@@ -235,13 +237,10 @@ function updatestationList() {
 
 
 // sujitypeデータをまとめて読み込み
-fetch("https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/sujitype")
-  .then(res => res.json())
-  .then(data => {
-    allsujitypeData = data;
-    updatesujitypeList();
-  })
-  .catch(err => console.error(err));
+fetchCachedMasterData("sujitype", "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/sujitype", data => {
+  allsujitypeData = data;
+  updatesujitypeList();
+});
 
 document.getElementById("route").addEventListener("change", updatesujitypeList);
 
@@ -272,13 +271,10 @@ function updatesujitypeList() {
 
 
 // boundデータをまとめて読み込み
-fetch("https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/bound")
-  .then(res => res.json())
-  .then(data => {
-    allboundData = data;
-    updateboundList();
-  })
-  .catch(err => console.error(err));
+fetchCachedMasterData("bound", "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/bound", data => {
+  allboundData = data;
+  updateboundList();
+});
 
 document.getElementById("route").addEventListener("change", updateboundList);
 
@@ -386,12 +382,9 @@ function addCoupling() {
 
 
 // numberデータをまとめて読み込み
-fetch("https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/number")
-  .then(res => res.json())
-  .then(data => {
-    allnumberData = data;
-  })
-  .catch(err => console.error(err));
+fetchCachedMasterData("number", "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/number", data => {
+  allnumberData = data;
+});
 
 // modelが変わったら、numberプルダウンを更新
 document.getElementById("model").addEventListener("change", updatenumberList);
@@ -553,12 +546,9 @@ function setCurrentDateTime() {
 /* ----------------------------------------
    備考（remark）データの取得
 ---------------------------------------- */
-fetch("https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/desc")
-  .then(res => res.json())
-  .then(data => {
-    allRemarkData = data;
-  })
-  .catch(err => console.error(err));
+fetchCachedMasterData("desc", "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/desc", data => {
+  allRemarkData = data;
+});
 
 // 路線が変わったら備考を更新
 document.getElementById("route").addEventListener("change", updateRemarkList);
@@ -607,27 +597,21 @@ function updateRemarkList() {
    選択すると、エリア・区分・会社・路線・乗車駅まで自動で埋まる（ショートカットと同じ仕組み）。
 ---------------------------------------- */
 // 正式社名⇄通称・表記ゆれの対応表（linealiasシート：正式名称・通称）
-fetch("https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/linealias")
-  .then(res => res.json())
-  .then(data => {
-    lineAliasData = data
-      .map(row => ({ official: row["正式名称"] || "", alias: row["通称"] || "" }))
-      .filter(r => r.official && r.alias);
-  })
-  .catch(err => console.error("linealias取得エラー:", err));
+fetchCachedMasterData("linealias", "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/linealias", data => {
+  lineAliasData = data
+    .map(row => ({ official: row["正式名称"] || "", alias: row["通称"] || "" }))
+    .filter(r => r.official && r.alias);
+});
 
 // 路線名の接頭辞（会社名部分）の対応表（lineprefixシート：正式接頭辞・通称接頭辞）
 // 例: 大阪メトロの各路線がHeartRails側で「大阪○○線」（大阪メトロの「メトロ」が省略された形）
 // で返ってくる場合、「大阪」→「大阪メトロ」と1行登録しておけば、○○の部分が何であっても
 // まとめて変換できる（路線名を1本ずつ完全一致で登録する必要が無い）
-fetch("https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/lineprefix")
-  .then(res => res.json())
-  .then(data => {
-    linePrefixData = data
-      .map(row => ({ officialPrefix: row["正式接頭辞"] || "", aliasPrefix: row["通称接頭辞"] || "" }))
-      .filter(r => r.officialPrefix && r.aliasPrefix);
-  })
-  .catch(err => console.error("lineprefix取得エラー:", err));
+fetchCachedMasterData("lineprefix", "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/lineprefix", data => {
+  linePrefixData = data
+    .map(row => ({ officialPrefix: row["正式接頭辞"] || "", aliasPrefix: row["通称接頭辞"] || "" }))
+    .filter(r => r.officialPrefix && r.aliasPrefix);
+});
 
 // 1つの路線名から、あり得る正規化候補を複数作る（接頭辞を置き換えた版・置き換えない版の両方）。
 // どちらか一方だけを正解と決め打ちすると、置き換えが逆に邪魔をするケース
