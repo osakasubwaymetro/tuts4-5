@@ -1,7 +1,7 @@
-// version: 1.25.0
-// 1.25.0: マスタデータ（エリア・区分・会社・路線・車両形式・駅・種別・行先・車番・備考・
-//         路線名対応表など）を全部ローカルキャッシュ対応に変更。開いた瞬間はキャッシュを
-//         即表示し、裏で最新を取得して静かに差し替える（更新中表示は出さない）
+// version: 1.25.1
+// 1.25.1: マスタデータ取得にリトライを追加。opensheetが一時的に配列以外（エラー等）を
+//         返した場合、1秒待って1回だけ再試行するようにして、data.map is not a function
+//         のようなエラーで処理が落ちるのを防ぐ
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -20,7 +20,8 @@ document.getElementById("username").value = localStorage.getItem("username");
 
 // マスタデータ用の共通キャッシュ読み込み関数。
 // キャッシュがあれば即座にhandlerへ渡し（体感速度優先）、裏で最新を取得して
-// 取れ次第もう一度handlerへ渡す＋キャッシュを更新する（「更新中」表示等は出さず静かに行う）
+// 取れ次第もう一度handlerへ渡す＋キャッシュを更新する（「更新中」表示等は出さず静かに行う）。
+// opensheet側が一時的に配列以外（エラーレスポンス等）を返すことがあるため、1回だけ自動リトライする
 function fetchCachedMasterData(cacheKey, url, handler) {
   const key = "tuts4_master_" + cacheKey;
 
@@ -29,13 +30,24 @@ function fetchCachedMasterData(cacheKey, url, handler) {
     if (cached) handler(JSON.parse(cached));
   } catch (e) { /* 壊れたキャッシュは無視 */ }
 
-  fetch(url)
-    .then(res => res.json())
-    .then(data => {
-      handler(data);
-      try { localStorage.setItem(key, JSON.stringify(data)); } catch (e) { /* 容量超過等は無視 */ }
-    })
-    .catch(err => console.error(cacheKey + "取得エラー:", err));
+  fetchJsonArrayWithRetry(url, cacheKey).then(data => {
+    if (!data) return; // 取得失敗（配列以外）なら何もしない。キャッシュがあればそれを使い続ける
+    handler(data);
+    try { localStorage.setItem(key, JSON.stringify(data)); } catch (e) { /* 容量超過等は無視 */ }
+  });
+}
+
+async function fetchJsonArrayWithRetry(url, label, attempts = 2) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      if (Array.isArray(data)) return data;
+    } catch (e) { /* 下でリトライ */ }
+    if (i < attempts - 1) await new Promise(r => setTimeout(r, 1000));
+  }
+  console.error((label || url) + "取得エラー: 配列以外が返るか、通信に失敗しました");
+  return null;
 }
 
 
