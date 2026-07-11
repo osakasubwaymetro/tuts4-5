@@ -8,7 +8,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.11.9 -->
+<!-- version: 1.12.0 -->
+<!-- 1.12.0: ポップアップ（降車駅記録・編集）をEscキーでも閉じられるように対応 -->
 <!-- 1.11.9: 管理者判定（全ユーザー閲覧）の対象を「運営」のみに限定 -->
 <!-- 1.11.8: 運営アカウントでは全ユーザーの投稿を閲覧できるように対応（ユーザーで絞り込み可）。
            運営アカウントは乗車・降車データのキャッシュ保存を行わず、常に最新を取得する。
@@ -356,9 +357,9 @@
   <span id="updateMsg">最新データ取得中...</span>
 </div>
 
-<script src="nav.js?v=1.4.1"></script>
+<script src="nav.js?v=1.5.0"></script>
 <script>initNav("投稿履歴");</script>
-<script src="logs.js?v=1.1.0"></script>
+<script src="logs.js?v=1.2.1"></script>
 <script>
 const username = checkLogin();
 const IS_ADMIN = (username === "運営");
@@ -743,6 +744,13 @@ function formatRideTimeLabel(rideTime) {
 function closeDescentModal() {
   document.getElementById("descentModalOverlay").classList.remove("show");
 }
+
+// Escキーでポップアップを閉じる
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const overlay = document.getElementById("descentModalOverlay");
+  if (overlay && overlay.classList.contains("show")) closeDescentModal();
+});
 
 function toDatetimeLocalValue(stored) {
   // "yyyy-MM-dd HH:mm" -> "yyyy-MM-ddTHH:mm"（datetime-local入力欄の形式に合わせる）
