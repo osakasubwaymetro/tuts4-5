@@ -109,7 +109,7 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    width: 3px;
+    width: 5px;
     background: #9c6ade;
     z-index: 1;
   }
@@ -124,7 +124,7 @@
     align-items: center;
     z-index: 2;
   }
-  .rt-line-half { width: 4px; flex: 1 1 0; }
+  .rt-line-half { width: 6px; flex: 1 1 0; }
   .rt-dot {
     width: 15px;
     height: 15px;
@@ -148,7 +148,7 @@
     left: 50%;
     top: 0;
     bottom: 0;
-    width: 4px;
+    width: 6px;
     transform: translateX(-50%);
     z-index: 1;
   }
@@ -162,7 +162,7 @@
   }
   .via-branch-end.via-flip { margin-left: 30px; }
   .via-branch-end .stub {
-    width: 3px;
+    width: 5px;
     height: 14px;
     margin-left: 5px;
   }
@@ -392,6 +392,7 @@ function jumpToRoute(routeName) {
   }
   routeSel.value = routeName;
   renderMap();
+  saveSelection();
 }
 
 /* ----------------------------------------
@@ -739,11 +740,13 @@ function renderMap() {
   }
   // 各駅時点でアクティブな並走路線（start_で追加、end_が出た駅自身も含めてから外す）
   const activeParallelByIndex = [];
+  const startedAtIndex = []; // その駅で新しく始まった路線名（線の上端を詰めるため）
   let activeParallel = new Set();
   routeRows.forEach((r, i) => {
     const { start, end } = parseParallelCell(r["並走"]);
     start.forEach(s => activeParallel.add(s));
     activeParallelByIndex[i] = [...activeParallel];
+    startedAtIndex[i] = start;
     end.forEach(s => activeParallel.delete(s));
   });
   if (stationsOnRoute.length < 2) {
@@ -837,7 +840,7 @@ function renderMap() {
         const pathD = v.side === "above" ? "M2,22 Q2,4 26,4" : "M2,0 Q2,18 26,18";
         inner = `
           <div class="via-branch-mid">
-            <svg width="28" height="22" viewBox="0 0 28 22"><path d="${pathD}" stroke="${color}" stroke-width="3" fill="none"/></svg>
+            <svg width="28" height="22" viewBox="0 0 28 22"><path d="${pathD}" stroke="${color}" stroke-width="5" fill="none"/></svg>
             <button type="button" class="via-pill" style="background:${color};" data-route="${escAttr(v.route)}">${v.route}</button>
           </div>
         `;
@@ -865,7 +868,7 @@ function renderMap() {
       const color = colorForRoute(v.route);
       const targetX = trunkX + branchGap * (i + 0.7);
       // 3次ベジェにして、早めに分かれるはっきりしたフォーク形状にする
-      paths += `<path d="M${trunkX},${trunkY} C${trunkX},${midY} ${targetX},${midY} ${targetX},${branchY}" stroke="${color}" stroke-width="3" fill="none"/>`;
+      paths += `<path d="M${trunkX},${trunkY} C${trunkX},${midY} ${targetX},${midY} ${targetX},${branchY}" stroke="${color}" stroke-width="5" fill="none"/>`;
     });
 
     const pills = vias.map((v, i) => {
@@ -908,7 +911,7 @@ function renderMap() {
     const shaded = i % 2 === 1 ? " shaded" : "";
     const parallelRoutes = activeParallelByIndex[i] || [];
     const parallelLines = parallelRoutes.map((rt, pi) =>
-      `<div class="parallel-line" style="left:calc(50% - ${(pi+1)*8}px);" title="${escAttr(rt)}"></div>`
+      `<div class="parallel-line" style="left:calc(50% - ${(pi+1)*8}px);${(startedAtIndex[i]||[]).includes(rt) ? "top:10px;" : ""}" title="${escAttr(rt)}"></div>`
     ).join("");
     html += `
       <div class="rt-row${shaded}">
