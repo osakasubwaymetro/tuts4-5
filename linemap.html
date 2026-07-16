@@ -696,6 +696,25 @@ function renderMap() {
     return [...routes];
   }
   const stationsOnRoute = rawRows.filter(n => !isViaEntry(n));
+  const routeRows = allstationData.filter(r => r["路線"] === routeVal && !isViaEntry(r["駅名"]));
+
+  function parseParallelCell(raw) {
+    const start = [], end = [];
+    String(raw || "").split("|").forEach(part => {
+      if (part.startsWith("start_")) start.push(...part.slice(6).split("/").filter(Boolean));
+      else if (part.startsWith("end_")) end.push(...part.slice(4).split("/").filter(Boolean));
+    });
+    return { start, end };
+  }
+  // 各駅時点でアクティブな並走路線（start_で追加、end_が出た駅自身も含めてから外す）
+  const activeParallelByIndex = [];
+  let activeParallel = new Set();
+  routeRows.forEach((r, i) => {
+    const { start, end } = parseParallelCell(r["並走"]);
+    start.forEach(s => activeParallel.add(s));
+    activeParallelByIndex[i] = [...activeParallel];
+    end.forEach(s => activeParallel.delete(s));
+  });
   if (stationsOnRoute.length < 2) {
     box.innerHTML = '<p class="small">この路線の駅データがありません（stationシートを確認してください）</p>';
     return;
@@ -856,7 +875,7 @@ function renderMap() {
     if (aboveVias.length) html += renderViaRow(aboveVias, upperColor);
 
     const shaded = i % 2 === 1 ? " shaded" : "";
-    const parallelRoutes = parallelRoutesFor(name);
+    const parallelRoutes = activeParallelByIndex[i] || [];
     const parallelBadge = parallelRoutes.length
       ? `<span class="parallel-badge" title="${parallelRoutes.map(escAttr).join(" / ")}">併走: ${parallelRoutes.join("・")}</span>`
       : "";
