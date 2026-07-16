@@ -8,7 +8,11 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>統計情報 | tuts4 — フル版</title>
-<!-- version: 1.8.0 -->
+<!-- version: 1.9.0 -->
+<!-- 1.9.0: 路線ランキング・駅ランキング・会社別ランキング・車両形式×路線の相性に、
+           直通先の路線（乗り継ぎ区間）も含めて集計するように変更。
+           レア体験の行先（1回のみ）は、併結列車の「A/B」形式の行先を分割して
+           それぞれ別項目として集計するように修正 -->
 <!-- 1.8.0: 「路線ごとの乗車区間」（乗車マップ）カードを削除。専用ページ「乗車路線マップ確認用」
            （linemap.html）に統合したため -->
 <!-- 1.7.4: キャッシュ対策（no-cacheメタタグ、nav.jsのバージョンクエリ）を追加 -->
@@ -294,6 +298,81 @@
    ========================== */
 /* あなたの GAS の公開 URL をここに入れてください（全データを JSON で返すもの） */
 const GAS_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
+const TRANSFERS_URL = "https://script.google.com/macros/s/AKfycbwOzhHMk2WRtcUHvSMfnrimIQxUk-_dZN_43I-m8fpMNVxomE7emhevGGyC3UnLR3ejBw/exec";
+const RIDE_TIME_PREFIX = "乗車_";
+function stripRideTimePrefix(v) {
+  return typeof v === "string" && v.indexOf(RIDE_TIME_PREFIX) === 0 ? v.slice(RIDE_TIME_PREFIX.length) : v;
+}
+
+/* 直通先の路線も集計に含めるためのマスタデータ（駅・路線） */
+let allStationData = [];
+let allRouteData = [];
+async function fetchJsonArrayWithRetry(url, attempts = 2) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      if (Array.isArray(data)) return data;
+    } catch (e) { /* 下でリトライ */ }
+    if (i < attempts - 1) await new Promise(r => setTimeout(r, 1000));
+  }
+  return [];
+}
+function fetchCachedMasterData(cacheKey, url, handler) {
+  const key = "tuts4_master_" + cacheKey;
+  try {
+    const cached = localStorage.getItem(key);
+    if (cached) handler(JSON.parse(cached));
+  } catch (e) { /* 壊れたキャッシュは無視 */ }
+  fetchJsonArrayWithRetry(url).then(data => {
+    if (!data.length) return;
+    handler(data);
+    try { localStorage.setItem(key, JSON.stringify(data)); } catch (e) { /* 容量超過等は無視 */ }
+  });
+}
+fetchCachedMasterData("station", "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/station", data => { allStationData = data; });
+fetchCachedMasterData("route", "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route", data => { allRouteData = data; });
+
+/* ----------------------------------------
+   直通チェーン解析（linemap.htmlと同じロジック）
+---------------------------------------- */
+function isViaEntry(n) { return typeof n === "string" && n.startsWith("via_"); }
+function viaTargetRoute(n) { return n.slice(4).split("#")[0]; }
+function timeKeyMatch(a, b) {
+  if (!a || !b) return false;
+  if (String(a) === String(b)) return true;
+  const da = new Date(a), db = new Date(b);
+  return !isNaN(da) && !isNaN(db) && da.getTime() === db.getTime();
+}
+function parseDescentChain(raw) {
+  let s = typeof raw === "string" ? raw : "";
+  const m = s.match(/^\[環状:(外回り|内回り)\](.*)$/);
+  if (m) s = m[2];
+  if (!s.includes("|") && !s.includes("@")) return { hops: [], finalStation: s };
+  const parts = s.split("|");
+  const finalStation = parts.pop();
+  const hops = parts.map(p => {
+    const [junction, nextRoute] = p.split("@");
+    return { junction, nextRoute };
+  }).filter(h => h.junction && h.nextRoute);
+  return { hops, finalStation };
+}
+function buildLegs(boardingRoute, boardingStation, chain) {
+  const legs = [];
+  let currentRoute = boardingRoute;
+  let currentBoard = boardingStation;
+  chain.hops.forEach(hop => {
+    legs.push({ route: currentRoute, board: currentBoard });
+    currentRoute = hop.nextRoute;
+    currentBoard = hop.junction;
+  });
+  legs.push({ route: currentRoute, board: currentBoard });
+  return legs;
+}
+function companyForRoute(routeName) {
+  const row = (allRouteData || []).find(r => r["路線"] === routeName);
+  return row ? row["会社"] : "";
+}
 
 /* ログイン済みのユーザー（localStorage のキーを使ってください） */
 const MY_NAME = localStorage.getItem("username");
@@ -384,7 +463,7 @@ async function buildStats() {
   if (cached) {
     try {
       const rawMine = JSON.parse(cached);
-      await renderStats(rawMine.map(normalizeRow));
+      await renderStats(rawMine.map(normalizeRow), await fetchMyTransfers(true));
     } catch (e) {
       localStorage.removeItem(CACHE_KEY);
     }
@@ -403,10 +482,43 @@ async function buildStats() {
     return;
   }
 
-  await renderStats(mine);
+  const myTransfers = await fetchMyTransfers(false);
+  await renderStats(mine, myTransfers);
 }
 
-async function renderStats(mine) {
+// 降車駅の記録（直通先の路線を辿るのに必要）を取得する。キャッシュ優先版はcacheOnly=trueで即返す
+async function fetchMyTransfers(cacheOnly) {
+  const CACHE_KEY = "tuts4_stats_transfers_cache_" + MY_NAME;
+
+  if (cacheOnly) {
+    try {
+      const cached = localStorage.getItem(CACHE_KEY);
+      if (cached) return JSON.parse(cached);
+    } catch (e) { /* ignore */ }
+    return [];
+  }
+
+  try {
+    const res = await fetch(TRANSFERS_URL);
+    const all = await res.json();
+    if (Array.isArray(all)) {
+      const mine = all
+        .filter(t => String(t["ユーザー名"]) === String(MY_NAME))
+        .map(t => ({ ...t, "元の乗車時刻": stripRideTimePrefix(t["元の乗車時刻"]) }));
+      localStorage.setItem(CACHE_KEY, JSON.stringify(mine));
+      return mine;
+    }
+  } catch (e) {
+    console.error("降車データの取得に失敗:", e);
+  }
+  try {
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (cached) return JSON.parse(cached);
+  } catch (e) { /* ignore */ }
+  return [];
+}
+
+async function renderStats(mine, myTransfers) {
   // total
   document.getElementById("totalCount").innerText = mine.length;
 
@@ -420,11 +532,26 @@ async function renderStats(mine) {
     return Object.entries(m).sort((a,b)=>b[1]-a[1]);
   };
 
-  const sortedRoutes = countBy(mine, r=>r.route);
-  const sortedStations = countBy(mine, r=>r.station);
+  // 直通先の路線も含めて集計するため、各乗車を「乗車区間ごと（乗車→乗継駅ごと）」に展開する。
+  // 直通しなかった乗車は、元の1件（乗車路線・乗車駅）のみが入る
+  const expandedLegs = [];
+  mine.forEach(r => {
+    expandedLegs.push({ route: r.route, station: r.station, company: r.company, model: r.model });
+    const t = myTransfers.find(tt => timeKeyMatch(tt["元の乗車時刻"], r.timeRaw));
+    if (!t) return;
+    const chain = parseDescentChain(String(t["降車駅"] || "").trim());
+    if (!chain.hops.length) return;
+    const legs = buildLegs(r.route, r.station, chain);
+    legs.slice(1).forEach(leg => {
+      expandedLegs.push({ route: leg.route, station: leg.board, company: companyForRoute(leg.route), model: r.model });
+    });
+  });
+
+  const sortedRoutes = countBy(expandedLegs, r=>r.route);
+  const sortedStations = countBy(expandedLegs, r=>r.station);
   const sortedDest = countBy(mine, r=>r.dest);
   const sortedModel = countBy(mine, r=>r.model);
-  const sortedCompany = countBy(mine, r=>r.company);
+  const sortedCompany = countBy(expandedLegs, r=>r.company);
   const sortedType = countBy(mine, r=>r.type);
 
   document.getElementById("topRoute").innerText = sortedRoutes[0] ? `${sortedRoutes[0][0]} (${sortedRoutes[0][1]}回)` : "—";
@@ -648,11 +775,11 @@ async function renderStats(mine) {
     heatWrap.appendChild(monthCard);
   });
 
-  // matrix model x route（件数の多い順に上位N件だけ表示し、残りは「その他」に集計）
+  // matrix model x route（直通先の路線も含める。件数の多い順に上位N件だけ表示し、残りは「その他」に集計）
   const matrix = {};
   const modelTotals = {};
   const routeTotals = {};
-  mine.forEach(r => {
+  expandedLegs.forEach(r => {
     const m = r.model || "（不明）";
     const ro = r.route || "（不明）";
     matrix[m] = matrix[m] || {};
@@ -731,12 +858,19 @@ async function renderStats(mine) {
   const routeCount = Object.fromEntries(sortedRoutes);
   const stationCount = Object.fromEntries(sortedStations);
   const modelCount = Object.fromEntries(sortedModel);
-  const destCount = Object.fromEntries(sortedDest);
+  // 行先は併結列車だと「新函館北斗/秋田」のように「/」区切りで1セルに複数入っていることがあるため、
+  // レア判定の前に分割してそれぞれ別項目として数える
+  const destCountSplit = {};
+  mine.forEach(r => {
+    String(r.dest || "（不明）").split("/").map(s => s.trim()).filter(Boolean).forEach(d => {
+      destCountSplit[d] = (destCountSplit[d] || 0) + 1;
+    });
+  });
   const rare = { route:[], station:[], model:[], dest:[] };
   Object.entries(routeCount).forEach(([k,v])=>{ if (v===1) rare.route.push(k) });
   Object.entries(stationCount).forEach(([k,v])=>{ if (v===1) rare.station.push(k) });
   Object.entries(modelCount).forEach(([k,v])=>{ if (v===1) rare.model.push(k) });
-  Object.entries(destCount).forEach(([k,v])=>{ if (v===1) rare.dest.push(k) });
+  Object.entries(destCountSplit).forEach(([k,v])=>{ if (v===1) rare.dest.push(k) });
 
   const rareWrap = document.getElementById("rareList");
   rareWrap.innerHTML = `<div class="small"><b>路線（1回のみ）:</b> ${rare.route.join(", ") || "なし"}</div>
