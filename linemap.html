@@ -104,6 +104,15 @@
     margin-left: 6px;
     vertical-align: middle;
   }
+  .rt-row { position: relative; }
+  .parallel-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: #9c6ade;
+    z-index: 1;
+  }
   .rt-dot-wrap {
     position: absolute;
     left: 50%;
@@ -312,10 +321,32 @@ function refreshCascade() {
   buildRouteSelect();
 }
 
-document.getElementById("mapArea").addEventListener("change", () => { buildCompanySelect(); buildRouteSelect(); clearMap(); });
-document.getElementById("mapType").addEventListener("change", () => { buildCompanySelect(); buildRouteSelect(); clearMap(); });
-document.getElementById("mapCompany").addEventListener("change", () => { buildRouteSelect(); clearMap(); });
-document.getElementById("mapRoute").addEventListener("change", renderMap);
+const SEL_KEY = "tuts4_linemap_selection";
+function saveSelection() {
+  localStorage.setItem(SEL_KEY, JSON.stringify({
+    area: document.getElementById("mapArea").value,
+    type: document.getElementById("mapType").value,
+    company: document.getElementById("mapCompany").value,
+    route: document.getElementById("mapRoute").value,
+  }));
+}
+async function restoreSelection() {
+  let sel;
+  try { sel = JSON.parse(localStorage.getItem(SEL_KEY) || "null"); } catch (e) { return; }
+  if (!sel || !sel.route) return;
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  document.getElementById("mapArea").value = sel.area; buildCompanySelect(); buildRouteSelect(); await wait(200);
+  document.getElementById("mapType").value = sel.type; buildCompanySelect(); buildRouteSelect(); await wait(200);
+  document.getElementById("mapCompany").value = sel.company; buildRouteSelect(); await wait(200);
+  document.getElementById("mapRoute").value = sel.route;
+  if (document.getElementById("mapRoute").value) renderMap();
+}
+
+document.getElementById("mapArea").addEventListener("change", () => { buildCompanySelect(); buildRouteSelect(); clearMap(); saveSelection(); });
+document.getElementById("mapType").addEventListener("change", () => { buildCompanySelect(); buildRouteSelect(); clearMap(); saveSelection(); });
+document.getElementById("mapCompany").addEventListener("change", () => { buildRouteSelect(); clearMap(); saveSelection(); });
+document.getElementById("mapRoute").addEventListener("change", () => { renderMap(); saveSelection(); });
+setTimeout(restoreSelection, 800);
 
 function clearMap() {
   document.getElementById("mapResult").innerHTML = "";
@@ -876,12 +907,13 @@ function renderMap() {
 
     const shaded = i % 2 === 1 ? " shaded" : "";
     const parallelRoutes = activeParallelByIndex[i] || [];
-    const parallelBadge = parallelRoutes.length
-      ? `<span class="parallel-badge" title="${parallelRoutes.map(escAttr).join(" / ")}">併走: ${parallelRoutes.join("・")}</span>`
-      : "";
+    const parallelLines = parallelRoutes.map((rt, pi) =>
+      `<div class="parallel-line" style="left:calc(50% - ${(pi+1)*8}px);" title="${escAttr(rt)}"></div>`
+    ).join("");
     html += `
       <div class="rt-row${shaded}">
-        <div class="rt-name">${name}${parallelBadge}</div>
+        ${parallelLines}
+        <div class="rt-name">${name}</div>
         <div class="rt-dot-wrap">
           <div class="rt-line-half" style="background:${upperColor};"></div>
           <span class="rt-dot" style="${dotRidden ? `background:${riddenColor};border-color:${riddenColor};` : `border-color:${unriddenColor};`}"></span>
