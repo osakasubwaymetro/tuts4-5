@@ -7,7 +7,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.8.0 -->
+<!-- version: 1.8.2 -->
+<!-- 1.8.2: 隣接する乗り継ぎ区間で、記録されてる乗り継ぎ駅名が路線によってズレてるケース
+           （例: 阪和線側からは「天王寺」が正しいのに、記録は大阪環状線基準の「寺田町」に
+           なっている）に対応。次の路線側の基準で「本当の乗り継ぎ駅名」に揃えてから
+           両方の区間を計算するように変更 -->
+<!-- 1.8.1: 乗り継ぎ駅名がその路線自体には無い場合（直通元の路線基準の駅名で記録されている
+           ケース）でも、その路線のvia_の直通先に実在すれば接続点として解決できるように
+           修正。今まではこの場合、区間ごと丸ごと無視されていた
+           （例: 阪和線側の乗り継ぎ駅が「寺田町」＝大阪環状線の駅名になっているケース） -->
 <!-- 1.8.0: ①直通先へのジャンプ判定を「routeシートにあるか」から「stationシートにその路線の
            駅データがあるか」に変更。②拠点駅との隙間を解消（余分なmarginを削除、線を
            SVGの端まで伸ばした）。③フォークのカーブを3次ベジェにして、はっきり分かれる
@@ -442,8 +450,10 @@ function getRouteStationInfo(routeName, stationData, cache) {
 
   const viaForward = {};
   const viaBackward = {};
+  const viaNames = [];
   rawStationRows.forEach((name, rawIdx) => {
     if (!isVia(name)) return;
+    viaNames.push(name);
     for (let i = rawIdx - 1; i >= 0; i--) {
       if (!isVia(rawStationRows[i])) { viaBackward[name] = stationsOnRoute.indexOf(rawStationRows[i]); break; }
     }
@@ -452,7 +462,7 @@ function getRouteStationInfo(routeName, stationData, cache) {
     }
   });
 
-  const info = { stationsOnRoute, rawIndexMap, viaForward, viaBackward };
+  const info = { stationsOnRoute, rawIndexMap, viaForward, viaBackward, viaNames, stationData };
   cache[routeName] = info;
   return info;
 }
@@ -462,17 +472,48 @@ function resolveStationIndex(stationName, info, referenceStationName) {
 
   const hasForward = Object.prototype.hasOwnProperty.call(info.viaForward, stationName);
   const hasBackward = Object.prototype.hasOwnProperty.call(info.viaBackward, stationName);
-  if (!hasForward && !hasBackward) return -1;
 
-  const viaRawIdx = info.rawIndexMap[stationName];
-  const refRawIdx = referenceStationName ? info.rawIndexMap[referenceStationName] : undefined;
+  if (hasForward || hasBackward) {
+    const viaRawIdx = info.rawIndexMap[stationName];
+    const refRawIdx = referenceStationName ? info.rawIndexMap[referenceStationName] : undefined;
 
-  if (refRawIdx !== undefined && viaRawIdx !== undefined) {
-    if (refRawIdx > viaRawIdx && hasForward) return info.viaForward[stationName];
-    if (refRawIdx < viaRawIdx && hasBackward) return info.viaBackward[stationName];
+    if (refRawIdx !== undefined && viaRawIdx !== undefined) {
+      if (refRawIdx > viaRawIdx && hasForward) return info.viaForward[stationName];
+      if (refRawIdx < viaRawIdx && hasBackward) return info.viaBackward[stationName];
+    }
+    return hasBackward ? info.viaBackward[stationName] : info.viaForward[stationName];
   }
-  return hasBackward ? info.viaBackward[stationName] : info.viaForward[stationName];
+
+  // フォールバック：乗り継ぎ駅名がこの路線には無くても、この路線のvia_の「直通先の路線」に
+  // 実在する駅名なら、そのvia_の位置を接続点とみなす
+  // （乗り継ぎ駅名が直通元の路線基準の名前で記録されているケースに対応。例: 阪和線の記録上の
+  // 乗り継ぎ駅が「寺田町」＝大阪環状線側の駅名になっている場合など）
+  for (const viaName of info.viaNames) {
+    const targetRoute = viaTargetRoute(viaName);
+    const targetHasStation = info.stationData.some(r => r["路線"] === targetRoute && r["駅名"] === stationName);
+    if (!targetHasStation) continue;
+    if (Object.prototype.hasOwnProperty.call(info.viaForward, viaName)) return info.viaForward[viaName];
+    if (Object.prototype.hasOwnProperty.call(info.viaBackward, viaName)) return info.viaBackward[viaName];
+  }
+
+  return -1;
 }
+// 乗り継ぎ駅名が info の路線に直接無い場合、via_の直通先路線に実在すればその via_ の
+// 位置にある実駅名（＝本当の乗り継ぎ駅）を返す。直接一致するならそのまま返す
+function resolveCanonicalJunctionName(stationName, info) {
+  if (info.stationsOnRoute.includes(stationName)) return stationName;
+  for (const viaName of info.viaNames) {
+    const targetRoute = viaTargetRoute(viaName);
+    const targetHasStation = info.stationData.some(r => r["路線"] === targetRoute && r["駅名"] === stationName);
+    if (!targetHasStation) continue;
+    const fIdx = info.viaForward[viaName];
+    const bIdx = info.viaBackward[viaName];
+    if (fIdx !== undefined) return info.stationsOnRoute[fIdx];
+    if (bIdx !== undefined) return info.stationsOnRoute[bIdx];
+  }
+  return null;
+}
+
 function computeAllRiddenSegments(mine, myTransfers, stationData, routeMaster) {
   const stationInfoCache = {};
   const segmentsByRoute = {};
@@ -487,6 +528,17 @@ function computeAllRiddenSegments(mine, myTransfers, stationData, routeMaster) {
     if (!chain.finalStation) return;
 
     const legs = buildLegs(r.route, r.station, chain);
+
+    // 隣り合う区間の乗り継ぎ駅名を、次の路線側の基準で「本当の駅名」に揃える
+    // （記録されている駅名が、直通元の路線基準の名前になっていることがあるため）
+    for (let i = 0; i < legs.length - 1; i++) {
+      const nextInfo = getRouteStationInfo(legs[i + 1].route, stationData, stationInfoCache);
+      const canonical = resolveCanonicalJunctionName(legs[i].alight, nextInfo);
+      if (canonical && canonical !== legs[i].alight) {
+        legs[i].alight = canonical;
+        legs[i + 1].board = canonical;
+      }
+    }
 
     legs.forEach((leg, legIdx) => {
       if (!leg.route) return;
