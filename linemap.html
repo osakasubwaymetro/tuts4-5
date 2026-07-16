@@ -7,7 +7,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.1.0 -->
+<!-- version: 1.2.0 -->
+<!-- 1.2.0: via_の隣接駅の判定を「後方優先の決め打ち」から「直通先路線の駅リストにも
+           実在する方を優先」する方式に変更。via_が2つの実駅にちょうど挟まれている場合でも
+           正しい拠点駅を選べるように（例: 阪急京都線↔千里線の淡路） -->
 <!-- 1.1.0: 直通先の表示を、列車走行位置マップ風の「路線端なら直線で下に継続」「途中駅なら
            曲線で枝分かれ」というスタイルに変更。編成アイコンは無し。路線ごとに色を自動で決める -->
 <!-- 1.0.0: 初版 -->
@@ -463,14 +466,29 @@ function renderMap() {
 
   // via_ → 隣接する実駅（拠点駅）でグループ化。路線の端にあるか（=直線continuation）、
   // 途中にあるか（=曲線の枝分かれ）も記録する。1つの駅に複数の直通先があってもOK
+  //
+  // 隣接候補（前方向・後方向）が両方ある場合は、「直通先の路線の駅リストにも実在する方」を
+  // 優先して選ぶ（本当の乗換駅なら、接続先の路線にも同じ駅名が載っているはずなので）
   const stationToVias = {};
   rawRows.forEach((name, rawIdx) => {
     if (!isViaEntry(name)) return;
     const targetRoute = viaTargetRoute(name);
+
+    let backward = null, forward = null;
+    for (let i = rawIdx - 1; i >= 0; i--) { if (!isViaEntry(rawRows[i])) { backward = rawRows[i]; break; } }
+    for (let i = rawIdx + 1; i < rawRows.length; i++) { if (!isViaEntry(rawRows[i])) { forward = rawRows[i]; break; } }
+
     let neighbor = null;
-    for (let i = rawIdx - 1; i >= 0; i--) { if (!isViaEntry(rawRows[i])) { neighbor = rawRows[i]; break; } }
-    if (!neighbor) { for (let i = rawIdx + 1; i < rawRows.length; i++) { if (!isViaEntry(rawRows[i])) { neighbor = rawRows[i]; break; } } }
+    if (backward && forward) {
+      const targetStations = allstationData.filter(r => r["路線"] === targetRoute).map(r => r["駅名"]);
+      if (targetStations.includes(backward) && !targetStations.includes(forward)) neighbor = backward;
+      else if (targetStations.includes(forward) && !targetStations.includes(backward)) neighbor = forward;
+      else neighbor = backward; // どちらも該当/非該当なら従来通り後方向を優先
+    } else {
+      neighbor = backward || forward;
+    }
     if (!neighbor) return;
+
     const isEnd = (rawIdx === 0 || rawIdx === rawRows.length - 1);
     if (!stationToVias[neighbor]) stationToVias[neighbor] = [];
     if (!stationToVias[neighbor].some(v => v.route === targetRoute)) {
