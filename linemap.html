@@ -7,9 +7,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.4.4 -->
-<!-- 1.4.4: 反転した直線タイプ（isEnd）が margin-left:auto のせいで画面端まで飛んでいた
-           バグを修正。中心線の近くで留まるように変更 -->
+<!-- version: 1.4.5 -->
+<!-- 1.4.5: 反転バグを再修正。flex-direction:columnの子要素が横幅いっぱいに伸びて
+           flex-endが画面端になっていたのが原因。伸びないようにして、反転は
+           小さな固定オフセット（30px）に変更 -->
 <!-- 1.3.0: ①via_の枝分かれ表示を、via_が拠点駅より前にあるか後ろにあるかで上側／下側に
            振り分けるように変更（例: 大阪方面からの直通は淡路の上側に出るように）。
            ②マスタデータの背景更新でプルダウンの選択がリセットされないよう、
@@ -127,22 +128,23 @@
     display: flex;
     flex-direction: column;
     align-items: flex-start;
+    align-self: flex-start;
   }
-  .via-branch-end.via-flip { align-items: flex-end; }
+  .via-branch-end.via-flip { margin-left: 30px; }
   .via-branch-end .stub {
     width: 3px;
     height: 14px;
     margin-left: 5px;
   }
-  .via-branch-end.via-flip .stub { margin-left: 0; margin-right: 5px; }
   .via-branch-mid {
     position: relative;
     z-index: 2;
     display: flex;
     align-items: center;
+    align-self: flex-start;
     margin-top: -6px;
   }
-  .via-branch-mid.via-flip { justify-content: flex-end; }
+  .via-branch-mid.via-flip { margin-left: 30px; }
   .via-branch-mid svg { flex-shrink: 0; display: block; }
   .via-pill {
     padding: 4px 10px;
