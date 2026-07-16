@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>入場編成一覧</title>
+<!-- version: 1.0.0 -->
+<style>
+  body {
+    font-family: "Hiragino Sans", "Segoe UI", sans-serif;
+    background: #F7F8FA;
+    margin: 0;
+    padding-bottom: 40px;
+  }
+  main { max-width: 640px; margin: 0 auto; padding: 16px; }
+  h2 { color: #004C97; margin: 20px 0 10px; }
+  .small { color: #999; font-size: 13px; }
+  .sort-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .sort-bar select {
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1.5px solid #E3E8F0;
+    font-size: 14px;
+    background: #fff;
+  }
+  .count-label { font-size: 13px; color: #666; margin-left: auto; }
+
+  .car-search-result {
+    background: #fff;
+    border: 1.5px solid #E3E8F0;
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+  }
+  .csr-main { display: flex; align-items: center; gap: 12px; }
+  .csr-icon {
+    width: 56px;
+    height: 56px;
+    object-fit: contain;
+    border-radius: 8px;
+    background: #f7f7f7;
+    flex-shrink: 0;
+  }
+  .csr-info { flex: 1; min-width: 0; }
+  .csr-header {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    color: #666;
+    margin-bottom: 4px;
+  }
+  .csr-number { font-weight: bold; color: #004C97; }
+  .csr-note-badge {
+    display: inline-block;
+    background: #eee;
+    color: #555;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 6px;
+    margin: 3px 0 5px;
+  }
+  .csr-date {
+    display: inline-block;
+    background: #FFF3CD;
+    color: #7a5b00;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 8px;
+    margin-top: 4px;
+  }
+  .empty-msg { color: #999; text-align: center; padding: 30px; }
+</style>
+</head>
+<body>
+
+<main>
+  <h2>🛠 入場編成一覧</h2>
+  <p class="small">numberシートの「入場いつから」に日付が入っている編成の一覧です。</p>
+
+  <div class="sort-bar">
+    <label class="small">並び替え：</label>
+    <select id="sortOrder">
+      <option value="asc">入場日が古い順</option>
+      <option value="desc">入場日が新しい順</option>
+    </select>
+    <span class="count-label" id="countLabel"></span>
+  </div>
+
+  <div id="resultList"><p class="empty-msg">読み込み中...</p></div>
+</main>
+
+<script src="nav.js?v=1.5.2"></script>
+<script src="logs.js?v=1.2.1"></script>
+<script>initNav("入場編成一覧");</script>
+<script>
+const ADMIN_USERS = ["運営"];
+const currentUser = checkLogin();
+if (!ADMIN_USERS.includes(currentUser)) {
+  alert("このページは管理者専用です。");
+  window.location.href = "index.html";
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  logAction("view", "ページ閲覧: maintenance.html");
+});
+
+let allNumberData = [];
+let allModelData = [];
+
+function fetchCachedMasterData(cacheKey, url, handler) {
+  const key = "tuts4_master_" + cacheKey;
+  try {
+    const cached = localStorage.getItem(key);
+    if (cached) handler(JSON.parse(cached));
+  } catch (e) { /* 壊れたキャッシュは無視 */ }
+
+  fetchJsonArrayWithRetry(url).then(data => {
+    if (!data) return;
+    handler(data);
+    try { localStorage.setItem(key, JSON.stringify(data)); } catch (e) { /* 容量超過等は無視 */ }
+  });
+}
+
+async function fetchJsonArrayWithRetry(url, attempts = 2) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      if (Array.isArray(data)) return data;
+    } catch (e) { /* 下でリトライ */ }
+    if (i < attempts - 1) await new Promise(r => setTimeout(r, 1000));
+  }
+  return null;
+}
+
+const BASE = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/";
+fetchCachedMasterData("number", BASE + "number", data => { allNumberData = data; render(); });
+fetchCachedMasterData("model", BASE + "model", data => { allModelData = data; render(); });
+
+document.getElementById("sortOrder").addEventListener("change", render);
+
+/* ----------------------------------------
+   編成カード関連ヘルパー（indexの車両検索と同じロジック）
+---------------------------------------- */
+function cleanFormationNumber(num) {
+  return String(num || "").trim().replace(/\*/g, "");
+}
+function formatFormationLabel(num) {
+  const s = cleanFormationNumber(num);
+  if (!s) return s;
+  if (s.includes("編成") || /F$/i.test(s)) return s;
+  return `${s}編成`;
+}
+function noteBadgeHtml(r) {
+  const note = String((r && r["備考"]) || "").trim();
+  return note ? `<span class="csr-note-badge">${note}</span>` : "";
+}
+function getCarNumbers(r) {
+  const carKeys = Object.keys(r)
+    .filter(k => /号車$/.test(k))
+    .sort((a, b) => (parseInt(a) || 0) - (parseInt(b) || 0));
+  const cars = carKeys.map(k => String(r[k] || "").trim()).filter(Boolean);
+  return cars.length ? cars : [String(r["車番"] || "").trim()].filter(Boolean);
+}
+
+const FALLBACK_TRAIN_IMAGE = "https://img.elesite-next.com/hatena.webp";
+function toDisplayableImageUrl(url) {
+  const s = String(url || "").trim();
+  if (!s) return "";
+  let m = s.match(/drive\.google\.com\/file\/d\/([^/]+)/);
+  if (m) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w300`;
+  m = s.match(/[?&]id=([^&]+)/);
+  if (m && s.includes("drive.google.com")) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w300`;
+  return s;
+}
+function resolveTrainImage(numberRow) {
+  if (numberRow) {
+    const own = toDisplayableImageUrl(numberRow["画像URL"]);
+    if (own) return own;
+    const modelRows = allModelData.filter(r => r["車両形式"] === numberRow["車両形式"]);
+    for (const row of modelRows) {
+      const modelImg = toDisplayableImageUrl(row["画像URL"]);
+      if (modelImg) return modelImg;
+    }
+  }
+  return FALLBACK_TRAIN_IMAGE;
+}
+
+/* ----------------------------------------
+   メイン描画
+---------------------------------------- */
+function parseEntryDate(v) {
+  const d = new Date(String(v || "").trim());
+  return isNaN(d) ? null : d;
+}
+
+function render() {
+  const box = document.getElementById("resultList");
+  const order = document.getElementById("sortOrder").value;
+
+  const entries = allNumberData
+    .map(r => ({ row: r, date: parseEntryDate(r["入場いつから"]) }))
+    .filter(e => e.date !== null);
+
+  entries.sort((a, b) => order === "asc" ? a.date - b.date : b.date - a.date);
+
+  document.getElementById("countLabel").textContent = `${entries.length}件`;
+
+  if (!entries.length) {
+    box.innerHTML = '<p class="empty-msg">入場中の編成はありません</p>';
+    return;
+  }
+
+  const pad = n => String(n).padStart(2, "0");
+  box.innerHTML = entries.map(({ row: r, date }) => {
+    const dateLabel = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    return `
+      <div class="car-search-result">
+        <div class="csr-main">
+          <img class="csr-icon" src="${resolveTrainImage(r)}" loading="lazy"
+               onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';">
+          <div class="csr-info">
+            <div class="csr-header">
+              <span>${r["車両形式"] || ""}</span>
+              <span class="csr-number">${formatFormationLabel(r["車番"])}</span>
+            </div>
+            ${noteBadgeHtml(r)}
+            <div><span class="csr-date">📅 入場: ${dateLabel}〜</span></div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+</script>
+
+</body>
+</html>

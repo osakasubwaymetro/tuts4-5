@@ -2,7 +2,8 @@
  * nav.js — 共通ヘッダー管理ファイル
  * 新しいページを追加するときは NAV_LINKS だけ編集してください
  *
- * version: 1.5.1
+ * version: 1.5.2
+ * 1.5.2: 管理者メニューに「入場編成一覧」（maintenance.html）を追加
  * 1.5.1: メニューに「乗車路線マップ確認用」（linemap.html）を追加
  * 1.5.0: お知らせ・お問い合わせページ（contact.html）をメニューに追加。
  *        管理者メニューに「お問い合わせ管理」（inquiries.html）を追加
@@ -176,6 +177,7 @@ function initNav(pageTitle) {
     ? [
         { href: "log.html", icon: "🔍", label: "ログ管理" },
         { href: "inquiries.html", icon: "📮", label: "お問い合わせ管理" },
+        { href: "maintenance.html", icon: "🛠", label: "入場編成一覧" },
       ]
     : [];
 
