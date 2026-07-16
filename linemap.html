@@ -808,7 +808,23 @@ function renderMap() {
     mine = cachedRides.map(r => ({ route: r["路線"], station: r["乗車駅"], timeRaw: r["時刻"] }));
   }
   const { segmentsByRoute } = computeAllRiddenSegments(mine, cachedTransfers, allstationData, allrouteData);
-  const riddenSegments = segmentsByRoute[routeVal] || new Set();
+  const riddenSegments = new Set(segmentsByRoute[routeVal] || []);
+
+  function parallelSegmentRidden(parallelRoute, stationA, stationB) {
+    const segs = segmentsByRoute[parallelRoute];
+    if (!segs || !segs.size) return false;
+    const pStations = allstationData.filter(r => r["路線"] === parallelRoute && !isViaEntry(r["駅名"])).map(r => r["駅名"]);
+    const a = pStations.indexOf(stationA), b = pStations.indexOf(stationB);
+    if (a === -1 || b === -1) return false;
+    return segs.has(Math.min(a, b));
+  }
+  // 並走区間は、片方が乗車済みならもう片方も乗車扱いにする
+  for (let i = 0; i < stationsOnRoute.length - 1; i++) {
+    if (riddenSegments.has(i)) continue;
+    const stA = stationsOnRoute[i], stB = stationsOnRoute[i + 1];
+    const parallelHere = (activeParallelByIndex[i] || []).filter(rt => (activeParallelByIndex[i + 1] || []).includes(rt));
+    if (parallelHere.some(rt => parallelSegmentRidden(rt, stA, stB))) riddenSegments.add(i);
+  }
 
   const isLoop = isCircularRouteName(routeVal, allrouteData);
   const totalSegments = isLoop ? stationsOnRoute.length : stationsOnRoute.length - 1;
@@ -827,7 +843,10 @@ function renderMap() {
     <div class="route-line-scroll">
   `;
 
-  function renderViaRow(vias, passColor) {
+  function renderViaRow(vias, passColor, parallelRoutesHere) {
+    const parallelLinesHere = (parallelRoutesHere || []).map((rt, pi) =>
+      `<div class="parallel-line" style="left:calc(50% - ${(pi+1)*12}px);" title="${escAttr(rt)}"></div>`
+    ).join("");
     if (vias.length === 1) {
       const v = vias[0];
       const color = colorForRoute(v.route);
@@ -845,11 +864,11 @@ function renderMap() {
           </div>
         `;
       }
-      return `<div class="pictogram-row"><div class="pictogram-passline" style="background:${passColor};"></div>${inner}</div>`;
+      return `<div class="pictogram-row"><div class="pictogram-passline" style="background:${passColor};"></div>${parallelLinesHere}${inner}</div>`;
     }
 
     // 2つ以上ある場合：1つの分岐点から複数の線がY字に分かれる形で描く
-    return `<div class="pictogram-row"><div class="pictogram-passline" style="background:${passColor};"></div>${renderFork(vias)}</div>`;
+    return `<div class="pictogram-row"><div class="pictogram-passline" style="background:${passColor};"></div>${parallelLinesHere}${renderFork(vias)}</div>`;
   }
 
   function renderFork(vias) {
@@ -906,12 +925,12 @@ function renderMap() {
     const upperColor = (prevRidden === null || aboveIsEnd) ? "transparent" : (prevRidden ? riddenColor : unriddenColor);
     const lowerColor = (nextRidden === null || belowIsEnd) ? "transparent" : (nextRidden ? riddenColor : unriddenColor);
 
-    if (aboveVias.length) html += renderViaRow(aboveVias, upperColor);
+    if (aboveVias.length) html += renderViaRow(aboveVias, upperColor, parallelRoutes);
 
     const shaded = i % 2 === 1 ? " shaded" : "";
     const parallelRoutes = activeParallelByIndex[i] || [];
     const parallelLines = parallelRoutes.map((rt, pi) =>
-      `<div class="parallel-line" style="left:calc(50% - ${(pi+1)*8}px);${(startedAtIndex[i]||[]).includes(rt) ? "top:10px;" : ""}" title="${escAttr(rt)}"></div>`
+      `<div class="parallel-line" style="left:calc(50% - ${(pi+1)*12}px);${(startedAtIndex[i]||[]).includes(rt) ? "top:10px;" : ""}" title="${escAttr(rt)}"></div>`
     ).join("");
     html += `
       <div class="rt-row${shaded}">
@@ -925,7 +944,7 @@ function renderMap() {
       </div>
     `;
 
-    if (belowVias.length) html += renderViaRow(belowVias, lowerColor);
+    if (belowVias.length) html += renderViaRow(belowVias, lowerColor, parallelRoutes);
   });
 
   if (isLoop) {
