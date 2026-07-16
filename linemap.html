@@ -92,6 +92,18 @@
     letter-spacing: 4px;
     padding-right: 30px;
   }
+  .parallel-badge {
+    display: inline-block;
+    font-weight: normal;
+    font-size: 10px;
+    letter-spacing: 0;
+    color: #888;
+    background: #eee;
+    border-radius: 5px;
+    padding: 1px 6px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
   .rt-dot-wrap {
     position: absolute;
     left: 50%;
@@ -674,6 +686,15 @@ function renderMap() {
   if (!allstationData.length) { box.innerHTML = '<p class="small">駅データを読み込み中...</p>'; return; }
 
   const rawRows = allstationData.filter(r => r["路線"] === routeVal).map(r => r["駅名"]);
+
+  // 駅名の重複から「並走してる別路線」を割り出す（新しいマスタ列は使わず、既存データだけで判定）
+  function parallelRoutesFor(stationName) {
+    const routes = new Set();
+    allstationData.forEach(r => {
+      if (r["路線"] !== routeVal && r["駅名"] === stationName && !isViaEntry(r["駅名"])) routes.add(r["路線"]);
+    });
+    return [...routes];
+  }
   const stationsOnRoute = rawRows.filter(n => !isViaEntry(n));
   if (stationsOnRoute.length < 2) {
     box.innerHTML = '<p class="small">この路線の駅データがありません（stationシートを確認してください）</p>';
@@ -835,9 +856,13 @@ function renderMap() {
     if (aboveVias.length) html += renderViaRow(aboveVias, upperColor);
 
     const shaded = i % 2 === 1 ? " shaded" : "";
+    const parallelRoutes = parallelRoutesFor(name);
+    const parallelBadge = parallelRoutes.length
+      ? `<span class="parallel-badge" title="${parallelRoutes.map(escAttr).join(" / ")}">併走: ${parallelRoutes.join("・")}</span>`
+      : "";
     html += `
       <div class="rt-row${shaded}">
-        <div class="rt-name">${name}</div>
+        <div class="rt-name">${name}${parallelBadge}</div>
         <div class="rt-dot-wrap">
           <div class="rt-line-half" style="background:${upperColor};"></div>
           <span class="rt-dot" style="${dotRidden ? `background:${riddenColor};border-color:${riddenColor};` : `border-color:${unriddenColor};`}"></span>
