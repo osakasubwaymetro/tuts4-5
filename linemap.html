@@ -7,9 +7,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.3.3 -->
-<!-- 1.3.3: 路線端（直線）タイプの上側配置で、ピルとスタブの順序が逆だったのを修正
-           （ピル→スタブの順にして、スタブが下の駅へ正しく繋がるように） -->
+<!-- version: 1.4.0 -->
+<!-- 1.4.0: UIを一新。線を中央配置にして駅名を横に並べる列車走行位置マップ風デザインに変更。
+           乗車済み区間は路線カラー（route シートの「路線カラー」列、#RRGGBB形式）を濃く、
+           未乗区間は薄く表示するように対応 -->
 <!-- 1.3.0: ①via_の枝分かれ表示を、via_が拠点駅より前にあるか後ろにあるかで上側／下側に
            振り分けるように変更（例: 大阪方面からの直通は淡路の上側に出るように）。
            ②マスタデータの背景更新でプルダウンの選択がリセットされないよう、
@@ -61,47 +62,58 @@
   .route-coverage-pct { font-size: 12px; font-weight: normal; color: #666; }
 
   .route-line-scroll {
-    padding: 10px 4px;
-    background: #F4F7FB;
+    padding: 0;
+    background: #fff;
     border-radius: 12px;
+    overflow: hidden;
   }
-  .route-line-station {
+  .rt-row {
+    position: relative;
     display: flex;
     align-items: center;
-    gap: 10px;
+    min-height: 46px;
+    padding: 0 16px;
   }
-  .route-line-dot {
-    flex-shrink: 0;
-    width: 12px;
-    height: 12px;
+  .rt-row.shaded { background: #eaeaea; }
+  .rt-name {
+    flex: 1;
+    text-align: left;
+    font-weight: bold;
+    color: #222;
+    letter-spacing: 4px;
+    padding-right: 30px;
+  }
+  .rt-dot-wrap {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    z-index: 2;
+  }
+  .rt-dot {
+    width: 15px;
+    height: 15px;
     border-radius: 50%;
-    background: white;
-    border: 2px solid #ccc;
+    background: #fff;
+    border: 3px solid #ccc;
     box-sizing: border-box;
   }
-  .route-line-dot.ridden { border-color: #004C97; background: #004C97; }
-  .route-line-name {
-    background: #cfe0f2;
-    color: #17324f;
-    font-size: 13px;
-    font-weight: 600;
-    padding: 5px 12px;
-    border-radius: 20px;
-  }
-  .route-line-dot.ridden + .route-line-name { background: #bcd6ef; }
-  .route-line-connector {
-    width: 3px;
-    height: 14px;
-    margin-left: 4.5px;
+  .rt-connector {
+    width: 4px;
+    height: 18px;
+    margin: 0 auto;
     background: #ddd;
   }
-  .route-line-connector.ridden { background: #004C97; }
 
   .pictogram-row {
     display: flex;
     flex-wrap: wrap;
     gap: 10px;
-    margin: 0 0 8px 22px;
+    padding-left: 50%;
+    margin: 0 0 8px 0;
   }
   .via-branch-end {
     display: flex;
@@ -111,7 +123,7 @@
   .via-branch-end .stub {
     width: 3px;
     height: 14px;
-    margin-left: 12px;
+    margin-left: 5px;
   }
   .via-branch-mid {
     display: flex;
@@ -298,6 +310,22 @@ function colorForRoute(name) {
   return LINE_COLORS[Math.abs(hash) % LINE_COLORS.length];
 }
 function escAttr(s) { return String(s).replace(/"/g, "&quot;"); }
+
+// route シートの「路線カラー」列（#RRGGBB形式のテキスト）から、その路線の色を取得する。
+// 無ければ既定の青を使う
+function getRouteColor(routeName) {
+  const row = allrouteData.find(r => r["路線"] === routeName);
+  const hex = row && row["路線カラー"] ? String(row["路線カラー"]).trim() : "";
+  return /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : "#004C97";
+}
+
+// 色を白方向に混ぜて薄くする（amount: 0〜1、1に近いほど白に近づく）
+function lightenColor(hex, amount) {
+  const n = hex.replace("#", "");
+  const r = parseInt(n.slice(0, 2), 16), g = parseInt(n.slice(2, 4), 16), b = parseInt(n.slice(4, 6), 16);
+  const mix = c => Math.round(c + (255 - c) * amount);
+  return `rgb(${mix(r)},${mix(g)},${mix(b)})`;
+}
 
 /* ----------------------------------------
    区間計算エンジン（statistick.htmlから移植）
@@ -526,6 +554,10 @@ function renderMap() {
   const riddenCount = riddenSegments.size;
   const pct = totalSegments > 0 ? Math.round((riddenCount / totalSegments) * 100) : 0;
 
+  const mainColor = getRouteColor(routeVal);
+  const riddenColor = mainColor;
+  const unriddenColor = lightenColor(mainColor, 0.72);
+
   let html = `
     <div class="route-coverage-label">
       <span>${routeVal}</span>
@@ -563,7 +595,7 @@ function renderMap() {
 
   stationsOnRoute.forEach((name, i) => {
     const prevSeg = isLoop ? (i - 1 + totalSegments) % totalSegments : i - 1;
-    const dotRidden = (riddenSegments.has(prevSeg) || riddenSegments.has(i)) ? " ridden" : "";
+    const dotRidden = riddenSegments.has(prevSeg) || riddenSegments.has(i);
 
     const vias = stationToVias[name] || [];
     const aboveVias = vias.filter(v => v.side === "above");
@@ -571,29 +603,34 @@ function renderMap() {
 
     if (aboveVias.length) html += renderViaRow(aboveVias);
 
+    const shaded = i % 2 === 1 ? " shaded" : "";
     html += `
-      <div class="route-line-station">
-        <span class="route-line-dot${dotRidden}"></span>
-        <span class="route-line-name">${name}</span>
+      <div class="rt-row${shaded}">
+        <div class="rt-name">${name}</div>
+        <div class="rt-dot-wrap">
+          <span class="rt-dot" style="${dotRidden ? `background:${riddenColor};border-color:${riddenColor};` : `border-color:${unriddenColor};`}"></span>
+        </div>
       </div>
     `;
 
     if (belowVias.length) html += renderViaRow(belowVias);
 
     if (i < stationsOnRoute.length - 1) {
-      const segRidden = riddenSegments.has(i) ? " ridden" : "";
-      html += `<div class="route-line-connector${segRidden}"></div>`;
+      const segRidden = riddenSegments.has(i);
+      html += `<div class="rt-connector" style="background:${segRidden ? riddenColor : unriddenColor};"></div>`;
     }
   });
 
   if (isLoop) {
     const lastSegIdx = stationsOnRoute.length - 1;
-    const segRidden = riddenSegments.has(lastSegIdx) ? " ridden" : "";
-    html += `<div class="route-line-connector${segRidden}"></div>`;
+    const segRidden = riddenSegments.has(lastSegIdx);
+    html += `<div class="rt-connector" style="background:${segRidden ? riddenColor : unriddenColor};"></div>`;
     html += `
-      <div class="route-line-station">
-        <span class="route-line-dot${segRidden}"></span>
-        <span class="route-line-name">${stationsOnRoute[0]}（一周）</span>
+      <div class="rt-row">
+        <div class="rt-name">${stationsOnRoute[0]}（一周）</div>
+        <div class="rt-dot-wrap">
+          <span class="rt-dot" style="${segRidden ? `background:${riddenColor};border-color:${riddenColor};` : `border-color:${unriddenColor};`}"></span>
+        </div>
       </div>
     `;
   }
