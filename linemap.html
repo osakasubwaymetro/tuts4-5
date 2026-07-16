@@ -7,7 +7,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.0.0 -->
+<!-- version: 1.1.0 -->
+<!-- 1.1.0: 直通先の表示を、列車走行位置マップ風の「路線端なら直線で下に継続」「途中駅なら
+           曲線で枝分かれ」というスタイルに変更。編成アイコンは無し。路線ごとに色を自動で決める -->
+<!-- 1.0.0: 初版 -->
 <style>
   body {
     font-family: "Hiragino Sans", "Segoe UI", sans-serif;
@@ -88,19 +91,35 @@
   .pictogram-row {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
-    margin: 4px 0 8px 22px;
+    gap: 10px;
+    margin: 0 0 8px 22px;
   }
-  .pictogram-chip {
-    background: #FFF3CD;
-    color: #7a5b00;
-    border: 1px solid #f0dca0;
-    border-radius: 8px;
+  .via-branch-end {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .via-branch-end .stub {
+    width: 3px;
+    height: 14px;
+    margin-left: 12px;
+  }
+  .via-branch-mid {
+    display: flex;
+    align-items: center;
+    margin-top: -6px;
+  }
+  .via-branch-mid svg { flex-shrink: 0; display: block; }
+  .via-pill {
     padding: 4px 10px;
+    border-radius: 14px;
+    color: #fff;
     font-size: 12px;
+    font-weight: 600;
     cursor: pointer;
+    white-space: nowrap;
+    border: none;
   }
-  .pictogram-chip:hover { background: #ffe9a8; }
 </style>
 </head>
 <body>
@@ -252,6 +271,16 @@ function jumpToRoute(routeName) {
 ---------------------------------------- */
 function isViaEntry(n) { return typeof n === "string" && n.startsWith("via_"); }
 function viaTargetRoute(n) { return n.slice(4).split("#")[0]; }
+
+// 路線名から見た目の色を一定に決める（同じ路線なら常に同じ色になる）
+const LINE_COLORS = ["#1e8449", "#2874a6", "#b9770e", "#7d3c98", "#c0392b", "#117864", "#5b2c6f", "#1a5276"];
+function colorForRoute(name) {
+  let hash = 0;
+  const s = String(name || "");
+  for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) % LINE_COLORS.length;
+  return LINE_COLORS[Math.abs(hash) % LINE_COLORS.length];
+}
+function escAttr(s) { return String(s).replace(/"/g, "&quot;"); }
 
 /* ----------------------------------------
    区間計算エンジン（statistick.htmlから移植）
@@ -432,7 +461,8 @@ function renderMap() {
     return;
   }
 
-  // via_ → 隣接する実駅（拠点駅）でグループ化。1つの駅に複数の直通先があってもOK
+  // via_ → 隣接する実駅（拠点駅）でグループ化。路線の端にあるか（=直線continuation）、
+  // 途中にあるか（=曲線の枝分かれ）も記録する。1つの駅に複数の直通先があってもOK
   const stationToVias = {};
   rawRows.forEach((name, rawIdx) => {
     if (!isViaEntry(name)) return;
@@ -441,8 +471,11 @@ function renderMap() {
     for (let i = rawIdx - 1; i >= 0; i--) { if (!isViaEntry(rawRows[i])) { neighbor = rawRows[i]; break; } }
     if (!neighbor) { for (let i = rawIdx + 1; i < rawRows.length; i++) { if (!isViaEntry(rawRows[i])) { neighbor = rawRows[i]; break; } } }
     if (!neighbor) return;
-    if (!stationToVias[neighbor]) stationToVias[neighbor] = new Set();
-    stationToVias[neighbor].add(targetRoute);
+    const isEnd = (rawIdx === 0 || rawIdx === rawRows.length - 1);
+    if (!stationToVias[neighbor]) stationToVias[neighbor] = [];
+    if (!stationToVias[neighbor].some(v => v.route === targetRoute)) {
+      stationToVias[neighbor].push({ route: targetRoute, isEnd });
+    }
   });
 
   // 自分のローカルキャッシュ（show.htmlが保存してるもの）から区間を計算する
@@ -477,8 +510,23 @@ function renderMap() {
 
     if (stationToVias[name]) {
       html += '<div class="pictogram-row">';
-      [...stationToVias[name]].forEach(rt => {
-        html += `<button type="button" class="pictogram-chip" data-route="${String(rt).replace(/"/g, "&quot;")}">🚃 ${rt}へ直通</button>`;
+      stationToVias[name].forEach(v => {
+        const color = colorForRoute(v.route);
+        if (v.isEnd) {
+          html += `
+            <div class="via-branch-end">
+              <div class="stub" style="background:${color};"></div>
+              <button type="button" class="via-pill" style="background:${color};" data-route="${escAttr(v.route)}">${v.route}</button>
+            </div>
+          `;
+        } else {
+          html += `
+            <div class="via-branch-mid">
+              <svg width="28" height="22" viewBox="0 0 28 22"><path d="M2,2 Q2,18 26,18" stroke="${color}" stroke-width="3" fill="none"/></svg>
+              <button type="button" class="via-pill" style="background:${color};" data-route="${escAttr(v.route)}">${v.route}</button>
+            </div>
+          `;
+        }
       });
       html += '</div>';
     }
@@ -504,7 +552,7 @@ function renderMap() {
   html += '</div>';
   box.innerHTML = html;
 
-  box.querySelectorAll(".pictogram-chip").forEach(btn => {
+  box.querySelectorAll(".via-pill").forEach(btn => {
     btn.onclick = () => jumpToRoute(btn.dataset.route);
   });
 }
