@@ -1,7 +1,6 @@
-// version: 1.25.1
-// 1.25.1: マスタデータ取得にリトライを追加。opensheetが一時的に配列以外（エラー等）を
-//         返した場合、1秒待って1回だけ再試行するようにして、data.map is not a function
-//         のようなエラーで処理が落ちるのを防ぐ
+// version: 1.26.0
+// 1.26.0: numberシートに「備考」列を追加対応。編成選択ポップアップ・車両検索の結果に、
+//         「赤帯」のような小さいバッジとして表示するように対応
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -2198,6 +2197,7 @@ function openFormationPicker() {
                  onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';">
             <div class="csr-info">
               <div class="csr-header"><span>${formatFormationLabel(r["車番"])}</span></div>
+              ${noteBadgeHtml(r)}
             </div>
           </div>
         </div>
@@ -2252,6 +2252,11 @@ function openCarSearchPopup() {
 
 function cleanFormationNumber(num) {
   return String(num || "").trim().replace(/\*/g, "");
+}
+
+function noteBadgeHtml(r) {
+  const note = String((r && r["備考"]) || "").trim();
+  return note ? `<span class="csr-note-badge">${note}</span>` : "";
 }
 
 function formatFormationLabel(num) {
@@ -2348,6 +2353,7 @@ function runCarSearch() {
               <span>${r["車両形式"]}</span>
               <span class="csr-number">${formatFormationLabel(r["車番"])}</span>
             </div>
+            ${noteBadgeHtml(r)}
             <div class="csr-cars">${chips}</div>
           </div>
         </div>
