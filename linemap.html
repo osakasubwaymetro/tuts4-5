@@ -7,9 +7,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.7.0 -->
-<!-- 1.7.0: 運営アカウント対応。個人キャッシュを使わず全ユーザー分のデータを取得し、
-           「ユーザーで見る」プルダウンで好きなユーザーの乗車マップを確認できるように -->
+<!-- version: 1.8.0 -->
+<!-- 1.8.0: ①直通先へのジャンプ判定を「routeシートにあるか」から「stationシートにその路線の
+           駅データがあるか」に変更。②拠点駅との隙間を解消（余分なmarginを削除、線を
+           SVGの端まで伸ばした）。③フォークのカーブを3次ベジェにして、はっきり分かれる
+           見た目に改善 -->
 <!-- 1.3.0: ①via_の枝分かれ表示を、via_が拠点駅より前にあるか後ろにあるかで上側／下側に
            振り分けるように変更（例: 大阪方面からの直通は淡路の上側に出るように）。
            ②マスタデータの背景更新でプルダウンの選択がリセットされないよう、
@@ -110,7 +112,7 @@
     flex-direction: column;
     gap: 6px;
     padding-left: 50%;
-    margin: 0 0 8px 0;
+    margin: 0;
   }
   .pictogram-passline {
     position: absolute;
@@ -310,20 +312,34 @@ function findRouteMeta(routeName) {
 }
 
 function jumpToRoute(routeName) {
-  const meta = findRouteMeta(routeName);
-  if (!meta) {
-    alert("この路線のマスタデータが見つかりませんでした: " + routeName);
+  // 「飛べるかどうか」は route シートではなく station シートにその路線の駅データがあるかで判定する
+  const hasStationData = allstationData.some(r => r["路線"] === routeName);
+  if (!hasStationData) {
+    alert("この路線の駅データが見つかりませんでした: " + routeName);
     return;
   }
-  document.getElementById("mapArea").value = meta.area;
-  buildCompanySelect();
-  buildRouteSelect();
-  document.getElementById("mapType").value = meta.type;
-  buildCompanySelect();
-  buildRouteSelect();
-  document.getElementById("mapCompany").value = meta.company;
-  buildRouteSelect();
-  document.getElementById("mapRoute").value = meta.route;
+
+  // routeシート側にメタ情報（区分・会社・エリア）があれば、カスケード選択も合わせておく
+  const meta = findRouteMeta(routeName);
+  if (meta) {
+    document.getElementById("mapArea").value = meta.area;
+    buildCompanySelect();
+    buildRouteSelect();
+    document.getElementById("mapType").value = meta.type;
+    buildCompanySelect();
+    buildRouteSelect();
+    document.getElementById("mapCompany").value = meta.company;
+    buildRouteSelect();
+  }
+
+  const routeSel = document.getElementById("mapRoute");
+  if (![...routeSel.options].some(o => o.value === routeName)) {
+    const opt = document.createElement("option");
+    opt.value = routeName;
+    opt.textContent = routeName;
+    routeSel.appendChild(opt);
+  }
+  routeSel.value = routeName;
   renderMap();
 }
 
@@ -695,7 +711,7 @@ function renderMap() {
         const pillEl = `<button type="button" class="via-pill" style="background:${color};" data-route="${escAttr(v.route)}">${v.route}</button>`;
         inner = `<div class="via-branch-end">${v.side === "above" ? pillEl + stubEl : stubEl + pillEl}</div>`;
       } else {
-        const pathD = v.side === "above" ? "M2,20 Q2,4 26,4" : "M2,2 Q2,18 26,18";
+        const pathD = v.side === "above" ? "M2,22 Q2,4 26,4" : "M2,0 Q2,18 26,18";
         inner = `
           <div class="via-branch-mid">
             <svg width="28" height="22" viewBox="0 0 28 22"><path d="${pathD}" stroke="${color}" stroke-width="3" fill="none"/></svg>
@@ -715,15 +731,18 @@ function renderMap() {
     const n = vias.length;
     const branchGap = 60;
     const svgWidth = 20 + n * branchGap;
+    const svgHeight = 24;
     const trunkX = 2; // 行のpadding-left:50%の位置＝中心線に合わせる（単一分岐の時と同じ起点）
-    const trunkY = side === "above" ? 21 : 3;
-    const branchY = side === "above" ? 3 : 21;
+    const trunkY = side === "above" ? svgHeight : 0; // 端まで伸ばして駅の行と隙間なく繋げる
+    const branchY = side === "above" ? 2 : svgHeight - 2;
+    const midY = (trunkY + branchY) / 2;
 
     let paths = "";
     vias.forEach((v, i) => {
       const color = colorForRoute(v.route);
       const targetX = trunkX + branchGap * (i + 0.7);
-      paths += `<path d="M${trunkX},${trunkY} Q${trunkX},${branchY} ${targetX},${branchY}" stroke="${color}" stroke-width="3" fill="none"/>`;
+      // 3次ベジェにして、早めに分かれるはっきりしたフォーク形状にする
+      paths += `<path d="M${trunkX},${trunkY} C${trunkX},${midY} ${targetX},${midY} ${targetX},${branchY}" stroke="${color}" stroke-width="3" fill="none"/>`;
     });
 
     const pills = vias.map((v, i) => {
