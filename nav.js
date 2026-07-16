@@ -2,7 +2,8 @@
  * nav.js — 共通ヘッダー管理ファイル
  * 新しいページを追加するときは NAV_LINKS だけ編集してください
  *
- * version: 1.5.0
+ * version: 1.5.1
+ * 1.5.1: メニューに「乗車路線マップ確認用」（linemap.html）を追加
  * 1.5.0: お知らせ・お問い合わせページ（contact.html）をメニューに追加。
  *        管理者メニューに「お問い合わせ管理」（inquiries.html）を追加
  * 1.4.1: 管理者専用リンクの対象を「運営」のみに限定（他の特定ユーザー名の許可を削除）
@@ -16,6 +17,7 @@ const NAV_LINKS = [
   { href: "index.html",      icon: "📝", label: "新規投稿" },
   { href: "show.html",       icon: "📜", label: "投稿履歴" },
   { href: "statistick.html", icon: "📊", label: "統計情報" },
+  { href: "linemap.html",    icon: "🗺", label: "乗車路線マップ確認用" },
   { href: "stampbook.html",  icon: "🎫", label: "スタンプ帳" },
   { href: "contact.html",    icon: "📩", label: "お知らせ・お問い合わせ" },
   { href: "settings.html",   icon: "⚙️", label: "設定" },

@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>乗車路線マップ確認用</title>
+<!-- version: 1.0.0 -->
+<style>
+  body {
+    font-family: "Hiragino Sans", "Segoe UI", sans-serif;
+    background: #F7F8FA;
+    margin: 0;
+    padding-bottom: 40px;
+  }
+  main { max-width: 600px; margin: 0 auto; padding: 16px; }
+  h2 { color: #004C97; margin: 20px 0 10px; }
+  .small { color: #999; font-size: 13px; }
+  .select-card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+  }
+  .select-card label { display:block; font-size:12px; color:#888; margin:8px 0 3px; }
+  .select-card label:first-child { margin-top: 0; }
+  .select-card select {
+    width: 100%;
+    padding: 9px 10px;
+    border-radius: 8px;
+    border: 1.5px solid #E3E8F0;
+    font-size: 14px;
+    box-sizing: border-box;
+    background: #fff;
+  }
+
+  .route-coverage-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 15px;
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 10px;
+  }
+  .route-coverage-pct { font-size: 12px; font-weight: normal; color: #666; }
+
+  .route-line-scroll {
+    padding: 10px 4px;
+    background: #F4F7FB;
+    border-radius: 12px;
+  }
+  .route-line-station {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .route-line-dot {
+    flex-shrink: 0;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: white;
+    border: 2px solid #ccc;
+    box-sizing: border-box;
+  }
+  .route-line-dot.ridden { border-color: #004C97; background: #004C97; }
+  .route-line-name {
+    background: #cfe0f2;
+    color: #17324f;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 5px 12px;
+    border-radius: 20px;
+  }
+  .route-line-dot.ridden + .route-line-name { background: #bcd6ef; }
+  .route-line-connector {
+    width: 3px;
+    height: 14px;
+    margin-left: 4.5px;
+    background: #ddd;
+  }
+  .route-line-connector.ridden { background: #004C97; }
+
+  .pictogram-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 4px 0 8px 22px;
+  }
+  .pictogram-chip {
+    background: #FFF3CD;
+    color: #7a5b00;
+    border: 1px solid #f0dca0;
+    border-radius: 8px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .pictogram-chip:hover { background: #ffe9a8; }
+</style>
+</head>
+<body>
+
+<main>
+  <h2>🗺 乗車路線マップ確認用</h2>
+  <p class="small">エリア〜路線を選ぶと、その路線の乗車区間マップが見れます。直通先の拠点駅にはピクトグラムが出るので、タップするとその路線に切り替わります。（自分のローカルに保存されている乗車・降車データを使って計算しています）</p>
+
+  <div class="select-card">
+    <label>エリア</label>
+    <select id="mapArea"><option value="">選択してください</option></select>
+    <label>区分</label>
+    <select id="mapType"><option value="">選択してください</option></select>
+    <label>会社</label>
+    <select id="mapCompany"><option value="">選択してください</option></select>
+    <label>路線</label>
+    <select id="mapRoute"><option value="">選択してください</option></select>
+  </div>
+
+  <div id="mapResult"></div>
+</main>
+
+<script src="nav.js?v=1.5.1"></script>
+<script src="logs.js?v=1.2.1"></script>
+<script>initNav("乗車路線マップ確認用");</script>
+<script>
+const username = checkLogin();
+
+document.addEventListener("DOMContentLoaded", () => {
+  logAction("view", "ページ閲覧: linemap.html");
+});
+
+/* ----------------------------------------
+   マスタデータ（他ページと共通のキャッシュキーを使い回す）
+---------------------------------------- */
+let allAreaData = [], allTypeData = [], allCountryData = [], allrouteData = [], allstationData = [];
+const BASE = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/";
+
+function fetchCachedMasterData(cacheKey, url, handler) {
+  const key = "tuts4_master_" + cacheKey;
+  try {
+    const cached = localStorage.getItem(key);
+    if (cached) handler(JSON.parse(cached));
+  } catch (e) { /* 壊れたキャッシュは無視 */ }
+
+  fetchJsonArrayWithRetry(url).then(data => {
+    if (!data) return;
+    handler(data);
+    try { localStorage.setItem(key, JSON.stringify(data)); } catch (e) { /* 容量超過等は無視 */ }
+  });
+}
+
+async function fetchJsonArrayWithRetry(url, attempts = 2) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      if (Array.isArray(data)) return data;
+    } catch (e) { /* 下でリトライ */ }
+    if (i < attempts - 1) await new Promise(r => setTimeout(r, 1000));
+  }
+  return null;
+}
+
+fetchCachedMasterData("area", BASE + "area", data => { allAreaData = data; buildAreaSelect(); });
+fetchCachedMasterData("type", BASE + "type", data => { allTypeData = data; buildTypeSelect(); });
+fetchCachedMasterData("country", BASE + "country", data => { allCountryData = data; refreshCascade(); });
+fetchCachedMasterData("route", BASE + "route", data => { allrouteData = data; refreshCascade(); });
+fetchCachedMasterData("station", BASE + "station", data => {
+  allstationData = data;
+  if (document.getElementById("mapRoute").value) renderMap();
+});
+
+/* ----------------------------------------
+   カスケード選択（エリア→区分→会社→路線）
+---------------------------------------- */
+function fillSelectPreserve(sel, options) {
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">選択してください</option>' + options.map(v => `<option value="${v}">${v}</option>`).join("");
+  if (options.includes(cur)) sel.value = cur;
+}
+
+function buildAreaSelect() {
+  fillSelectPreserve(document.getElementById("mapArea"), [...new Set(allAreaData.map(r => r["えりあ"]))].filter(Boolean));
+}
+function buildTypeSelect() {
+  fillSelectPreserve(document.getElementById("mapType"), [...new Set(allTypeData.map(r => r["区分"]))].filter(Boolean));
+}
+function buildCompanySelect() {
+  const areaVal = document.getElementById("mapArea").value;
+  const typeVal = document.getElementById("mapType").value;
+  fillSelectPreserve(
+    document.getElementById("mapCompany"),
+    [...new Set(allCountryData.filter(r => r["えりあ"] === areaVal && r["区分"] === typeVal).map(r => r["会社"]))].filter(Boolean)
+  );
+}
+function buildRouteSelect() {
+  const typeVal = document.getElementById("mapType").value;
+  const companyVal = document.getElementById("mapCompany").value;
+  fillSelectPreserve(
+    document.getElementById("mapRoute"),
+    [...new Set(allrouteData.filter(r => r["区分"] === typeVal && r["会社"] === companyVal).map(r => r["路線"]))].filter(Boolean)
+  );
+}
+function refreshCascade() {
+  buildCompanySelect();
+  buildRouteSelect();
+}
+
+document.getElementById("mapArea").addEventListener("change", () => { buildCompanySelect(); buildRouteSelect(); clearMap(); });
+document.getElementById("mapType").addEventListener("change", () => { buildCompanySelect(); buildRouteSelect(); clearMap(); });
+document.getElementById("mapCompany").addEventListener("change", () => { buildRouteSelect(); clearMap(); });
+document.getElementById("mapRoute").addEventListener("change", renderMap);
+
+function clearMap() {
+  document.getElementById("mapResult").innerHTML = "";
+}
+
+// 選んだ路線から、区分・会社・エリアを逆算する（ピクトグラムから直通先に飛ぶ時に使う）
+function findRouteMeta(routeName) {
+  const routeRow = allrouteData.find(r => r["路線"] === routeName);
+  if (!routeRow) return null;
+  const type = routeRow["区分"];
+  const company = routeRow["会社"];
+  const countryRow = allCountryData.find(r => r["区分"] === type && r["会社"] === company);
+  return { area: countryRow ? countryRow["えりあ"] : "", type, company, route: routeName };
+}
+
+function jumpToRoute(routeName) {
+  const meta = findRouteMeta(routeName);
+  if (!meta) {
+    alert("この路線のマスタデータが見つかりませんでした: " + routeName);
+    return;
+  }
+  document.getElementById("mapArea").value = meta.area;
+  buildCompanySelect();
+  buildRouteSelect();
+  document.getElementById("mapType").value = meta.type;
+  buildCompanySelect();
+  buildRouteSelect();
+  document.getElementById("mapCompany").value = meta.company;
+  buildRouteSelect();
+  document.getElementById("mapRoute").value = meta.route;
+  renderMap();
+}
+
+/* ----------------------------------------
+   via_（直通先）関連のヘルパー
+---------------------------------------- */
+function isViaEntry(n) { return typeof n === "string" && n.startsWith("via_"); }
+function viaTargetRoute(n) { return n.slice(4).split("#")[0]; }
+
+/* ----------------------------------------
+   区間計算エンジン（statistick.htmlから移植）
+---------------------------------------- */
+function isCircularRouteName(routeName, routeMaster) {
+  const row = routeMaster.find(r => r["路線"] === routeName);
+  if (!row) return false;
+  const v = row["環状"];
+  return v === true || v === 1 || ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
+}
+function isCircularReversedName(routeName, routeMaster) {
+  const row = routeMaster.find(r => r["路線"] === routeName);
+  if (!row) return false;
+  const v = row["環状反転"];
+  return v === true || v === 1 || ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
+}
+function getCircularFixedDirectionName(routeName, routeMaster) {
+  const row = routeMaster.find(r => r["路線"] === routeName);
+  if (!row) return null;
+  const v = String(row["環状方向限定"] || "").trim();
+  if (v.includes("外回り")) return "外回り";
+  if (v.includes("内回り")) return "内回り";
+  return null;
+}
+function timeKeyMatch(a, b) {
+  if (!a || !b) return false;
+  if (String(a) === String(b)) return true;
+  const da = new Date(a), db = new Date(b);
+  return !isNaN(da) && !isNaN(db) && da.getTime() === db.getTime();
+}
+function parseDescentChain(raw) {
+  let s = typeof raw === "string" ? raw : "";
+  let circularDir = null;
+  const m = s.match(/^\[環状:(外回り|内回り)\](.*)$/);
+  if (m) { circularDir = m[1]; s = m[2]; }
+
+  if (!s.includes("|") && !s.includes("@")) return { hops: [], finalStation: s, circularDir };
+  const parts = s.split("|");
+  const finalStation = parts.pop();
+  const hops = parts.map(p => {
+    const [junction, nextRoute] = p.split("@");
+    return { junction, nextRoute };
+  }).filter(h => h.junction && h.nextRoute);
+  return { hops, finalStation, circularDir };
+}
+function buildLegs(boardingRoute, boardingStation, chain) {
+  const legs = [];
+  let currentRoute = boardingRoute;
+  let currentBoard = boardingStation;
+  chain.hops.forEach(hop => {
+    legs.push({ route: currentRoute, board: currentBoard, alight: hop.junction });
+    currentRoute = hop.nextRoute;
+    currentBoard = hop.junction;
+  });
+  legs.push({ route: currentRoute, board: currentBoard, alight: chain.finalStation });
+  return legs;
+}
+function getRouteStationInfo(routeName, stationData, cache) {
+  if (cache[routeName]) return cache[routeName];
+  const isVia = isViaEntry;
+  const rawStationRows = stationData.filter(s => s["路線"] === routeName).map(s => s["駅名"]);
+  const stationsOnRoute = rawStationRows.filter(name => !isVia(name));
+
+  const rawIndexMap = {};
+  rawStationRows.forEach((name, i) => { if (!(name in rawIndexMap)) rawIndexMap[name] = i; });
+
+  const viaForward = {};
+  const viaBackward = {};
+  rawStationRows.forEach((name, rawIdx) => {
+    if (!isVia(name)) return;
+    for (let i = rawIdx - 1; i >= 0; i--) {
+      if (!isVia(rawStationRows[i])) { viaBackward[name] = stationsOnRoute.indexOf(rawStationRows[i]); break; }
+    }
+    for (let i = rawIdx + 1; i < rawStationRows.length; i++) {
+      if (!isVia(rawStationRows[i])) { viaForward[name] = stationsOnRoute.indexOf(rawStationRows[i]); break; }
+    }
+  });
+
+  const info = { stationsOnRoute, rawIndexMap, viaForward, viaBackward };
+  cache[routeName] = info;
+  return info;
+}
+function resolveStationIndex(stationName, info, referenceStationName) {
+  const idx = info.stationsOnRoute.indexOf(stationName);
+  if (idx !== -1) return idx;
+
+  const hasForward = Object.prototype.hasOwnProperty.call(info.viaForward, stationName);
+  const hasBackward = Object.prototype.hasOwnProperty.call(info.viaBackward, stationName);
+  if (!hasForward && !hasBackward) return -1;
+
+  const viaRawIdx = info.rawIndexMap[stationName];
+  const refRawIdx = referenceStationName ? info.rawIndexMap[referenceStationName] : undefined;
+
+  if (refRawIdx !== undefined && viaRawIdx !== undefined) {
+    if (refRawIdx > viaRawIdx && hasForward) return info.viaForward[stationName];
+    if (refRawIdx < viaRawIdx && hasBackward) return info.viaBackward[stationName];
+  }
+  return hasBackward ? info.viaBackward[stationName] : info.viaForward[stationName];
+}
+function computeAllRiddenSegments(mine, myTransfers, stationData, routeMaster) {
+  const stationInfoCache = {};
+  const segmentsByRoute = {};
+
+  mine.forEach(r => {
+    if (!r.route) return;
+
+    const matchedTransfer = myTransfers.find(t => timeKeyMatch(t["元の乗車時刻"], r.timeRaw));
+    if (!matchedTransfer) return;
+
+    const chain = parseDescentChain(String(matchedTransfer["降車駅"] || "").trim());
+    if (!chain.finalStation) return;
+
+    const legs = buildLegs(r.route, r.station, chain);
+
+    legs.forEach((leg, legIdx) => {
+      if (!leg.route) return;
+      const info = getRouteStationInfo(leg.route, stationData, stationInfoCache);
+      if (info.stationsOnRoute.length < 2) return;
+
+      const boardIdx = resolveStationIndex(leg.board, info, leg.alight);
+      const alightIdx = resolveStationIndex(leg.alight, info, leg.board);
+      if (boardIdx === -1 || alightIdx === -1) return;
+
+      if (!segmentsByRoute[leg.route]) segmentsByRoute[leg.route] = new Set();
+      const total = info.stationsOnRoute.length;
+
+      if (isCircularRouteName(leg.route, routeMaster)) {
+        const forwardDist = (alightIdx - boardIdx + total) % total;
+        const backwardDist = total - forwardDist;
+        const fixedDir = getCircularFixedDirectionName(leg.route, routeMaster);
+        const reversed = isCircularReversedName(leg.route, routeMaster);
+        let goForward;
+        if (fixedDir) {
+          const wantsOuter = fixedDir === "外回り";
+          goForward = reversed ? !wantsOuter : wantsOuter;
+        } else if (legIdx === 0 && chain.circularDir) {
+          const wantsOuter = chain.circularDir === "外回り";
+          goForward = reversed ? !wantsOuter : wantsOuter;
+        } else {
+          goForward = forwardDist <= backwardDist;
+        }
+        if (goForward) {
+          for (let i = 0; i < forwardDist; i++) segmentsByRoute[leg.route].add((boardIdx + i) % total);
+        } else {
+          for (let i = 0; i < backwardDist; i++) segmentsByRoute[leg.route].add((boardIdx - i - 1 + total) % total);
+        }
+      } else {
+        const lo = Math.min(boardIdx, alightIdx);
+        const hi = Math.max(boardIdx, alightIdx);
+        for (let i = lo; i < hi; i++) segmentsByRoute[leg.route].add(i);
+      }
+    });
+  });
+
+  return { segmentsByRoute };
+}
+
+function readLocalCache(key) {
+  try {
+    const v = localStorage.getItem(key);
+    return v ? JSON.parse(v) : [];
+  } catch (e) { return []; }
+}
+
+/* ----------------------------------------
+   メイン描画
+---------------------------------------- */
+function renderMap() {
+  const routeVal = document.getElementById("mapRoute").value;
+  const box = document.getElementById("mapResult");
+  if (!routeVal) { box.innerHTML = ""; return; }
+  if (!allstationData.length) { box.innerHTML = '<p class="small">駅データを読み込み中...</p>'; return; }
+
+  const rawRows = allstationData.filter(r => r["路線"] === routeVal).map(r => r["駅名"]);
+  const stationsOnRoute = rawRows.filter(n => !isViaEntry(n));
+  if (stationsOnRoute.length < 2) {
+    box.innerHTML = '<p class="small">この路線の駅データがありません（stationシートを確認してください）</p>';
+    return;
+  }
+
+  // via_ → 隣接する実駅（拠点駅）でグループ化。1つの駅に複数の直通先があってもOK
+  const stationToVias = {};
+  rawRows.forEach((name, rawIdx) => {
+    if (!isViaEntry(name)) return;
+    const targetRoute = viaTargetRoute(name);
+    let neighbor = null;
+    for (let i = rawIdx - 1; i >= 0; i--) { if (!isViaEntry(rawRows[i])) { neighbor = rawRows[i]; break; } }
+    if (!neighbor) { for (let i = rawIdx + 1; i < rawRows.length; i++) { if (!isViaEntry(rawRows[i])) { neighbor = rawRows[i]; break; } } }
+    if (!neighbor) return;
+    if (!stationToVias[neighbor]) stationToVias[neighbor] = new Set();
+    stationToVias[neighbor].add(targetRoute);
+  });
+
+  // 自分のローカルキャッシュ（show.htmlが保存してるもの）から区間を計算する
+  const cachedRides = readLocalCache("tuts4_show_cache_" + username);
+  const cachedTransfers = readLocalCache("tuts4_transfers_cache_" + username);
+  const mine = cachedRides.map(r => ({ route: r["路線"], station: r["乗車駅"], timeRaw: r["時刻"] }));
+  const { segmentsByRoute } = computeAllRiddenSegments(mine, cachedTransfers, allstationData, allrouteData);
+  const riddenSegments = segmentsByRoute[routeVal] || new Set();
+
+  const isLoop = isCircularRouteName(routeVal, allrouteData);
+  const totalSegments = isLoop ? stationsOnRoute.length : stationsOnRoute.length - 1;
+  const riddenCount = riddenSegments.size;
+  const pct = totalSegments > 0 ? Math.round((riddenCount / totalSegments) * 100) : 0;
+
+  let html = `
+    <div class="route-coverage-label">
+      <span>${routeVal}</span>
+      <span class="route-coverage-pct">${pct}%（${riddenCount}/${totalSegments}区間）</span>
+    </div>
+    <div class="route-line-scroll">
+  `;
+
+  stationsOnRoute.forEach((name, i) => {
+    const prevSeg = isLoop ? (i - 1 + totalSegments) % totalSegments : i - 1;
+    const dotRidden = (riddenSegments.has(prevSeg) || riddenSegments.has(i)) ? " ridden" : "";
+    html += `
+      <div class="route-line-station">
+        <span class="route-line-dot${dotRidden}"></span>
+        <span class="route-line-name">${name}</span>
+      </div>
+    `;
+
+    if (stationToVias[name]) {
+      html += '<div class="pictogram-row">';
+      [...stationToVias[name]].forEach(rt => {
+        html += `<button type="button" class="pictogram-chip" data-route="${String(rt).replace(/"/g, "&quot;")}">🚃 ${rt}へ直通</button>`;
+      });
+      html += '</div>';
+    }
+
+    if (i < stationsOnRoute.length - 1) {
+      const segRidden = riddenSegments.has(i) ? " ridden" : "";
+      html += `<div class="route-line-connector${segRidden}"></div>`;
+    }
+  });
+
+  if (isLoop) {
+    const lastSegIdx = stationsOnRoute.length - 1;
+    const segRidden = riddenSegments.has(lastSegIdx) ? " ridden" : "";
+    html += `<div class="route-line-connector${segRidden}"></div>`;
+    html += `
+      <div class="route-line-station">
+        <span class="route-line-dot${segRidden}"></span>
+        <span class="route-line-name">${stationsOnRoute[0]}（一周）</span>
+      </div>
+    `;
+  }
+
+  html += '</div>';
+  box.innerHTML = html;
+
+  box.querySelectorAll(".pictogram-chip").forEach(btn => {
+    btn.onclick = () => jumpToRoute(btn.dataset.route);
+  });
+}
+</script>
+
+</body>
+</html>
