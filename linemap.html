@@ -925,10 +925,10 @@ function renderMap() {
     const upperColor = (prevRidden === null || aboveIsEnd) ? "transparent" : (prevRidden ? riddenColor : unriddenColor);
     const lowerColor = (nextRidden === null || belowIsEnd) ? "transparent" : (nextRidden ? riddenColor : unriddenColor);
 
+    const parallelRoutes = activeParallelByIndex[i] || [];
     if (aboveVias.length) html += renderViaRow(aboveVias, upperColor, parallelRoutes);
 
     const shaded = i % 2 === 1 ? " shaded" : "";
-    const parallelRoutes = activeParallelByIndex[i] || [];
     const parallelLines = parallelRoutes.map((rt, pi) =>
       `<div class="parallel-line" style="left:calc(50% - ${(pi+1)*12}px);${(startedAtIndex[i]||[]).includes(rt) ? "top:10px;" : ""}" title="${escAttr(rt)}"></div>`
     ).join("");
