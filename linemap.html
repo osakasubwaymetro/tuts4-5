@@ -7,9 +7,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.3.2 -->
-<!-- 1.3.2: カーブの反転を「上側配置の時だけ」に限定。下側配置（今まで通り正しかったパターン）
-           まで一律で反転させてしまっていたのを修正 -->
+<!-- version: 1.3.3 -->
+<!-- 1.3.3: 路線端（直線）タイプの上側配置で、ピルとスタブの順序が逆だったのを修正
+           （ピル→スタブの順にして、スタブが下の駅へ正しく繋がるように） -->
 <!-- 1.3.0: ①via_の枝分かれ表示を、via_が拠点駅より前にあるか後ろにあるかで上側／下側に
            振り分けるように変更（例: 大阪方面からの直通は淡路の上側に出るように）。
            ②マスタデータの背景更新でプルダウンの選択がリセットされないよう、
@@ -539,10 +539,12 @@ function renderMap() {
     vias.forEach(v => {
       const color = colorForRoute(v.route);
       if (v.isEnd) {
+        const stubEl = `<div class="stub" style="background:${color};"></div>`;
+        const pillEl = `<button type="button" class="via-pill" style="background:${color};" data-route="${escAttr(v.route)}">${v.route}</button>`;
+        // 上側配置：ピル→スタブの順（スタブが下の駅へ繋がる）。下側配置：スタブ→ピルの順（従来通り）
         out += `
           <div class="via-branch-end">
-            <div class="stub" style="background:${color};"></div>
-            <button type="button" class="via-pill" style="background:${color};" data-route="${escAttr(v.route)}">${v.route}</button>
+            ${v.side === "above" ? pillEl + stubEl : stubEl + pillEl}
           </div>
         `;
       } else {
