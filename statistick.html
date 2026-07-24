@@ -611,16 +611,16 @@ async function renderStats(mine, myTransfers) {
   renderList("typeList", sortedType);
 
   // 時間帯 buckets（早朝が使われず「昼」の判定が重複していたのを修正）
-  const timeLabels = ["早朝","朝","昼","夕方","夜","深夜"];
+  const timeLabels = ["早朝(5-7)","朝(7-10)","昼(7-16)","夕方(16-19)","夜(19-24)","深夜(0-5)"];
   function timeBucketOf(h) {
-    if (h < 5) return "深夜";
-    if (h < 7) return "早朝";
-    if (h < 10) return "朝";
-    if (h < 16) return "昼";
-    if (h < 19) return "夕方";
-    return "夜";
+    if (h < 5) return "深夜(0-5)";
+    if (h < 7) return "早朝(5-7)";
+    if (h < 10) return "朝(7-10)";
+    if (h < 16) return "昼(7-16)";
+    if (h < 19) return "夕方(16-19)";
+    return "夜(19-24)";
   }
-  const buckets = { "早朝":0, "朝":0, "昼":0, "夕方":0, "夜":0, "深夜":0 };
+  const buckets = { "早朝(5-7)":0, "朝(7-10)":0, "昼(7-16)":0, "夕方(16-19)":0, "夜(19-24)":0, "深夜(0-5)":0 };
   mine.forEach(r=>{
     if (!r.time) return;
     buckets[timeBucketOf(r.time.getHours())]++;
