@@ -1,6 +1,7 @@
-// version: 1.26.0
-// 1.26.0: numberシートに「備考」列を追加対応。編成選択ポップアップ・車両検索の結果に、
-//         「赤帯」のような小さいバッジとして表示するように対応
+// version: 1.27.0
+// 1.27.0: 「臨時列車」トグルを追加（発車時刻の下・手入力フォームの発車時刻の下）。
+//         ONで投稿すると、ridesシートの「臨時」列に記録され、過去の乗車記録の候補
+//         一覧には出なくなる（rides_gas.gsが「臨時」列に書き込むよう対応が必要）
 const countryURL = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/country";
 const route = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
 const model = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/model";
@@ -454,6 +455,7 @@ function upload() {
 
     const numberValue = document.getElementById('number').value;
     const memoValue = document.getElementById('memo').value;
+    const isExtraValue = document.getElementById('isExtraTrain')?.checked ? "TRUE" : "";
     console.log(numberValue)
 
   const payload = {
@@ -468,7 +470,8 @@ function upload() {
     sujitypeValue,
     boundValue,
     numberValue,
-    memoValue
+    memoValue,
+    isExtraValue
   };
 
   // ▼ここにGASのデプロイURLを入れる
@@ -519,6 +522,8 @@ function resetForm() {
   if (timeEl) timeEl.value = "";
   const memoEl = document.getElementById("memo");
   if (memoEl) memoEl.value = "";
+  const extraEl = document.getElementById("isExtraTrain");
+  if (extraEl) extraEl.checked = false;
 
   // route/model の変更カスケードを明示的に発火し、駅・種別・行先・車番の選択肢や
   // 併結ブロック（まとまりB）・併結ボタンもまとめてクリアする
@@ -1186,10 +1191,14 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
   const holidaySet = await getHolidaySet();
   const todayIsWeekendType = isWeekendType(new Date(), holidaySet);
 
-  // 同じ路線・同じ乗車駅の記録のみを対象にする（ユーザーは問わない）
+  // 同じ路線・同じ乗車駅の記録のみを対象にする（ユーザーは問わない）。
+  // 「臨時列車」フラグが立っている記録は、定期的な候補として出すのにふさわしくないので除外する
+  function isFlaggedExtra(v) {
+    return ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
+  }
   const raw = [];
   rides
-    .filter(r => r["路線"] === routeVal && r["乗車駅"] === boardingStation)
+    .filter(r => r["路線"] === routeVal && r["乗車駅"] === boardingStation && !isFlaggedExtra(r["臨時"]))
     .forEach(r => {
       const bounds = String(r["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
       const types = String(r["種別"] || "").split("/").map(s => s.trim());
@@ -1318,6 +1327,10 @@ function renderManualEntryForm(routeVal) {
   list.innerHTML = `
     <label class="edit-field-label">発車時刻</label>
     <input type="datetime-local" id="manualTimeInput" value="${nowVal}">
+    <label class="toggle-row">
+      <input type="checkbox" id="manualIsExtraTrain">
+      <span>臨時列車（過去の乗車記録の候補には出さない）</span>
+    </label>
     <label class="edit-field-label">種別（無ければ「選択してください」のままでOK）</label>
     <select id="manualTypeInput">
       <option value="">選択してください</option>
@@ -1355,6 +1368,10 @@ function renderManualEntryForm(routeVal) {
       const timeEl = document.getElementById("departing_time");
       if (timeEl) timeEl.value = timeVal;
     }
+
+    const extraEl = document.getElementById("isExtraTrain");
+    const manualExtraEl = document.getElementById("manualIsExtraTrain");
+    if (extraEl) extraEl.checked = !!manualExtraEl?.checked;
 
     closeHistoryModal();
   };

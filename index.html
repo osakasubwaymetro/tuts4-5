@@ -8,7 +8,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.11.3 -->
+  <!-- version: 1.11.4 -->
+  <!-- 1.11.4: 発車時刻の下に「臨時列車」トグルを追加（手入力フォームにも同様） -->
   <!-- 1.11.3: numberシートの「備考」列（赤帯など）を編成カードにバッジ表示するスタイルを追加 -->
   <!-- 1.11.2: ポップアップ（履歴選択・スタンプ帳）をEscキーでも閉じられるように対応 -->
   <!-- 1.11.1: メモ欄・ユーザー名表示欄にautocomplete="off"を追加。ブラウザのオートフィルが
@@ -613,6 +614,15 @@
       color: #7a5b00;
       margin-bottom: 10px;
     }
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #555;
+      margin: 4px 0 10px;
+    }
+    .toggle-row input[type="checkbox"] { width: 18px; height: 18px; }
     .descent-transfer-btn {
       background: #FFF7E6 !important;
       color: #7a5b00 !important;
@@ -678,6 +688,10 @@
   
   <label><h3>発車時刻</h3></label>
   <input type="datetime-local" id="departing_time">
+  <label class="toggle-row">
+    <input type="checkbox" id="isExtraTrain">
+    <span>臨時列車（過去の乗車記録の候補には出さない）</span>
+  </label>
   <button type="button" onclick="setCurrentDateTime()">🚃 乗車列車を選択（現在時刻・現在地の駅を自動取得）</button>
   <div id="geoStationResult"></div>
 
@@ -787,7 +801,7 @@
   }
 </script>
 <script src="logs.js?v=1.2.1"></script>
-<script src="scripts.js?v=1.26.0"></script>
+<script src="scripts.js?v=1.27.0"></script>
 <script>
   const username = checkLogin();
 
