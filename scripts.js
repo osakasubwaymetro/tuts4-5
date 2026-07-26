@@ -1,4 +1,8 @@
-// version: 1.27.0
+// version: 1.28.0
+// 1.28.0: 新しい「ダイヤ」スプレッドシート（ダイヤ一覧＋運用シート<ID>_<運番>）に対応。
+//         今の会社・路線・乗車駅に一致する運用シートを見て、発車時刻を「過去の乗車記録
+//         から選ぶ」候補に混ぜる（🚉アイコン、運番表示、臨時フラグがあれば「臨時」と表示）。
+//         選ぶと発車時刻のみ自動入力（種別・行先は運用データに無いので手動のまま）
 // 1.27.0: 「臨時列車」トグルを追加（発車時刻の下・手入力フォームの発車時刻の下）。
 //         ONで投稿すると、ridesシートの「臨時」列に記録され、過去の乗車記録の候補
 //         一覧には出なくなる（rides_gas.gsが「臨時」列に書き込むよう対応が必要）
@@ -1090,6 +1094,83 @@ function isWeekendType(d, holidaySet) {
   return holidaySet.has(dateKey(d));
 }
 
+/* ----------------------------------------
+   ダイヤデータ（新しい「ダイヤ」スプレッドシート）
+   「ダイヤ一覧」シートに 会社・路線・ID・運番・臨時 を登録しておくと、
+   各運用シート（<ID>_<運番>）の 駅名・発車時刻 を見て、乗車駅の候補として混ぜる
+---------------------------------------- */
+const DIAGRAM_SHEET_ID = "1JzY1wIGbj2Z83ItsMnMrz1xQ-cviEv50P0mOHiyi70A";
+let _diagramListCache = null;
+async function getDiagramList() {
+  if (_diagramListCache) return _diagramListCache;
+  const CACHE_KEY = "tuts4_diagram_list_cache";
+  const url = `https://opensheet.elk.sh/${DIAGRAM_SHEET_ID}/${encodeURIComponent("ダイヤ一覧")}`;
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (Array.isArray(data)) {
+      localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+      _diagramListCache = data;
+      return data;
+    }
+  } catch (e) { /* ignore */ }
+  try {
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (cached) { _diagramListCache = JSON.parse(cached); return _diagramListCache; }
+  } catch (e) { /* ignore */ }
+  return [];
+}
+async function fetchDiagramSheet(id, unban) {
+  const sheetName = `${id}_${unban}`;
+  const CACHE_KEY = "tuts4_diagram_sheet_" + sheetName;
+  const url = `https://opensheet.elk.sh/${DIAGRAM_SHEET_ID}/${encodeURIComponent(sheetName)}`;
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (Array.isArray(data)) {
+      localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+      return data;
+    }
+  } catch (e) { /* ignore */ }
+  try {
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (cached) return JSON.parse(cached);
+  } catch (e) { /* ignore */ }
+  return [];
+}
+function isFlaggedExtraGeneric(v) {
+  return ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
+}
+// 今選んでいる会社・路線に該当する運用シートを全部見て、この駅を通る発車時刻を候補として集める
+// （同じ運用番号のシート内に同じ駅名が複数回出てきてもOK＝折り返しに対応）
+async function getDiagramCandidates(routeVal, boardingStation) {
+  const companyVal = document.getElementById("country")?.value || "";
+  const list = await getDiagramList();
+  const matches = list.filter(d => d["会社"] === companyVal && d["路線"] === routeVal);
+
+  const results = [];
+  for (const d of matches) {
+    const rows = await fetchDiagramSheet(d["ID"], d["運番"]);
+    const isExtra = isFlaggedExtraGeneric(d["臨時"]);
+    rows.forEach(r => {
+      if (r["駅名"] !== boardingStation) return;
+      const raw = String(r["発車時刻"] || "").trim();
+      let time = null;
+      const hm = raw.match(/^(\d{1,2}):(\d{2})$/);
+      if (hm) {
+        const now = new Date();
+        time = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(hm[1]), Number(hm[2]));
+      } else {
+        const parsed = new Date(raw);
+        if (!isNaN(parsed)) time = parsed;
+      }
+      if (!time) return;
+      results.push({ isDiagram: true, time, unban: d["運番"], isExtra });
+    });
+  }
+  return results;
+}
+
 async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
   setModalTitle("過去の乗車記録から選ぶ");
   const list = document.getElementById("historyModalList");
@@ -1281,6 +1362,15 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
     if (!seen.has(key)) { seen.add(key); candidates.push(c); }
   });
 
+  // ダイヤデータ（運用シート）から、今の時間帯に近い発車時刻を候補として混ぜる
+  const diagramRaw = await getDiagramCandidates(routeVal, boardingStation);
+  diagramRaw
+    .map(c => ({ ...c, _diff: (timeOfDayMinutes(c.time) - refMin + 1440) % 1440 }))
+    .filter(c => c._diff <= WINDOW_MINUTES)
+    .sort((a, b) => a._diff - b._diff)
+    .slice(0, 10)
+    .forEach(c => candidates.push(c));
+
   renderHistoryPopupList(candidates, routeVal, boardingStation, dirVal);
 }
 
@@ -1295,10 +1385,15 @@ function renderHistoryPopupList(candidates, routeVal, boardingStation, dirVal) {
       const item = document.createElement("button");
       item.type = "button";
       const timeLabel = formatHM(c.time);
-      const dest = c.type ? `${c.type}${c.bound}行き` : `${c.bound}行き`;
-      item.textContent = c.isShortcut
-        ? `📌 ${c.shortcutTime ? c.shortcutTime + " " : ""}${dest}（${c.shortcutName}）`
-        : (timeLabel ? `${timeLabel} ${dest}` : dest);
+
+      if (c.isDiagram) {
+        item.textContent = `🚉 ${c.isExtra ? "臨時 " : ""}${timeLabel} 運番${c.unban}`;
+      } else {
+        const dest = c.type ? `${c.type}${c.bound}行き` : `${c.bound}行き`;
+        item.textContent = c.isShortcut
+          ? `📌 ${c.shortcutTime ? c.shortcutTime + " " : ""}${dest}（${c.shortcutName}）`
+          : (timeLabel ? `${timeLabel} ${dest}` : dest);
+      }
       item.onclick = () => applyHistoryCandidate(c);
       list.appendChild(item);
     });
@@ -1383,6 +1478,20 @@ function closeHistoryModal() {
 }
 
 function applyHistoryCandidate(c) {
+  if (c.isDiagram) {
+    const pad = n => String(n).padStart(2, "0");
+    const now = new Date();
+    const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), c.time.getHours(), c.time.getMinutes());
+    const timeEl = document.getElementById("departing_time");
+    if (timeEl) {
+      timeEl.value = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+    }
+    const extraEl = document.getElementById("isExtraTrain");
+    if (extraEl) extraEl.checked = !!c.isExtra;
+    closeHistoryModal();
+    return;
+  }
+
   const typeSel = document.querySelector(".sujitype-select");
   const boundSel = document.querySelector(".bound-select");
 
