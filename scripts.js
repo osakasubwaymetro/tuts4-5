@@ -1,4 +1,9 @@
-// version: 1.28.0
+// version: 1.28.2
+// 1.28.2: 運用シートに種別・行先の列（発車時刻の次・その次）を追加対応。増結は「/」区切りで
+//         複数の種別・行先を1セルに入れられる（併結記録と同じ形式）。選択時に種別・行先も
+//         自動入力されるように修正
+// 1.28.1: ダイヤ一覧に「曜日区分」列（平日／土休日）を追加対応。今日と同じ曜日区分の
+//         運用シートだけを候補に混ぜるように変更（未指定の行は今まで通り常に対象）
 // 1.28.0: 新しい「ダイヤ」スプレッドシート（ダイヤ一覧＋運用シート<ID>_<運番>）に対応。
 //         今の会社・路線・乗車駅に一致する運用シートを見て、発車時刻を「過去の乗車記録
 //         から選ぶ」候補に混ぜる（🚉アイコン、運番表示、臨時フラグがあれば「臨時」と表示）。
@@ -1143,10 +1148,16 @@ function isFlaggedExtraGeneric(v) {
 }
 // 今選んでいる会社・路線に該当する運用シートを全部見て、この駅を通る発車時刻を候補として集める
 // （同じ運用番号のシート内に同じ駅名が複数回出てきてもOK＝折り返しに対応）
-async function getDiagramCandidates(routeVal, boardingStation) {
+async function getDiagramCandidates(routeVal, boardingStation, todayIsWeekendType) {
   const companyVal = document.getElementById("country")?.value || "";
   const list = await getDiagramList();
-  const matches = list.filter(d => d["会社"] === companyVal && d["路線"] === routeVal);
+  const matches = list.filter(d => {
+    if (d["会社"] !== companyVal || d["路線"] !== routeVal) return false;
+    const dayType = String(d["曜日区分"] || "").trim();
+    if (!dayType) return true; // 未指定なら平日・土休日を問わず対象
+    const isHolidayRow = dayType.includes("土") || dayType.includes("休");
+    return isHolidayRow === todayIsWeekendType;
+  });
 
   const results = [];
   for (const d of matches) {
@@ -1165,7 +1176,17 @@ async function getDiagramCandidates(routeVal, boardingStation) {
         if (!isNaN(parsed)) time = parsed;
       }
       if (!time) return;
-      results.push({ isDiagram: true, time, unban: d["運番"], isExtra });
+
+      // 種別・行先は増結対応で「/」区切り（併結時と同じ形式）
+      const bounds = String(r["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
+      const types = String(r["種別"] || "").split("/").map(s => s.trim());
+      if (bounds.length) {
+        bounds.forEach((b, i) => {
+          results.push({ isDiagram: true, time, unban: d["運番"], isExtra, type: types[i] || types[0] || "", bound: b });
+        });
+      } else {
+        results.push({ isDiagram: true, time, unban: d["運番"], isExtra, type: "", bound: "" });
+      }
     });
   }
   return results;
@@ -1363,7 +1384,7 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
   });
 
   // ダイヤデータ（運用シート）から、今の時間帯に近い発車時刻を候補として混ぜる
-  const diagramRaw = await getDiagramCandidates(routeVal, boardingStation);
+  const diagramRaw = await getDiagramCandidates(routeVal, boardingStation, todayIsWeekendType);
   diagramRaw
     .map(c => ({ ...c, _diff: (timeOfDayMinutes(c.time) - refMin + 1440) % 1440 }))
     .filter(c => c._diff <= WINDOW_MINUTES)
@@ -1387,7 +1408,8 @@ function renderHistoryPopupList(candidates, routeVal, boardingStation, dirVal) {
       const timeLabel = formatHM(c.time);
 
       if (c.isDiagram) {
-        item.textContent = `🚉 ${c.isExtra ? "臨時 " : ""}${timeLabel} 運番${c.unban}`;
+        const dest = c.bound ? `${c.type || ""}${c.bound}行き ` : "";
+        item.textContent = `🚉 ${c.isExtra ? "臨時 " : ""}${timeLabel} ${dest}運番${c.unban}`;
       } else {
         const dest = c.type ? `${c.type}${c.bound}行き` : `${c.bound}行き`;
         item.textContent = c.isShortcut
@@ -1488,6 +1510,14 @@ function applyHistoryCandidate(c) {
     }
     const extraEl = document.getElementById("isExtraTrain");
     if (extraEl) extraEl.checked = !!c.isExtra;
+
+    const typeSel = document.querySelector(".sujitype-select");
+    const boundSel = document.querySelector(".bound-select");
+    if (c.bound) {
+      if (typeSel) { typeSel.value = c.type || ""; typeSel.dispatchEvent(new Event("change", { bubbles: true })); }
+      if (boundSel) { boundSel.value = c.bound; boundSel.dispatchEvent(new Event("change", { bubbles: true })); }
+    }
+
     closeHistoryModal();
     return;
   }
