@@ -2532,5 +2532,3 @@ function runCarSearch() {
     };
   });
 }
-
-
