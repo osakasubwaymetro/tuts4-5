@@ -1,4 +1,8 @@
-// version: 1.28.2
+// version: 1.28.4
+// 1.28.4: 発車時刻が同じ乗車記録候補とダイヤ（運番）候補が両方出てしまうバグを修正。
+//         同じ時刻なら乗車記録側を消して、運番の方を優先表示するように変更
+// 1.28.3: ダイヤ候補の表示を、過去の乗車記録と同じ見た目にして、運番だけ右側に
+//         小さく表示するように変更（🚉アイコンは廃止）
 // 1.28.2: 運用シートに種別・行先の列（発車時刻の次・その次）を追加対応。増結は「/」区切りで
 //         複数の種別・行先を1セルに入れられる（併結記録と同じ形式）。選択時に種別・行先も
 //         自動入力されるように修正
@@ -1383,14 +1387,23 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
     if (!seen.has(key)) { seen.add(key); candidates.push(c); }
   });
 
-  // ダイヤデータ（運用シート）から、今の時間帯に近い発車時刻を候補として混ぜる
+  // ダイヤデータ（運用シート）から、今の時間帯に近い発車時刻を候補として混ぜる。
+  // 同じ発車時刻（同じ列車）の乗車記録が既にあれば、そちらは消して運番の方を優先する
   const diagramRaw = await getDiagramCandidates(routeVal, boardingStation, todayIsWeekendType);
   diagramRaw
     .map(c => ({ ...c, _diff: (timeOfDayMinutes(c.time) - refMin + 1440) % 1440 }))
     .filter(c => c._diff <= WINDOW_MINUTES)
     .sort((a, b) => a._diff - b._diff)
     .slice(0, 10)
-    .forEach(c => candidates.push(c));
+    .forEach(c => {
+      const cHM = formatHM(c.time);
+      for (let i = candidates.length - 1; i >= 0; i--) {
+        if (!candidates[i].isDiagram && !candidates[i].isShortcut && formatHM(candidates[i].time) === cHM) {
+          candidates.splice(i, 1);
+        }
+      }
+      candidates.push(c);
+    });
 
   renderHistoryPopupList(candidates, routeVal, boardingStation, dirVal);
 }
@@ -1408,8 +1421,16 @@ function renderHistoryPopupList(candidates, routeVal, boardingStation, dirVal) {
       const timeLabel = formatHM(c.time);
 
       if (c.isDiagram) {
-        const dest = c.bound ? `${c.type || ""}${c.bound}行き ` : "";
-        item.textContent = `🚉 ${c.isExtra ? "臨時 " : ""}${timeLabel} ${dest}運番${c.unban}`;
+        const dest = c.bound ? `${c.type || ""}${c.bound}行き` : "";
+        const mainLabel = `${c.isExtra ? "臨時 " : ""}${timeLabel} ${dest}`.trim();
+        item.style.display = "flex";
+        item.style.justifyContent = "space-between";
+        item.style.alignItems = "center";
+        item.style.gap = "8px";
+        item.innerHTML = `
+          <span>${mainLabel}</span>
+          <span style="color:#999; font-size:12px; white-space:nowrap;">運番${c.unban}</span>
+        `;
       } else {
         const dest = c.type ? `${c.type}${c.bound}行き` : `${c.bound}行き`;
         item.textContent = c.isShortcut
@@ -2532,3 +2553,5 @@ function runCarSearch() {
     };
   });
 }
+
+
