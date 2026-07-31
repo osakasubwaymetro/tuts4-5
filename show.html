@@ -8,7 +8,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.12.0 -->
+<!-- version: 1.12.1 -->
+<!-- 1.12.1: 運営が他ユーザーの投稿から降車駅を記録しても、ログイン中ユーザー名（運営）で
+           送信されてしまい反映されないバグを修正。投稿の実際の持ち主の名前で送信するように -->
 <!-- 1.12.0: ポップアップ（降車駅記録・編集）をEscキーでも閉じられるように対応 -->
 <!-- 1.11.9: 管理者判定（全ユーザー閲覧）の対象を「運営」のみに限定 -->
 <!-- 1.11.8: 運営アカウントでは全ユーザーの投稿を閲覧できるように対応（ユーザーで絞り込み可）。
@@ -1070,11 +1072,12 @@ function openDescentModal(row) {
     body.querySelectorAll(".modal-list button").forEach(b => { b.disabled = true; });
     body.insertAdjacentHTML("beforeend", '<p class="modal-loading" style="margin-top:10px;">送信中...</p>');
 
+    const rowUsername = row["ユーザー名"] || username;
     const payload = {
-      username,
+      username: rowUsername,
       rideTime: row["時刻"],
       alightStation,
-      tripId: username + "_" + row["時刻"],
+      tripId: rowUsername + "_" + row["時刻"],
       tripEnd: true
     };
 
@@ -1087,7 +1090,7 @@ function openDescentModal(row) {
     postToTransfersGAS(payload)
       .then(() => {
         setPendingTransfers(getPendingTransfers().filter(e => e.id !== entryId));
-        myTransfers.push({ "ユーザー名": username, "元の乗車時刻": row["時刻"], "降車駅": alightStation });
+        myTransfers.push({ "ユーザー名": rowUsername, "元の乗車時刻": row["時刻"], "降車駅": alightStation });
         applyMonthFilter();
       })
       .catch(e => console.error("降車駅の送信に失敗（あとで自動的に再送します）:", e));
