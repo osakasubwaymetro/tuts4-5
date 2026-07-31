@@ -8,7 +8,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.11.4 -->
+  <!-- version: 1.11.5 -->
+  <!-- 1.11.5: 投稿した車両形式が、既に自分の全編成に乗車済みだった場合はスタンプ帳を
+             表示せず、そのまま次（降車駅記録の確認）へ進むように変更 -->
   <!-- 1.11.4: 発車時刻の下に「臨時列車」トグルを追加（手入力フォームにも同様） -->
   <!-- 1.11.3: numberシートの「備考」列（赤帯など）を編成カードにバッジ表示するスタイルを追加 -->
   <!-- 1.11.2: ポップアップ（履歴選択・スタンプ帳）をEscキーでも閉じられるように対応 -->
@@ -801,7 +803,7 @@
   }
 </script>
 <script src="logs.js?v=1.2.1"></script>
-<script src="scripts.js?v=1.28.4"></script>
+<script src="scripts.js?v=1.28.6"></script>
 <script>
   const username = checkLogin();
 
@@ -939,6 +941,14 @@
     const myRides = rideData.filter(r =>
       r["ユーザー名"] === username && r["車両形式"] === modelValue
     );
+
+    // 今回の投稿より前の時点で、既にこの形式の全編成に乗車済みなら、
+    // 新しく祝うことが無いのでスタンプ帳は出さずそのまま次に進む
+    const priorRiddenSet = new Set(myRides.map(r => r["車番"]).filter(Boolean));
+    if (formations.length && formations.every(f => priorRiddenSet.has(f))) {
+      if (typeof maybeAskDescentStation === "function") maybeAskDescentStation();
+      return;
+    }
 
     // Get color index based on model order in full number data
     const allModels = [...new Set(numberData.map(r => r["車両形式"]))];

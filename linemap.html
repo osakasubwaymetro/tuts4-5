@@ -7,7 +7,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.8.2 -->
+<!-- version: 1.9.0 -->
+<!-- 1.9.0: 会社・路線プルダウンをポップアップ選択方式に変更。会社タブは会社全体の乗車率、
+           路線タブはその路線の乗車率を右側に表示するように対応 -->
 <!-- 1.8.2: 隣接する乗り継ぎ区間で、記録されてる乗り継ぎ駅名が路線によってズレてるケース
            （例: 阪和線側からは「天王寺」が正しいのに、記録は大阪環状線基準の「寺田町」に
            なっている）に対応。次の路線側の基準で「本当の乗り継ぎ駅名」に揃えてから
@@ -58,6 +60,66 @@
     box-sizing: border-box;
     background: #fff;
   }
+  .picker-trigger-btn {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: #fff;
+    color: #222;
+    border: 1.5px solid #E3E8F0;
+    border-radius: 8px;
+    padding: 9px 10px;
+    font-size: 14px;
+    cursor: pointer;
+    box-sizing: border-box;
+  }
+  .picker-trigger-btn.placeholder { color: #999; }
+  .picker-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 1000;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  .picker-overlay.show { display: flex; }
+  .picker-panel {
+    background: #fff;
+    width: 100%;
+    max-width: 640px;
+    max-height: 78vh;
+    border-radius: 16px 16px 0 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .picker-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 16px;
+    border-bottom: 1px solid #eee;
+    font-weight: bold;
+    color: #17324f;
+  }
+  .picker-close { background: none; border: none; font-size: 22px; color: #999; cursor: pointer; }
+  .picker-list { overflow-y: auto; padding: 8px 12px 20px; }
+  .picker-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    background: #fff;
+    border: none;
+    border-bottom: 1px solid #f0f0f0;
+    padding: 13px 4px;
+    font-size: 14px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .picker-item:active { background: #F4F7FB; }
+  .picker-pct { font-size: 12px; color: #004C97; font-weight: 700; white-space: nowrap; }
+  .picker-pct.zero { color: #bbb; }
 
   .route-coverage-label {
     display: flex;
@@ -217,12 +279,24 @@
     <label>区分</label>
     <select id="mapType"><option value="">選択してください</option></select>
     <label>会社</label>
-    <select id="mapCompany"><option value="">選択してください</option></select>
+    <select id="mapCompany" style="display:none;"><option value="">選択してください</option></select>
+    <button type="button" id="mapCompanyBtn" class="picker-trigger-btn placeholder" onclick="openCompanyPicker()">選択してください</button>
     <label>路線</label>
-    <select id="mapRoute"><option value="">選択してください</option></select>
+    <select id="mapRoute" style="display:none;"><option value="">選択してください</option></select>
+    <button type="button" id="mapRouteBtn" class="picker-trigger-btn placeholder" onclick="openRoutePicker()">選択してください</button>
   </div>
 
   <div id="mapResult"></div>
+
+  <div id="pickerOverlay" class="picker-overlay">
+    <div class="picker-panel">
+      <div class="picker-header">
+        <span id="pickerTitle"></span>
+        <button type="button" class="picker-close" onclick="closePicker()">×</button>
+      </div>
+      <div id="pickerList" class="picker-list"></div>
+    </div>
+  </div>
 </main>
 
 <script src="nav.js"></script>
@@ -307,6 +381,7 @@ function buildCompanySelect() {
     document.getElementById("mapCompany"),
     [...new Set(allCountryData.filter(r => r["えりあ"] === areaVal && r["区分"] === typeVal).map(r => r["会社"]))].filter(Boolean)
   );
+  updatePickerLabels();
 }
 function buildRouteSelect() {
   const typeVal = document.getElementById("mapType").value;
@@ -315,6 +390,7 @@ function buildRouteSelect() {
     document.getElementById("mapRoute"),
     [...new Set(allrouteData.filter(r => r["区分"] === typeVal && r["会社"] === companyVal).map(r => r["路線"]))].filter(Boolean)
   );
+  updatePickerLabels();
 }
 function refreshCascade() {
   buildCompanySelect();
@@ -711,6 +787,121 @@ if (IS_ADMIN) {
 /* ----------------------------------------
    メイン描画
 ---------------------------------------- */
+// 運営は選んだユーザーのデータ、それ以外は自分のローカルキャッシュを使う（共通化）
+function getMineAndTransfers() {
+  if (IS_ADMIN) {
+    const selectedUser = document.getElementById("mapUser").value;
+    if (!selectedUser) return null;
+    const mine = allRidesData
+      .filter(r => String(r["ユーザー名"]) === selectedUser)
+      .map(r => ({ route: r["路線"], station: r["乗車駅"], timeRaw: r["時刻"] }));
+    const cachedTransfers = allTransfersData.filter(t => String(t["ユーザー名"]) === selectedUser);
+    return { mine, cachedTransfers };
+  }
+  const cachedRides = readLocalCache("tuts4_show_cache_" + username);
+  const cachedTransfers = readLocalCache("tuts4_transfers_cache_" + username);
+  const mine = cachedRides.map(r => ({ route: r["路線"], station: r["乗車駅"], timeRaw: r["時刻"] }));
+  return { mine, cachedTransfers };
+}
+function getSegmentsByRoute() {
+  const data = getMineAndTransfers();
+  if (!data) return {};
+  return computeAllRiddenSegments(data.mine, data.cachedTransfers, allstationData, allrouteData).segmentsByRoute;
+}
+function routeTotalSegments(routeName) {
+  const stations = allstationData.filter(r => r["路線"] === routeName && !isViaEntry(r["駅名"])).map(r => r["駅名"]);
+  if (stations.length < 2) return 0;
+  const isLoop = isCircularRouteName(routeName, allrouteData);
+  return isLoop ? stations.length : stations.length - 1;
+}
+function routeRidePercent(routeName, segmentsByRoute) {
+  const total = routeTotalSegments(routeName);
+  if (!total) return null;
+  const ridden = (segmentsByRoute[routeName] || new Set()).size;
+  return Math.round((ridden / total) * 100);
+}
+function companyRidePercent(typeVal, companyName, segmentsByRoute) {
+  const routes = [...new Set(allrouteData.filter(r => r["区分"] === typeVal && r["会社"] === companyName).map(r => r["路線"]))];
+  let totalSeg = 0, riddenSeg = 0;
+  routes.forEach(rt => {
+    const total = routeTotalSegments(rt);
+    totalSeg += total;
+    riddenSeg += (segmentsByRoute[rt] || new Set()).size;
+  });
+  if (!totalSeg) return null;
+  return Math.round((riddenSeg / totalSeg) * 100);
+}
+
+function openPicker(title, items) {
+  document.getElementById("pickerTitle").textContent = title;
+  const list = document.getElementById("pickerList");
+  if (!items.length) {
+    list.innerHTML = '<p class="small" style="padding:16px;">選択肢がありません</p>';
+  } else {
+    list.innerHTML = items.map((it, i) => `
+      <button type="button" class="picker-item" data-i="${i}">
+        <span>${it.label}</span>
+        ${it.pct === null ? "" : `<span class="picker-pct${it.pct === 0 ? " zero" : ""}">${it.pct}%</span>`}
+      </button>
+    `).join("");
+    list.querySelectorAll(".picker-item").forEach((btn, i) => { btn.onclick = () => items[i].onClick(); });
+  }
+  document.getElementById("pickerOverlay").classList.add("show");
+}
+function closePicker() {
+  document.getElementById("pickerOverlay").classList.remove("show");
+}
+
+function openCompanyPicker() {
+  const areaVal = document.getElementById("mapArea").value;
+  const typeVal = document.getElementById("mapType").value;
+  if (!areaVal || !typeVal) { alert("先にエリア・区分を選んでください"); return; }
+  const companies = [...new Set(allCountryData.filter(r => r["えりあ"] === areaVal && r["区分"] === typeVal).map(r => r["会社"]))].filter(Boolean);
+  const segmentsByRoute = getSegmentsByRoute();
+  const items = companies.map(c => ({
+    label: c,
+    pct: companyRidePercent(typeVal, c, segmentsByRoute),
+    onClick: () => {
+      document.getElementById("mapCompany").value = c;
+      document.getElementById("mapCompany").dispatchEvent(new Event("change", { bubbles: true }));
+      updatePickerLabels();
+      closePicker();
+    }
+  }));
+  openPicker("会社を選択", items);
+}
+
+function openRoutePicker() {
+  const typeVal = document.getElementById("mapType").value;
+  const companyVal = document.getElementById("mapCompany").value;
+  if (!typeVal || !companyVal) { alert("先に会社を選んでください"); return; }
+  const routes = [...new Set(allrouteData.filter(r => r["区分"] === typeVal && r["会社"] === companyVal).map(r => r["路線"]))].filter(Boolean);
+  const segmentsByRoute = getSegmentsByRoute();
+  const items = routes.map(r => ({
+    label: r,
+    pct: routeRidePercent(r, segmentsByRoute),
+    onClick: () => {
+      document.getElementById("mapRoute").value = r;
+      document.getElementById("mapRoute").dispatchEvent(new Event("change", { bubbles: true }));
+      updatePickerLabels();
+      closePicker();
+    }
+  }));
+  openPicker("路線を選択", items);
+}
+
+function updatePickerLabels() {
+  const companyVal = document.getElementById("mapCompany").value;
+  const companyBtn = document.getElementById("mapCompanyBtn");
+  companyBtn.textContent = companyVal || "選択してください";
+  companyBtn.classList.toggle("placeholder", !companyVal);
+
+  const routeVal = document.getElementById("mapRoute").value;
+  const routeBtn = document.getElementById("mapRouteBtn");
+  routeBtn.textContent = routeVal || "選択してください";
+  routeBtn.classList.toggle("placeholder", !routeVal);
+}
+
 function renderMap() {
   const routeVal = document.getElementById("mapRoute").value;
   const box = document.getElementById("mapResult");
@@ -791,22 +982,12 @@ function renderMap() {
   });
 
   // 運営は選んだユーザーのデータ、それ以外は自分のローカルキャッシュ（show.htmlが保存してるもの）を使う
-  let mine, cachedTransfers;
-  if (IS_ADMIN) {
-    const selectedUser = document.getElementById("mapUser").value;
-    if (!selectedUser) {
-      box.innerHTML = '<p class="small">まずユーザーを選んでください</p>';
-      return;
-    }
-    mine = allRidesData
-      .filter(r => String(r["ユーザー名"]) === selectedUser)
-      .map(r => ({ route: r["路線"], station: r["乗車駅"], timeRaw: r["時刻"] }));
-    cachedTransfers = allTransfersData.filter(t => String(t["ユーザー名"]) === selectedUser);
-  } else {
-    const cachedRides = readLocalCache("tuts4_show_cache_" + username);
-    cachedTransfers = readLocalCache("tuts4_transfers_cache_" + username);
-    mine = cachedRides.map(r => ({ route: r["路線"], station: r["乗車駅"], timeRaw: r["時刻"] }));
+  const dataSet = getMineAndTransfers();
+  if (!dataSet) {
+    box.innerHTML = '<p class="small">まずユーザーを選んでください</p>';
+    return;
   }
+  const { mine, cachedTransfers } = dataSet;
   const { segmentsByRoute } = computeAllRiddenSegments(mine, cachedTransfers, allstationData, allrouteData);
   const riddenSegments = new Set(segmentsByRoute[routeVal] || []);
 
