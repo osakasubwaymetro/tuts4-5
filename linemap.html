@@ -7,9 +7,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.9.0 -->
-<!-- 1.9.0: 会社・路線プルダウンをポップアップ選択方式に変更。会社タブは会社全体の乗車率、
-           路線タブはその路線の乗車率を右側に表示するように対応 -->
+<!-- version: 1.9.1 -->
+<!-- 1.9.1: 並走区間の「片方乗車済みならもう片方も乗車扱い」ロジックが、地図表示にしか
+           反映されておらず、会社・路線ピッカーの乗車率には反映されていなかったバグを修正。
+           共通関数化して両方に適用されるように -->
 <!-- 1.8.2: 隣接する乗り継ぎ区間で、記録されてる乗り継ぎ駅名が路線によってズレてるケース
            （例: 阪和線側からは「天王寺」が正しいのに、記録は大阪環状線基準の「寺田町」に
            なっている）に対応。次の路線側の基準で「本当の乗り継ぎ駅名」に揃えてから
@@ -808,6 +809,51 @@ function getSegmentsByRoute() {
   if (!data) return {};
   return computeAllRiddenSegments(data.mine, data.cachedTransfers, allstationData, allrouteData).segmentsByRoute;
 }
+function parseParallelCell(raw) {
+  const start = [], end = [];
+  String(raw || "").split("|").forEach(part => {
+    if (part.startsWith("start_")) start.push(...part.slice(6).split("/").filter(Boolean));
+    else if (part.startsWith("end_")) end.push(...part.slice(4).split("/").filter(Boolean));
+  });
+  return { start, end };
+}
+// その路線の並走区間情報（駅ごとにアクティブな並走路線・その駅で開始したか）を計算する
+function computeParallelInfo(routeName) {
+  const routeRows = allstationData.filter(r => r["路線"] === routeName && !isViaEntry(r["駅名"]));
+  const activeParallelByIndex = [];
+  const startedAtIndex = [];
+  let activeParallel = new Set();
+  routeRows.forEach((r, i) => {
+    const { start, end } = parseParallelCell(r["並走"]);
+    start.forEach(s => activeParallel.add(s));
+    activeParallelByIndex[i] = [...activeParallel];
+    startedAtIndex[i] = start;
+    end.forEach(s => activeParallel.delete(s));
+  });
+  return { stationsOnRoute: routeRows.map(r => r["駅名"]), activeParallelByIndex, startedAtIndex };
+}
+// 並走してる区間は、片方の路線で乗車済みならもう片方も乗車扱いにした「実質の乗車区間」を返す
+function getEffectiveRiddenSet(routeName, segmentsByRoute) {
+  const riddenSegments = new Set(segmentsByRoute[routeName] || []);
+  const { stationsOnRoute, activeParallelByIndex } = computeParallelInfo(routeName);
+
+  function parallelSegmentRidden(parallelRoute, stationA, stationB) {
+    const segs = segmentsByRoute[parallelRoute];
+    if (!segs || !segs.size) return false;
+    const pStations = allstationData.filter(r => r["路線"] === parallelRoute && !isViaEntry(r["駅名"])).map(r => r["駅名"]);
+    const a = pStations.indexOf(stationA), b = pStations.indexOf(stationB);
+    if (a === -1 || b === -1) return false;
+    return segs.has(Math.min(a, b));
+  }
+  for (let i = 0; i < stationsOnRoute.length - 1; i++) {
+    if (riddenSegments.has(i)) continue;
+    const stA = stationsOnRoute[i], stB = stationsOnRoute[i + 1];
+    const parallelHere = (activeParallelByIndex[i] || []).filter(rt => (activeParallelByIndex[i + 1] || []).includes(rt));
+    if (parallelHere.some(rt => parallelSegmentRidden(rt, stA, stB))) riddenSegments.add(i);
+  }
+  return riddenSegments;
+}
+
 function routeTotalSegments(routeName) {
   const stations = allstationData.filter(r => r["路線"] === routeName && !isViaEntry(r["駅名"])).map(r => r["駅名"]);
   if (stations.length < 2) return 0;
@@ -817,7 +863,7 @@ function routeTotalSegments(routeName) {
 function routeRidePercent(routeName, segmentsByRoute) {
   const total = routeTotalSegments(routeName);
   if (!total) return null;
-  const ridden = (segmentsByRoute[routeName] || new Set()).size;
+  const ridden = getEffectiveRiddenSet(routeName, segmentsByRoute).size;
   return Math.round((ridden / total) * 100);
 }
 function companyRidePercent(typeVal, companyName, segmentsByRoute) {
@@ -826,7 +872,7 @@ function companyRidePercent(typeVal, companyName, segmentsByRoute) {
   routes.forEach(rt => {
     const total = routeTotalSegments(rt);
     totalSeg += total;
-    riddenSeg += (segmentsByRoute[rt] || new Set()).size;
+    riddenSeg += getEffectiveRiddenSet(rt, segmentsByRoute).size;
   });
   if (!totalSeg) return null;
   return Math.round((riddenSeg / totalSeg) * 100);
@@ -919,27 +965,7 @@ function renderMap() {
     return [...routes];
   }
   const stationsOnRoute = rawRows.filter(n => !isViaEntry(n));
-  const routeRows = allstationData.filter(r => r["路線"] === routeVal && !isViaEntry(r["駅名"]));
-
-  function parseParallelCell(raw) {
-    const start = [], end = [];
-    String(raw || "").split("|").forEach(part => {
-      if (part.startsWith("start_")) start.push(...part.slice(6).split("/").filter(Boolean));
-      else if (part.startsWith("end_")) end.push(...part.slice(4).split("/").filter(Boolean));
-    });
-    return { start, end };
-  }
-  // 各駅時点でアクティブな並走路線（start_で追加、end_が出た駅自身も含めてから外す）
-  const activeParallelByIndex = [];
-  const startedAtIndex = []; // その駅で新しく始まった路線名（線の上端を詰めるため）
-  let activeParallel = new Set();
-  routeRows.forEach((r, i) => {
-    const { start, end } = parseParallelCell(r["並走"]);
-    start.forEach(s => activeParallel.add(s));
-    activeParallelByIndex[i] = [...activeParallel];
-    startedAtIndex[i] = start;
-    end.forEach(s => activeParallel.delete(s));
-  });
+  const { activeParallelByIndex, startedAtIndex } = computeParallelInfo(routeVal);
   if (stationsOnRoute.length < 2) {
     box.innerHTML = '<p class="small">この路線の駅データがありません（stationシートを確認してください）</p>';
     return;
@@ -989,23 +1015,7 @@ function renderMap() {
   }
   const { mine, cachedTransfers } = dataSet;
   const { segmentsByRoute } = computeAllRiddenSegments(mine, cachedTransfers, allstationData, allrouteData);
-  const riddenSegments = new Set(segmentsByRoute[routeVal] || []);
-
-  function parallelSegmentRidden(parallelRoute, stationA, stationB) {
-    const segs = segmentsByRoute[parallelRoute];
-    if (!segs || !segs.size) return false;
-    const pStations = allstationData.filter(r => r["路線"] === parallelRoute && !isViaEntry(r["駅名"])).map(r => r["駅名"]);
-    const a = pStations.indexOf(stationA), b = pStations.indexOf(stationB);
-    if (a === -1 || b === -1) return false;
-    return segs.has(Math.min(a, b));
-  }
-  // 並走区間は、片方が乗車済みならもう片方も乗車扱いにする
-  for (let i = 0; i < stationsOnRoute.length - 1; i++) {
-    if (riddenSegments.has(i)) continue;
-    const stA = stationsOnRoute[i], stB = stationsOnRoute[i + 1];
-    const parallelHere = (activeParallelByIndex[i] || []).filter(rt => (activeParallelByIndex[i + 1] || []).includes(rt));
-    if (parallelHere.some(rt => parallelSegmentRidden(rt, stA, stB))) riddenSegments.add(i);
-  }
+  const riddenSegments = getEffectiveRiddenSet(routeVal, segmentsByRoute);
 
   const isLoop = isCircularRouteName(routeVal, allrouteData);
   const totalSegments = isLoop ? stationsOnRoute.length : stationsOnRoute.length - 1;
