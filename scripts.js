@@ -1,4 +1,9 @@
-// version: 1.28.8
+// version: 1.28.9
+// 1.28.9: linealiasの完全一致ルールが、同じ正式名称に対して最初の1行しか見ておらず、
+//         2行に分けて複数の通称を登録しても片方しか有効にならなかったバグを修正。
+//         同じ正式名称の行が複数あれば、その全部を候補として使うように変更
+//         （例: コスモスクエアで「大阪南港ポートタウン線」がニュートラム・中央線の
+//         両方にマッチするようにする場合など）
 // 1.28.8: 通称・正式名称の不一致（最寄り駅検索で「駅名のみ一致」の候補が選ばれた時）を
 //         運営用DiscordチャンネルにWebhookで通知する仕組みを追加
 // 1.28.7: 最寄り駅検索で、HeartRailsが同じ駅名を複数の物理路線として返す場合の重複表示を修正。
@@ -659,9 +664,10 @@ function normalizeLineNameVariants(name) {
   if (!name) return [""];
   const base = String(name).trim();
 
-  // ① 路線名まるごとの完全一致ルールがあれば、それを唯一の候補として使う
-  const exact = lineAliasData.find(({ official }) => official === base);
-  if (exact) return [exact.alias.trim()];
+  // ① 路線名まるごとの完全一致ルールがあれば、それを候補として使う
+  // （同じ正式名称に複数の通称を登録しておけば、両方とも候補として扱われる）
+  const exactMatches = lineAliasData.filter(({ official }) => official === base);
+  if (exactMatches.length) return exactMatches.map(m => m.alias.trim());
 
   // ② 通称・部分一致（正式社名の一部を通称に置き換え）を適用したベース版
   let withAlias = base;
