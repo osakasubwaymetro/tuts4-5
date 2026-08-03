@@ -1,4 +1,6 @@
-// version: 1.28.7
+// version: 1.28.8
+// 1.28.8: 通称・正式名称の不一致（最寄り駅検索で「駅名のみ一致」の候補が選ばれた時）を
+//         運営用DiscordチャンネルにWebhookで通知する仕組みを追加
 // 1.28.7: 最寄り駅検索で、HeartRailsが同じ駅名を複数の物理路線として返す場合の重複表示を修正。
 //         駅名ごとにグルーピングし、確信ありの候補が1つでもあれば「駅名のみ一致」の
 //         フォールバック候補は出さないように変更（モデル化してない路線のノイズを抑制）
@@ -797,7 +799,30 @@ function renderGeoStationResult(matches) {
   document.getElementById("historyModalOverlay").classList.add("show");
 }
 
+// 通称・正式名称が一致しない事例が発生したら、運営用Discordチャンネルへ通知する
+// （linealias/lineprefixの追加候補として、運営が気づけるようにするため）
+const NAME_MISMATCH_WEBHOOK_URL = "https://discord.com/api/webhooks/1533742912897155176/_inKN7ExHtxZUBOPR1M0t70SSLhyflfmK6xsMcwwNibCHxTkBFnEqFsS-Y_2tWgULJ5n";
+function notifyNameMismatch(match) {
+  if (!NAME_MISMATCH_WEBHOOK_URL || NAME_MISMATCH_WEBHOOK_URL === "YOUR_DISCORD_WEBHOOK_URL") return;
+  const uname = localStorage.getItem("username") || "不明";
+  const content =
+    `⚠️ 通称・正式名称の不一致を検知\n` +
+    `駅名: ${match.name}\n` +
+    `選ばれた自路線: ${match.line}\n` +
+    `HeartRailsの表記: ${match.apiLine}\n` +
+    `ユーザー: ${uname}\n` +
+    `時刻: ${new Date().toLocaleString("ja-JP")}`;
+
+  fetch(NAME_MISMATCH_WEBHOOK_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content })
+  }).catch(e => console.error("Discord通知の送信に失敗:", e));
+}
+
 async function applyGeoStation(match) {
+  if (match.confident === false) notifyNameMismatch(match);
+
   function setAndTrigger(id, val) {
     const el = document.getElementById(id);
     if (!el || !val) return;
