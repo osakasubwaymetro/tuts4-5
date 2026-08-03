@@ -1,4 +1,11 @@
-// version: 1.28.4
+// version: 1.28.7
+// 1.28.7: 最寄り駅検索で、HeartRailsが同じ駅名を複数の物理路線として返す場合の重複表示を修正。
+//         駅名ごとにグルーピングし、確信ありの候補が1つでもあれば「駅名のみ一致」の
+//         フォールバック候補は出さないように変更（モデル化してない路線のノイズを抑制）
+// 1.28.6: 時刻を持つショートカットも他の候補と一緒に時刻順で並ぶように変更
+//         （時刻未設定のショートカットのみ先頭に残す）
+// 1.28.5: 候補一覧（乗車記録・ダイヤ）を時刻の昇順に並べ替えるように変更
+//         （ショートカットは今まで通り先頭にまとめる）
 // 1.28.4: 発車時刻が同じ乗車記録候補とダイヤ（運番）候補が両方出てしまうバグを修正。
 //         同じ時刻なら乗車記録側を消して、運番の方を優先表示するように変更
 // 1.28.3: ダイヤ候補の表示を、過去の乗車記録と同じ見た目にして、運番だけ右側に
@@ -700,30 +707,35 @@ async function findNearbyStationsFromPosition(lat, lon) {
     const data = await res.json();
     const stations = (data.response && data.response.station) || [];
 
-    // 駅名は自分のマスタデータに存在するものだけ対象にし、路線名は表記ゆれ込みで突き合わせる
-    const matches = [];
-    const seen = new Set();
+    // HeartRailsは同じ駅名を「物理的な線路」単位で複数回返すことがあるため、
+    // まず駅名でグルーピングしてから処理する（未マッチの候補が駅名ごとに重複表示されるのを防ぐ）
+    const byName = {};
     stations.forEach(st => {
-      const stationRows = (allstationData || []).filter(row => row["駅名"] === st.name);
+      if (!byName[st.name]) byName[st.name] = { distance: st.distance, apiLines: [] };
+      byName[st.name].apiLines.push(st.line);
+    });
+
+    const matches = [];
+    Object.entries(byName).forEach(([name, info]) => {
+      const stationRows = (allstationData || []).filter(row => row["駅名"] === name);
       if (!stationRows.length) return;
 
-      const hitRow = stationRows.find(row => isLineMatch(row["路線"], st.line));
-      if (hitRow) {
-        const key = st.name + "|" + hitRow["路線"];
-        if (!seen.has(key)) {
-          seen.add(key);
-          matches.push({ name: st.name, line: hitRow["路線"], confident: true, distance: st.distance });
-        }
-      } else {
-        // 路線名の表記があまりに違って一致判定できない場合のフォールバック：
-        // 駅名だけは一致しているので、その駅にある自分の路線候補を「駅名のみ一致」として出す
-        // （HeartRails側の正式名称も一緒に持たせておき、表示・linealiasへの追加検討に使う）
+      // 自分の路線データのうち、HeartRailsのどれかの路線名と一致したものを確信ありとする
+      const matchedRoutes = new Set();
+      info.apiLines.forEach(apiLine => {
+        const hitRow = stationRows.find(row => isLineMatch(row["路線"], apiLine));
+        if (hitRow) matchedRoutes.add(hitRow["路線"]);
+      });
+      matchedRoutes.forEach(route => {
+        matches.push({ name, line: route, confident: true, distance: info.distance });
+      });
+
+      // 一致しなかった自分の路線候補は、確信ありの候補が1つも無い駅の時だけ出す
+      // （既に確信ありの候補があるなら、モデル化してない別路線のノイズは無視してOK）
+      if (matchedRoutes.size === 0) {
+        const repApiLine = info.apiLines[0];
         stationRows.forEach(row => {
-          const key = st.name + "|" + row["路線"];
-          if (!seen.has(key)) {
-            seen.add(key);
-            matches.push({ name: st.name, line: row["路線"], apiLine: st.line, confident: false, distance: st.distance });
-          }
+          matches.push({ name, line: row["路線"], apiLine: repApiLine, confident: false, distance: info.distance });
         });
       }
     });
@@ -1405,7 +1417,20 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
       candidates.push(c);
     });
 
-  renderHistoryPopupList(candidates, routeVal, boardingStation, dirVal);
+  // 時刻が分かるものは全部まとめて時刻順に。時刻未設定のショートカットだけ先頭に残す
+  function sortableMinutes(c) {
+    if (c.time) return timeOfDayMinutes(c.time);
+    if (c.isShortcut && c.shortcutTime) {
+      const [h, m] = c.shortcutTime.split(":").map(Number);
+      if (!isNaN(h) && !isNaN(m)) return h * 60 + m;
+    }
+    return null;
+  }
+  const noTimeCands = candidates.filter(c => sortableMinutes(c) === null);
+  const timedCands = candidates.filter(c => sortableMinutes(c) !== null).sort((a, b) => sortableMinutes(a) - sortableMinutes(b));
+  const sortedCandidates = [...noTimeCands, ...timedCands];
+
+  renderHistoryPopupList(sortedCandidates, routeVal, boardingStation, dirVal);
 }
 
 function renderHistoryPopupList(candidates, routeVal, boardingStation, dirVal) {
