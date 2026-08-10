@@ -10,10 +10,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.13.0 -->
-  <!-- 1.13.0: 「路線が未登録・手入力する」トグルを追加。ONにすると区分・会社・路線・
-             乗車駅・種別・行先・車両形式・車番をプルダウンではなくテキストで自由入力
-             できるようになる。最寄り駅検索で未登録駅を選んだ時も自動でこのモードになる -->
+  <!-- version: 1.13.1 -->
+  <!-- 1.13.1: 手動トグルを廃止。未登録駅を選んだ時だけ自動でテキスト入力モードになる
+             シンプルな仕組みに変更 -->
   <!-- 1.12.1: エリア自動判定を、都道府県名の文字列一致だけでなく、より確実な
              ISO3166-2コード（例: JP-13=東京都）でも判定するように変更。
              東京都でエリアが「関東」に設定されないバグに対応 -->
@@ -725,12 +724,8 @@
     <a href="settings.html">設定 ›</a>
   </div>
 
-  <label class="toggle-row">
-    <input type="checkbox" id="textInputModeToggle" onchange="toggleTextInputMode(this.checked)">
-    <span>✏️ 路線が未登録・手入力する</span>
-  </label>
-
   <div id="textInputSection" style="display:none;">
+    <p class="small" style="color:#c0392b; font-weight:bold;">📍 未登録の駅が選ばれたため、手入力モードになっています</p>
     <div class="row-2">
       <div class="field"><h3>エリア</h3><input type="text" id="area_text"></div>
       <div class="field"><h3>区分</h3><input type="text" id="type_text"></div>
@@ -749,6 +744,7 @@
     </div>
     <div class="field"><h3>車番</h3><input type="text" id="number_text"></div>
     <p class="small" style="color:#999;">※プルダウンではなく自由入力になります。運営が後で正式にマスタデータへ登録します。</p>
+    <button type="button" onclick="toggleTextInputMode(false)" class="secondary-btn" style="margin-bottom:12px;">← プルダウン方式に戻す</button>
   </div>
 
   <div id="normalInputSection">
@@ -851,7 +847,7 @@
   }
 </script>
 <script src="logs.js?v=1.2.1"></script>
-<script src="scripts.js?v=1.30.0"></script>
+<script src="scripts.js?v=1.30.2"></script>
 <script>
   const username = checkLogin();
 
@@ -1073,12 +1069,13 @@
 
   // 「現在時刻を入力」を押したときに、位置情報を1回だけ取得して
   // ① エリア推定 と ② 最寄り駅検索（scripts.js） をまとめて行う
+  let _textInputModeActive = false;
   function toggleTextInputMode(on) {
+    _textInputModeActive = on;
     document.getElementById("textInputSection").style.display = on ? "block" : "none";
     document.getElementById("normalInputSection").style.display = on ? "none" : "block";
   }
   function enableTextInputMode(stationName) {
-    document.getElementById("textInputModeToggle").checked = true;
     toggleTextInputMode(true);
     if (stationName) document.getElementById("station_text").value = stationName;
   }

@@ -1,8 +1,9 @@
-// version: 1.30.0
-// 1.30.0: 最寄り駅検索で、未登録の駅も候補に出すように変更（「未登録路線」と表示）。
-//         選ぶと「路線が未登録・手入力する」モードに自動で切り替わる。
-//         区分・会社・路線・乗車駅・種別・行先・車両形式・車番をテキスト入力できる
-//         モードを新設（トグルで切り替え、upload()側もそちらを見るように対応）
+// version: 1.30.2
+// 1.30.2: 駅名の表記ゆれ（ヶ/ケ、っ/つ、ゃ/や等の小さい仮名⇔大きい仮名）を吸収するように
+//         対応。HeartRailsと自分のマスタで表記が違うだけで「未登録」扱いになっていたのを修正。
+//         一致した場合は自分側マスタの表記をプルダウンに使うように統一
+// 1.30.1: 手入力モードの手動トグルを廃止。未登録駅を選んだ時だけ自動でテキスト入力
+//         モードになるように変更（元に戻すボタンはテキストモード側に残してある）
 // 1.29.0: 投稿1件目の時点でヘッダーの「降車駅未回答」ボタンがすぐ点滅するように変更
 //         （今までは次の投稿をするまで出なかった）。ボタンから開いた場合は pending側を
 //         使うようにし、実際に降車駅を記録したら pending側も正しく消えるように対応
@@ -471,7 +472,7 @@ function upload() {
     const usernameValue = document.getElementById('username').value;
     const timeValue = document.getElementById('departing_time').value;
 
-    const isTextMode = document.getElementById('textInputModeToggle')?.checked;
+    const isTextMode = typeof _textInputModeActive !== "undefined" && _textInputModeActive;
     const g = id => document.getElementById(id)?.value || "";
 
     const areaValue = isTextMode ? g('area_text') : document.getElementById('area').value;
@@ -568,11 +569,7 @@ function resetForm() {
     const el = document.getElementById(id);
     if (el) el.value = "";
   });
-  const textToggle = document.getElementById("textInputModeToggle");
-  if (textToggle) {
-    textToggle.checked = false;
-    if (typeof toggleTextInputMode === "function") toggleTextInputMode(false);
-  }
+  if (typeof toggleTextInputMode === "function") toggleTextInputMode(false);
 
   const timeEl = document.getElementById("departing_time");
   if (timeEl) timeEl.value = "";
@@ -735,6 +732,21 @@ function isLineMatch(masterLine, apiLine) {
 }
 
 // 「現在時刻を入力」ボタン（index.html側）から、位置情報取得後に呼ばれる
+// 駅名の表記ゆれ（小さい仮名・カタカナ ⇔ 大きい仮名・カタカナ）を吸収する。
+// 例:「榴ヶ岡」と「榴ケ岡」、「三軒茶屋」の「や」等が別データソースで揺れるケースに対応
+const KANA_SIZE_VARIANTS = [
+  ["ヶ", "ケ"], ["ヵ", "カ"],
+  ["ぁ", "あ"], ["ぃ", "い"], ["ぅ", "う"], ["ぇ", "え"], ["ぉ", "お"],
+  ["っ", "つ"], ["ゃ", "や"], ["ゅ", "ゆ"], ["ょ", "よ"],
+  ["ァ", "ア"], ["ィ", "イ"], ["ゥ", "ウ"], ["ェ", "エ"], ["ォ", "オ"],
+  ["ッ", "ツ"], ["ャ", "ヤ"], ["ュ", "ユ"], ["ョ", "ヨ"]
+];
+function normalizeKanaSize(name) {
+  let s = String(name || "");
+  KANA_SIZE_VARIANTS.forEach(([small, large]) => { s = s.split(small).join(large); });
+  return s;
+}
+
 async function findNearbyStationsFromPosition(lat, lon) {
   const resultBox = document.getElementById("geoStationResult");
   openModalLoading("近くの駅を選択", "📍 近くの駅を確認中...");
@@ -754,7 +766,7 @@ async function findNearbyStationsFromPosition(lat, lon) {
 
     const matches = [];
     Object.entries(byName).forEach(([name, info]) => {
-      const stationRows = (allstationData || []).filter(row => row["駅名"] === name);
+      const stationRows = (allstationData || []).filter(row => normalizeKanaSize(row["駅名"]) === normalizeKanaSize(name));
       if (!stationRows.length) {
         // 駅自体が未登録でも、候補には出す（選ぶとテキスト手入力モードになる）
         matches.push({ name, line: "未登録路線", unregistered: true, confident: false, distance: info.distance });
@@ -767,8 +779,9 @@ async function findNearbyStationsFromPosition(lat, lon) {
         const hitRow = stationRows.find(row => isLineMatch(row["路線"], apiLine));
         if (hitRow) matchedRoutes.add(hitRow["路線"]);
       });
+      const localName = stationRows[0]["駅名"]; // 自分側のマスタでの表記（プルダウンの値と一致させるため）
       matchedRoutes.forEach(route => {
-        matches.push({ name, line: route, confident: true, distance: info.distance });
+        matches.push({ name: localName, line: route, confident: true, distance: info.distance });
       });
 
       // 一致しなかった自分の路線候補は、確信ありの候補が1つも無い駅の時だけ出す
@@ -776,7 +789,7 @@ async function findNearbyStationsFromPosition(lat, lon) {
       if (matchedRoutes.size === 0) {
         const repApiLine = info.apiLines[0];
         stationRows.forEach(row => {
-          matches.push({ name, line: row["路線"], apiLine: repApiLine, confident: false, distance: info.distance });
+          matches.push({ name: row["駅名"], line: row["路線"], apiLine: repApiLine, confident: false, distance: info.distance });
         });
       }
     });
