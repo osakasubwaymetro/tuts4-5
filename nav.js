@@ -2,7 +2,9 @@
  * nav.js — 共通ヘッダー管理ファイル
  * 新しいページを追加するときは NAV_LINKS だけ編集してください
  *
- * version: 1.5.4
+ * version: 1.5.5
+ * 1.5.5: refreshNavDescentButton()を追加。リロード無しで「降車駅未回答」ボタンの
+ *        表示・非表示をその場で切り替えられるように
  * 1.5.4: ヘッダーの降車駅未回答ボタンが、投稿直後の自動ポップアップと同じ関数を
  *        使っていたのを分離（openPendingDescentManuallyに変更）
  * 1.5.3: 「降車駅未回答」ボタンが、次の投稿を待たず1件目の投稿直後から出るように変更
@@ -237,6 +239,25 @@ function _navToggle() {
 function _navClose() {
   document.getElementById("navDropdown").classList.remove("open");
   document.getElementById("navBackdrop").classList.remove("open");
+}
+
+// 投稿・回答のたびに呼ぶと、ページをリロードしなくても「降車駅未回答」ボタンの
+// 表示・非表示をその場で切り替えられる
+function refreshNavDescentButton() {
+  const hasPendingDescent = !!localStorage.getItem("tuts4_awaiting_descent_answer") || !!localStorage.getItem("tuts4_pending_descent");
+  const navRight = document.querySelector(".nav-right");
+  if (!navRight) return;
+  let btn = navRight.querySelector(".nav-descent-btn");
+  if (hasPendingDescent && !btn) {
+    btn = document.createElement("button");
+    btn.className = "nav-descent-btn";
+    btn.setAttribute("onclick", "_navOpenPendingDescent()");
+    btn.title = "前回の降車駅が未回答です";
+    btn.textContent = "🚏 降車駅未回答";
+    navRight.insertBefore(btn, navRight.firstChild);
+  } else if (!hasPendingDescent && btn) {
+    btn.remove();
+  }
 }
 
 // 未回答の降車駅ボタン：index.html上ならその場でポップアップを開き、
