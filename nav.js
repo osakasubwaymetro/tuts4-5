@@ -2,7 +2,9 @@
  * nav.js — 共通ヘッダー管理ファイル
  * 新しいページを追加するときは NAV_LINKS だけ編集してください
  *
- * version: 1.5.3
+ * version: 1.5.4
+ * 1.5.4: ヘッダーの降車駅未回答ボタンが、投稿直後の自動ポップアップと同じ関数を
+ *        使っていたのを分離（openPendingDescentManuallyに変更）
  * 1.5.3: 「降車駅未回答」ボタンが、次の投稿を待たず1件目の投稿直後から出るように変更
  * 1.5.2: 管理者メニューに「入場編成一覧」（maintenance.html）を追加
  * 1.5.1: メニューに「乗車路線マップ確認用」（linemap.html）を追加
@@ -241,8 +243,8 @@ function _navClose() {
 // 他のページからならindex.htmlに遷移してから自動で開く
 function _navOpenPendingDescent() {
   const currentFile = location.pathname.split("/").pop() || "index.html";
-  if (currentFile === "index.html" && typeof maybeAskDescentStation === "function") {
-    maybeAskDescentStation();
+  if (currentFile === "index.html" && typeof openPendingDescentManually === "function") {
+    openPendingDescentManually();
   } else {
     location.href = "index.html?openDescent=1";
   }
