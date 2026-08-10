@@ -841,13 +841,13 @@
   if (_urlParams.get("openDescent") === "1") {
     window.addEventListener("load", () => {
       setTimeout(() => {
-        if (typeof maybeAskDescentStation === "function") maybeAskDescentStation();
+        if (typeof openPendingDescentManually === "function") openPendingDescentManually();
       }, 900);
     });
   }
 </script>
 <script src="logs.js?v=1.2.1"></script>
-<script src="scripts.js?v=1.30.2"></script>
+<script src="scripts.js?v=1.30.3"></script>
 <script>
   const username = checkLogin();
 
