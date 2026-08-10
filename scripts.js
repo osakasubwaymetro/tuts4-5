@@ -1,4 +1,6 @@
-// version: 1.30.3
+// version: 1.30.4
+// 1.30.4: 投稿後にリロードしないとヘッダーの「降車駅未回答」ボタンが出ない問題を修正。
+//         nav.jsのrefreshNavDescentButton()を、投稿時・回答時に呼んでその場で更新する
 // 1.30.3: 投稿直後に、今投稿したばかりの分の降車質問が即座に出てしまうバグを修正。
 //         自動トリガー（投稿直後）は「前回の乗車」だけを対象にし、pendingへの
 //         フォールバックはヘッダーボタンからの手動オープン時だけに限定した
@@ -1765,6 +1767,7 @@ function handleTripBookkeeping(routeValue, boundValue, timeValue, stationValue, 
     station: stationValue || "", sujitype: sujitypeValue || "", tripId
   };
   localStorage.setItem("tuts4_pending_descent", JSON.stringify(newPending));
+  if (typeof refreshNavDescentButton === "function") refreshNavDescentButton();
 }
 
 // スタンプポップアップを閉じたあと、聞くべき質問が残っていれば開く
@@ -1775,6 +1778,7 @@ function maybeAskDescentStation() {
   const raw = localStorage.getItem("tuts4_awaiting_descent_answer");
   if (!raw) return;
   localStorage.removeItem("tuts4_awaiting_descent_answer"); // 二重に聞かないよう先に消しておく
+  if (typeof refreshNavDescentButton === "function") refreshNavDescentButton();
 
   let prev;
   try { prev = JSON.parse(raw); } catch (e) { return; }
@@ -1788,6 +1792,7 @@ function openPendingDescentManually() {
   let raw = localStorage.getItem("tuts4_awaiting_descent_answer");
   if (raw) {
     localStorage.removeItem("tuts4_awaiting_descent_answer");
+    if (typeof refreshNavDescentButton === "function") refreshNavDescentButton();
   } else {
     raw = localStorage.getItem("tuts4_pending_descent");
   }
@@ -2043,6 +2048,7 @@ async function submitDescentValue(prev, alightStation, tripEnd) {
       }
     }
   } catch (e) { /* ignore */ }
+  if (typeof refreshNavDescentButton === "function") refreshNavDescentButton();
 
   // 裏で実際に送信する（結果を待たず、1秒後にUIを先に進める）
   postToTransfersGAS(payload)
