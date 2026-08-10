@@ -1,4 +1,8 @@
-// version: 1.29.0
+// version: 1.30.0
+// 1.30.0: 最寄り駅検索で、未登録の駅も候補に出すように変更（「未登録路線」と表示）。
+//         選ぶと「路線が未登録・手入力する」モードに自動で切り替わる。
+//         区分・会社・路線・乗車駅・種別・行先・車両形式・車番をテキスト入力できる
+//         モードを新設（トグルで切り替え、upload()側もそちらを見るように対応）
 // 1.29.0: 投稿1件目の時点でヘッダーの「降車駅未回答」ボタンがすぐ点滅するように変更
 //         （今までは次の投稿をするまで出なかった）。ボタンから開いた場合は pending側を
 //         使うようにし、実際に降車駅を記録したら pending側も正しく消えるように対応
@@ -466,24 +470,37 @@ function updatenumberList() {
 function upload() {
     const usernameValue = document.getElementById('username').value;
     const timeValue = document.getElementById('departing_time').value;
-    const areaValue = document.getElementById('area').value;
-    const typeValue = document.getElementById('type').value;
-    const countryValue = document.getElementById('country').value;
-    const routeValue = document.getElementById('route').value;
-    const modelValue = document.getElementById('model').value;
+
+    const isTextMode = document.getElementById('textInputModeToggle')?.checked;
+    const g = id => document.getElementById(id)?.value || "";
+
+    const areaValue = isTextMode ? g('area_text') : document.getElementById('area').value;
+    const typeValue = isTextMode ? g('type_text') : document.getElementById('type').value;
+    const countryValue = isTextMode ? g('country_text') : document.getElementById('country').value;
+    const routeValue = isTextMode ? g('route_text') : document.getElementById('route').value;
+    const modelValue = isTextMode ? g('model_text') : document.getElementById('model').value;
 
     // 乗車駅は1つ目のまとまりB（併結でも乗る場所は同じなので）
-    const stationSelects = document.querySelectorAll(".station-select");
-    const stationValue = stationSelects.length ? stationSelects[0].value : "";
+    let stationValue;
+    let sujitypeValue;
+    let boundValue;
+    if (isTextMode) {
+      stationValue = g('station_text');
+      sujitypeValue = g('sujitype_text');
+      boundValue = g('bound_text');
+    } else {
+      const stationSelects = document.querySelectorAll(".station-select");
+      stationValue = stationSelects.length ? stationSelects[0].value : "";
 
-    // 併結時は 種別1/種別2/... 行先1/行先2/... のように「/」区切りで結合
-    // （スプレッドシートの形は崩さず、1セルに複数分を記録する）
-    const sujitypeValue = [...document.querySelectorAll(".sujitype-select")]
-      .map(el => el.value).filter(Boolean).join("/");
-    const boundValue = [...document.querySelectorAll(".bound-select")]
-      .map(el => el.value).filter(Boolean).join("/");
+      // 併結時は 種別1/種別2/... 行先1/行先2/... のように「/」区切りで結合
+      // （スプレッドシートの形は崩さず、1セルに複数分を記録する）
+      sujitypeValue = [...document.querySelectorAll(".sujitype-select")]
+        .map(el => el.value).filter(Boolean).join("/");
+      boundValue = [...document.querySelectorAll(".bound-select")]
+        .map(el => el.value).filter(Boolean).join("/");
+    }
 
-    const numberValue = document.getElementById('number').value;
+    const numberValue = isTextMode ? g('number_text') : document.getElementById('number').value;
     const memoValue = document.getElementById('memo').value;
     const isExtraValue = document.getElementById('isExtraTrain')?.checked ? "TRUE" : "";
     console.log(numberValue)
@@ -547,6 +564,15 @@ function resetForm() {
     const el = document.getElementById(id);
     if (el) el.value = "";
   });
+  ["area_text", "type_text", "country_text", "route_text", "station_text", "sujitype_text", "bound_text", "model_text", "number_text"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+  const textToggle = document.getElementById("textInputModeToggle");
+  if (textToggle) {
+    textToggle.checked = false;
+    if (typeof toggleTextInputMode === "function") toggleTextInputMode(false);
+  }
 
   const timeEl = document.getElementById("departing_time");
   if (timeEl) timeEl.value = "";
@@ -729,7 +755,11 @@ async function findNearbyStationsFromPosition(lat, lon) {
     const matches = [];
     Object.entries(byName).forEach(([name, info]) => {
       const stationRows = (allstationData || []).filter(row => row["駅名"] === name);
-      if (!stationRows.length) return;
+      if (!stationRows.length) {
+        // 駅自体が未登録でも、候補には出す（選ぶとテキスト手入力モードになる）
+        matches.push({ name, line: "未登録路線", unregistered: true, confident: false, distance: info.distance });
+        return;
+      }
 
       // 自分の路線データのうち、HeartRailsのどれかの路線名と一致したものを確信ありとする
       const matchedRoutes = new Set();
@@ -786,9 +816,11 @@ function renderGeoStationResult(matches) {
   matches.forEach(m => {
     const item = document.createElement("button");
     item.type = "button";
-    const label = m.confident
-      ? `${m.name}（${m.line}）`
-      : `${m.name}（${m.line}）※駅名のみ一致・正式名称「${m.apiLine}」`;
+    const label = m.unregistered
+      ? `${m.name}（未登録路線）`
+      : m.confident
+        ? `${m.name}（${m.line}）`
+        : `${m.name}（${m.line}）※駅名のみ一致・正式名称「${m.apiLine}」`;
     const distLabel = formatDistanceLabel(m.distance);
     item.style.display = "flex";
     item.style.justifyContent = "space-between";
@@ -830,6 +862,12 @@ function notifyNameMismatch(match) {
 }
 
 async function applyGeoStation(match) {
+  if (match.unregistered) {
+    if (typeof closeHistoryModal === "function") closeHistoryModal();
+    if (typeof enableTextInputMode === "function") enableTextInputMode(match.name);
+    return;
+  }
+
   if (match.confident === false) notifyNameMismatch(match);
 
   function setAndTrigger(id, val) {
