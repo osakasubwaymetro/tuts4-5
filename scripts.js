@@ -1,4 +1,8 @@
-// version: 1.30.2
+// version: 1.30.3
+// 1.30.3: 投稿直後に、今投稿したばかりの分の降車質問が即座に出てしまうバグを修正。
+//         自動トリガー（投稿直後）は「前回の乗車」だけを対象にし、pendingへの
+//         フォールバックはヘッダーボタンからの手動オープン時だけに限定した
+//         （openPendingDescentManuallyとして分離）
 // 1.30.2: 駅名の表記ゆれ（ヶ/ケ、っ/つ、ゃ/や等の小さい仮名⇔大きい仮名）を吸収するように
 //         対応。HeartRailsと自分のマスタで表記が違うだけで「未登録」扱いになっていたのを修正。
 //         一致した場合は自分側マスタの表記をプルダウンに使うように統一
@@ -1764,12 +1768,27 @@ function handleTripBookkeeping(routeValue, boundValue, timeValue, stationValue, 
 }
 
 // スタンプポップアップを閉じたあと、聞くべき質問が残っていれば開く
+// 投稿直後に自動で呼ばれる方（スタンプ帳を閉じた時など）。
+// 「前回の乗車」についてだけ聞く。今回投稿した分自体をすぐ聞いてしまわないよう、
+// pending側へのフォールバックはしない
 function maybeAskDescentStation() {
+  const raw = localStorage.getItem("tuts4_awaiting_descent_answer");
+  if (!raw) return;
+  localStorage.removeItem("tuts4_awaiting_descent_answer"); // 二重に聞かないよう先に消しておく
+
+  let prev;
+  try { prev = JSON.parse(raw); } catch (e) { return; }
+
+  openDescentPopup(prev);
+}
+
+// ヘッダーの「降車駅未回答」ボタンから手動で開く方。次の投稿を待たずに答えたい場合、
+// awaiting側がまだ無くても pending側（直近の投稿自体）を対象にする
+function openPendingDescentManually() {
   let raw = localStorage.getItem("tuts4_awaiting_descent_answer");
   if (raw) {
-    localStorage.removeItem("tuts4_awaiting_descent_answer"); // 二重に聞かないよう先に消しておく
+    localStorage.removeItem("tuts4_awaiting_descent_answer");
   } else {
-    // 次の投稿前でも、ヘッダーのボタンから手動で開けるように、無ければ pending の方も見る
     raw = localStorage.getItem("tuts4_pending_descent");
   }
   if (!raw) return;
