@@ -2,7 +2,8 @@
  * nav.js — 共通ヘッダー管理ファイル
  * 新しいページを追加するときは NAV_LINKS だけ編集してください
  *
- * version: 1.5.2
+ * version: 1.5.3
+ * 1.5.3: 「降車駅未回答」ボタンが、次の投稿を待たず1件目の投稿直後から出るように変更
  * 1.5.2: 管理者メニューに「入場編成一覧」（maintenance.html）を追加
  * 1.5.1: メニューに「乗車路線マップ確認用」（linemap.html）を追加
  * 1.5.0: お知らせ・お問い合わせページ（contact.html）をメニューに追加。
@@ -188,7 +189,7 @@ function initNav(pageTitle) {
   }).join("");
 
   // 未回答の降車記録があるかチェック（ページ問わず localStorage で判定できる）
-  const hasPendingDescent = !!localStorage.getItem("tuts4_awaiting_descent_answer");
+  const hasPendingDescent = !!localStorage.getItem("tuts4_awaiting_descent_answer") || !!localStorage.getItem("tuts4_pending_descent");
   const descentBtnHTML = hasPendingDescent
     ? `<button class="nav-descent-btn" onclick="_navOpenPendingDescent()" title="前回の降車駅が未回答です">🚏 降車駅未回答</button>`
     : "";

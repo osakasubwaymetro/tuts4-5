@@ -1,4 +1,7 @@
-// version: 1.28.9
+// version: 1.29.0
+// 1.29.0: 投稿1件目の時点でヘッダーの「降車駅未回答」ボタンがすぐ点滅するように変更
+//         （今までは次の投稿をするまで出なかった）。ボタンから開いた場合は pending側を
+//         使うようにし、実際に降車駅を記録したら pending側も正しく消えるように対応
 // 1.28.9: linealiasの完全一致ルールが、同じ正式名称に対して最初の1行しか見ておらず、
 //         2行に分けて複数の通称を登録しても片方しか有効にならなかったバグを修正。
 //         同じ正式名称の行が複数あれば、その全部を候補として使うように変更
@@ -1702,17 +1705,23 @@ function handleTripBookkeeping(routeValue, boundValue, timeValue, stationValue, 
     } catch (e) { /* 壊れてたら無視 */ }
   }
 
-  localStorage.setItem("tuts4_pending_descent", JSON.stringify({
+  const newPending = {
     username, rideTime: timeValue, route: routeValue, bound: boundValue,
     station: stationValue || "", sujitype: sujitypeValue || "", tripId
-  }));
+  };
+  localStorage.setItem("tuts4_pending_descent", JSON.stringify(newPending));
 }
 
 // スタンプポップアップを閉じたあと、聞くべき質問が残っていれば開く
 function maybeAskDescentStation() {
-  const raw = localStorage.getItem("tuts4_awaiting_descent_answer");
+  let raw = localStorage.getItem("tuts4_awaiting_descent_answer");
+  if (raw) {
+    localStorage.removeItem("tuts4_awaiting_descent_answer"); // 二重に聞かないよう先に消しておく
+  } else {
+    // 次の投稿前でも、ヘッダーのボタンから手動で開けるように、無ければ pending の方も見る
+    raw = localStorage.getItem("tuts4_pending_descent");
+  }
   if (!raw) return;
-  localStorage.removeItem("tuts4_awaiting_descent_answer"); // 二重に聞かないよう先に消しておく
 
   let prev;
   try { prev = JSON.parse(raw); } catch (e) { return; }
@@ -1952,6 +1961,18 @@ async function submitDescentValue(prev, alightStation, tripEnd) {
   const queue = getPendingTransfers();
   queue.push({ id: entryId, payload });
   setPendingTransfers(queue);
+
+  // このライドの降車駅を今まさに記録したので、pending側にまだ残っていれば消しておく
+  // （次の投稿時にもう一度「どこで降りましたか」と聞かれてしまうのを防ぐ）
+  try {
+    const pendingRaw = localStorage.getItem("tuts4_pending_descent");
+    if (pendingRaw) {
+      const pending = JSON.parse(pendingRaw);
+      if (pending.username === prev.username && pending.rideTime === prev.rideTime) {
+        localStorage.removeItem("tuts4_pending_descent");
+      }
+    }
+  } catch (e) { /* ignore */ }
 
   // 裏で実際に送信する（結果を待たず、1秒後にUIを先に進める）
   postToTransfersGAS(payload)
