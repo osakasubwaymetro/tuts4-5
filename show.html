@@ -8,7 +8,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.12.2 -->
+<!-- version: 1.12.3 -->
+<!-- 1.12.3: 降車駅の記録済み判定で、運営（管理者）以外にもユーザー名の再チェックを
+           かけていたのが原因で、全ての投稿が「未記録」扱いになり降車記録ボタンが
+           出てしまうバグを修正。運営以外はこのチェックをスキップするように変更 -->
 <!-- 1.12.2: 乗車・降車データの背景更新後、ヘッダーの降車駅未回答ボタンもその場で
            再検証・更新するように対応 -->
 <!-- 1.12.1: 運営が他ユーザーの投稿から降車駅を記録しても、ログイン中ユーザー名（運営）で
@@ -701,8 +704,10 @@ function renderCards(data) {
     // 複数回記録されている場合は最新（最後に送信されたもの）を採用＝再記録＝上書き扱いにする
     const rideTime = row["時刻"];
     const rowUsername = row["ユーザー名"] || username;
+    // 運営（IS_ADMIN）以外は myTransfers が取得時点で既に自分の分だけに絞られているので、
+    // ここでユーザー名を再チェックする必要は無い（むしろ表記ゆれで誤って弾く原因になるため避ける）
     const existing = [...myTransfers].reverse().find(t =>
-      String(t["ユーザー名"]) === String(rowUsername) && timeKeyMatch(t["元の乗車時刻"], rideTime)
+      (!IS_ADMIN || String(t["ユーザー名"]) === String(rowUsername)) && timeKeyMatch(t["元の乗車時刻"], rideTime)
     );
     const pendingEntry = getPendingTransferFor(rowUsername, rideTime);
 
