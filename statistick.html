@@ -8,7 +8,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>統計情報 | tuts4 — フル版</title>
-<!-- version: 1.9.0 -->
+<!-- version: 1.9.1 -->
+<!-- 1.9.1: レア体験の「駅」判定を、乗車駅だけでなく最終降車駅・乗り継ぎ駅も含めて
+           判定するように変更（駅ランキング表示自体は今まで通り乗車駅のみ） -->
 <!-- 1.9.0: 路線ランキング・駅ランキング・会社別ランキング・車両形式×路線の相性に、
            直通先の路線（乗り継ぎ区間）も含めて集計するように変更。
            レア体験の行先（1回のみ）は、併結列車の「A/B」形式の行先を分割して
@@ -535,15 +537,20 @@ async function renderStats(mine, myTransfers) {
   // 直通先の路線も含めて集計するため、各乗車を「乗車区間ごと（乗車→乗継駅ごと）」に展開する。
   // 直通しなかった乗車は、元の1件（乗車路線・乗車駅）のみが入る
   const expandedLegs = [];
+  const stationPoolForRare = []; // レア駅判定用：乗車駅・乗り継ぎ駅・最終降車駅すべて含める
   mine.forEach(r => {
     expandedLegs.push({ route: r.route, station: r.station, company: r.company, model: r.model });
+    if (r.station) stationPoolForRare.push(r.station);
+
     const t = myTransfers.find(tt => timeKeyMatch(tt["元の乗車時刻"], r.timeRaw));
     if (!t) return;
     const chain = parseDescentChain(String(t["降車駅"] || "").trim());
+    if (chain.finalStation) stationPoolForRare.push(chain.finalStation);
     if (!chain.hops.length) return;
     const legs = buildLegs(r.route, r.station, chain);
     legs.slice(1).forEach(leg => {
       expandedLegs.push({ route: leg.route, station: leg.board, company: companyForRoute(leg.route), model: r.model });
+      if (leg.board) stationPoolForRare.push(leg.board);
     });
   });
 
@@ -611,16 +618,16 @@ async function renderStats(mine, myTransfers) {
   renderList("typeList", sortedType);
 
   // 時間帯 buckets（早朝が使われず「昼」の判定が重複していたのを修正）
-  const timeLabels = ["早朝(5-7)","朝(7-10)","昼(7-16)","夕方(16-19)","夜(19-24)","深夜(0-5)"];
+  const timeLabels = ["早朝","朝","昼","夕方","夜","深夜"];
   function timeBucketOf(h) {
-    if (h < 5) return "深夜(0-5)";
-    if (h < 7) return "早朝(5-7)";
-    if (h < 10) return "朝(7-10)";
-    if (h < 16) return "昼(7-16)";
-    if (h < 19) return "夕方(16-19)";
-    return "夜(19-24)";
+    if (h < 5) return "深夜";
+    if (h < 7) return "早朝";
+    if (h < 10) return "朝";
+    if (h < 16) return "昼";
+    if (h < 19) return "夕方";
+    return "夜";
   }
-  const buckets = { "早朝(5-7)":0, "朝(7-10)":0, "昼(7-16)":0, "夕方(16-19)":0, "夜(19-24)":0, "深夜(0-5)":0 };
+  const buckets = { "早朝":0, "朝":0, "昼":0, "夕方":0, "夜":0, "深夜":0 };
   mine.forEach(r=>{
     if (!r.time) return;
     buckets[timeBucketOf(r.time.getHours())]++;
@@ -856,8 +863,10 @@ async function renderStats(mine, myTransfers) {
 
   // rare items (count == 1)
   const routeCount = Object.fromEntries(sortedRoutes);
-  const stationCount = Object.fromEntries(sortedStations);
   const modelCount = Object.fromEntries(sortedModel);
+  // 駅のレア判定は、乗車駅だけでなく乗り継ぎ駅・最終降車駅も含めて数える
+  const stationRareCount = {};
+  stationPoolForRare.forEach(s => { stationRareCount[s] = (stationRareCount[s] || 0) + 1; });
   // 行先は併結列車だと「新函館北斗/秋田」のように「/」区切りで1セルに複数入っていることがあるため、
   // レア判定の前に分割してそれぞれ別項目として数える
   const destCountSplit = {};
@@ -868,7 +877,7 @@ async function renderStats(mine, myTransfers) {
   });
   const rare = { route:[], station:[], model:[], dest:[] };
   Object.entries(routeCount).forEach(([k,v])=>{ if (v===1) rare.route.push(k) });
-  Object.entries(stationCount).forEach(([k,v])=>{ if (v===1) rare.station.push(k) });
+  Object.entries(stationRareCount).forEach(([k,v])=>{ if (v===1) rare.station.push(k) });
   Object.entries(modelCount).forEach(([k,v])=>{ if (v===1) rare.model.push(k) });
   Object.entries(destCountSplit).forEach(([k,v])=>{ if (v===1) rare.dest.push(k) });
 
