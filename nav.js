@@ -2,7 +2,10 @@
  * nav.js — 共通ヘッダー管理ファイル
  * 新しいページを追加するときは NAV_LINKS だけ編集してください
  *
- * version: 1.5.5
+ * version: 1.5.6
+ * 1.5.6: 降車駅未回答ボタンを出す前に、ローカルにキャッシュ済みの乗車・降車データと
+ *        突き合わせて検証するように追加。乗車記録が削除された・別端末で既に降車記録
+ *        済みだった場合に、古いフラグが残ってボタンが消えないケースに対応
  * 1.5.5: refreshNavDescentButton()を追加。リロード無しで「降車駅未回答」ボタンの
  *        表示・非表示をその場で切り替えられるように
  * 1.5.4: ヘッダーの降車駅未回答ボタンが、投稿直後の自動ポップアップと同じ関数を
@@ -193,6 +196,7 @@ function initNav(pageTitle) {
   }).join("");
 
   // 未回答の降車記録があるかチェック（ページ問わず localStorage で判定できる）
+  if (typeof _navVerifyDescentFlags === "function") _navVerifyDescentFlags();
   const hasPendingDescent = !!localStorage.getItem("tuts4_awaiting_descent_answer") || !!localStorage.getItem("tuts4_pending_descent");
   const descentBtnHTML = hasPendingDescent
     ? `<button class="nav-descent-btn" onclick="_navOpenPendingDescent()" title="前回の降車駅が未回答です">🚏 降車駅未回答</button>`
@@ -243,7 +247,40 @@ function _navClose() {
 
 // 投稿・回答のたびに呼ぶと、ページをリロードしなくても「降車駅未回答」ボタンの
 // 表示・非表示をその場で切り替えられる
+// pending/awaiting の中身が、実際にはもう存在しない（削除済み）・もう答え済み（別端末で
+// 記録済み）になってないかを、ローカルにキャッシュ済みの乗車・降車データと突き合わせて確認する。
+// おかしければその場でフラグを消す（キャッシュが古い場合までは検知できないが、
+// show.html等を開いてキャッシュが更新されていれば、次にヘッダーを描画した時に直る）
+function _navVerifyDescentFlags() {
+  const uname = localStorage.getItem("username");
+  if (!uname) return;
+
+  function readCache(key) {
+    try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch (e) { return []; }
+  }
+  const rides = readCache("tuts4_show_cache_" + uname);
+  const transfers = readCache("tuts4_transfers_cache_" + uname);
+  if (!rides.length && !transfers.length) return; // キャッシュ自体が無ければ判定材料が無いので何もしない
+
+  ["tuts4_pending_descent", "tuts4_awaiting_descent_answer"].forEach(key => {
+    const raw = localStorage.getItem(key);
+    if (!raw) return;
+    let entry;
+    try { entry = JSON.parse(raw); } catch (e) { localStorage.removeItem(key); return; }
+
+    // 該当の乗車記録がキャッシュ上から消えている（削除された）
+    const rideExists = rides.some(r => String(r["ユーザー名"]) === String(entry.username) && String(r["時刻"]) === String(entry.rideTime));
+    // 既に降車駅が記録されている（別端末で記録済み等）
+    const alreadyAnswered = transfers.some(t => String(t["ユーザー名"]) === String(entry.username) && String(t["元の乗車時刻"]) === String(entry.rideTime));
+
+    if (!rideExists || alreadyAnswered) {
+      localStorage.removeItem(key);
+    }
+  });
+}
+
 function refreshNavDescentButton() {
+  _navVerifyDescentFlags();
   const hasPendingDescent = !!localStorage.getItem("tuts4_awaiting_descent_answer") || !!localStorage.getItem("tuts4_pending_descent");
   const navRight = document.querySelector(".nav-right");
   if (!navRight) return;
