@@ -8,7 +8,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>投稿履歴</title>
-<!-- version: 1.12.1 -->
+<!-- version: 1.12.2 -->
+<!-- 1.12.2: 乗車・降車データの背景更新後、ヘッダーの降車駅未回答ボタンもその場で
+           再検証・更新するように対応 -->
 <!-- 1.12.1: 運営が他ユーザーの投稿から降車駅を記録しても、ログイン中ユーザー名（運営）で
            送信されてしまい反映されないバグを修正。投稿の実際の持ち主の名前で送信するように -->
 <!-- 1.12.0: ポップアップ（降車駅記録・編集）をEscキーでも閉じられるように対応 -->
@@ -615,6 +617,7 @@ Promise.all([
   if (!IS_ADMIN) {
     try { localStorage.setItem(TRANSFERS_CACHE_KEY, JSON.stringify(myTransfers)); } catch (e) { /* 容量超過等は無視 */ }
   }
+  if (typeof refreshNavDescentButton === "function") refreshNavDescentButton();
   // 既に描画済みなら降車駅の状態を反映して再描画
   if (allData.length) applyMonthFilter();
 }).finally(() => {
@@ -1206,6 +1209,7 @@ if (IS_ADMIN) {
       allData = data;
       buildMonthFilter(data);
       applyMonthFilter();
+      if (typeof refreshNavDescentButton === "function") refreshNavDescentButton();
 
       _pendingUpdateMsg = isSame ? "✅ 最新です（降車データ含む）" : `✅ ${data.length} 件に更新しました`;
       _ridesFetchDone = true;
