@@ -8,9 +8,10 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>統計情報 | tuts4 — フル版</title>
-<!-- version: 1.9.1 -->
-<!-- 1.9.1: レア体験の「駅」判定を、乗車駅だけでなく最終降車駅・乗り継ぎ駅も含めて
-           判定するように変更（駅ランキング表示自体は今まで通り乗車駅のみ） -->
+<!-- version: 1.9.3 -->
+<!-- 1.9.3: レア駅判定を、乗車データに紐づいた分だけでなく myTransfers（降車駅シート）を
+           直接走査して、旅終了True/False問わず全ての降車駅を拾うように整理。
+           直通運転の境界駅（via_チェーンの途中駅）は引き続き除外 -->
 <!-- 1.9.0: 路線ランキング・駅ランキング・会社別ランキング・車両形式×路線の相性に、
            直通先の路線（乗り継ぎ区間）も含めて集計するように変更。
            レア体験の行先（1回のみ）は、併結列車の「A/B」形式の行先を分割して
@@ -537,7 +538,7 @@ async function renderStats(mine, myTransfers) {
   // 直通先の路線も含めて集計するため、各乗車を「乗車区間ごと（乗車→乗継駅ごと）」に展開する。
   // 直通しなかった乗車は、元の1件（乗車路線・乗車駅）のみが入る
   const expandedLegs = [];
-  const stationPoolForRare = []; // レア駅判定用：乗車駅・乗り継ぎ駅・最終降車駅すべて含める
+  const stationPoolForRare = []; // レア駅判定用：乗車駅 + 降車駅シートの降車駅（旅終了True/False問わず全部）
   mine.forEach(r => {
     expandedLegs.push({ route: r.route, station: r.station, company: r.company, model: r.model });
     if (r.station) stationPoolForRare.push(r.station);
@@ -545,13 +546,17 @@ async function renderStats(mine, myTransfers) {
     const t = myTransfers.find(tt => timeKeyMatch(tt["元の乗車時刻"], r.timeRaw));
     if (!t) return;
     const chain = parseDescentChain(String(t["降車駅"] || "").trim());
-    if (chain.finalStation) stationPoolForRare.push(chain.finalStation);
     if (!chain.hops.length) return;
     const legs = buildLegs(r.route, r.station, chain);
     legs.slice(1).forEach(leg => {
       expandedLegs.push({ route: leg.route, station: leg.board, company: companyForRoute(leg.route), model: r.model });
-      if (leg.board) stationPoolForRare.push(leg.board);
     });
+  });
+  // 降車駅シートの「降車駅」列を、旅終了フラグの真偽を問わず全部拾う
+  // （直通運転の境界駅（via_チェーンの途中駅）だけは実際に降りたわけではないので除外）
+  myTransfers.forEach(t => {
+    const chain = parseDescentChain(String(t["降車駅"] || "").trim());
+    if (chain.finalStation) stationPoolForRare.push(chain.finalStation);
   });
 
   const sortedRoutes = countBy(expandedLegs, r=>r.route);
