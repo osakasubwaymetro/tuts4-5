@@ -1,6 +1,5 @@
-// version: 1.30.4
-// 1.30.4: 投稿後にリロードしないとヘッダーの「降車駅未回答」ボタンが出ない問題を修正。
-//         nav.jsのrefreshNavDescentButton()を、投稿時・回答時に呼んでその場で更新する
+// version: 1.30.5
+// 1.30.5: Discord通知のタイミングを「候補を選んだ時」から「候補一覧に出てきた時」に変更
 // 1.30.3: 投稿直後に、今投稿したばかりの分の降車質問が即座に出てしまうバグを修正。
 //         自動トリガー（投稿直後）は「前回の乗車」だけを対象にし、pendingへの
 //         フォールバックはヘッダーボタンからの手動オープン時だけに限定した
@@ -795,7 +794,9 @@ async function findNearbyStationsFromPosition(lat, lon) {
       if (matchedRoutes.size === 0) {
         const repApiLine = info.apiLines[0];
         stationRows.forEach(row => {
-          matches.push({ name: row["駅名"], line: row["路線"], apiLine: repApiLine, confident: false, distance: info.distance });
+          const m = { name: row["駅名"], line: row["路線"], apiLine: repApiLine, confident: false, distance: info.distance };
+          matches.push(m);
+          notifyNameMismatch(m); // 選ばれた時ではなく、候補として出た時点で通知する
         });
       }
     });
@@ -886,8 +887,6 @@ async function applyGeoStation(match) {
     if (typeof enableTextInputMode === "function") enableTextInputMode(match.name);
     return;
   }
-
-  if (match.confident === false) notifyNameMismatch(match);
 
   function setAndTrigger(id, val) {
     const el = document.getElementById(id);
