@@ -2,7 +2,9 @@
  * nav.js — 共通ヘッダー管理ファイル
  * 新しいページを追加するときは NAV_LINKS だけ編集してください
  *
- * version: 1.5.8
+ * version: 1.6.0
+ * 1.6.0: どのページを開いても、乗車・降車データを裏で最新化する仕組みを追加。
+ *        最終更新から1時間以上経ってたら自動更新、乗車・降車を記録した時は即時更新
  * 1.5.8: フラグが無くても、実際のキャッシュデータ上で最新の乗車記録に降車駅が
  *        記録されていなければ、pending_descentを自動生成するように対応。
  *        投稿直後以外（show.htmlで最新化した時など）でもボタンが正しく出るように
@@ -174,6 +176,52 @@ const NAV_CSS = `
 `;
 
 // ===== ③ ヘッダーを生成して挿入する関数 =====
+/* ----------------------------------------
+   全ページ共通：乗車・降車データの裏更新
+   最終更新から1時間以上経ってたら（or 強制指定時）、裏で最新を取得してキャッシュを更新する。
+   nav.jsはどのページでも読み込まれるので、ここに置くとサイト全体で効く
+---------------------------------------- */
+const NAV_RIDES_GAS_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
+const NAV_TRANSFERS_GAS_URL = "https://script.google.com/macros/s/AKfycbwOzhHMk2WRtcUHvSMfnrimIQxUk-_dZN_43I-m8fpMNVxomE7emhevGGyC3UnLR3ejBw/exec";
+const NAV_RIDE_TIME_PREFIX = "乗車_";
+function _navStripRideTimePrefix(v) {
+  return typeof v === "string" && v.indexOf(NAV_RIDE_TIME_PREFIX) === 0 ? v.slice(NAV_RIDE_TIME_PREFIX.length) : v;
+}
+
+function navMaybeRefreshRideData(force) {
+  const uname = localStorage.getItem("username");
+  if (!uname) return;
+
+  const LAST_KEY = "tuts4_last_data_refresh_" + uname;
+  const ONE_HOUR = 60 * 60 * 1000;
+  const last = Number(localStorage.getItem(LAST_KEY) || 0);
+  if (!force && Date.now() - last < ONE_HOUR) return;
+
+  localStorage.setItem(LAST_KEY, String(Date.now())); // 連続実行を防ぐため先に記録しておく
+
+  fetch(NAV_RIDES_GAS_URL)
+    .then(r => r.json())
+    .then(all => {
+      if (!Array.isArray(all)) return;
+      const mine = all.filter(r => String(r["ユーザー名"]) === String(uname));
+      localStorage.setItem("tuts4_show_cache_" + uname, JSON.stringify(mine));
+      if (typeof refreshNavDescentButton === "function") refreshNavDescentButton();
+    })
+    .catch(() => { /* 失敗時は次回の定期チェックに任せる */ });
+
+  fetch(NAV_TRANSFERS_GAS_URL)
+    .then(r => r.json())
+    .then(all => {
+      if (!Array.isArray(all)) return;
+      const mine = all
+        .filter(t => String(t["ユーザー名"]) === String(uname))
+        .map(t => ({ ...t, "元の乗車時刻": _navStripRideTimePrefix(t["元の乗車時刻"]) }));
+      localStorage.setItem("tuts4_transfers_cache_" + uname, JSON.stringify(mine));
+      if (typeof refreshNavDescentButton === "function") refreshNavDescentButton();
+    })
+    .catch(() => { /* 失敗時は次回の定期チェックに任せる */ });
+}
+
 function initNav(pageTitle) {
   // CSS を <head> に注入
   const style = document.createElement("style");
@@ -239,6 +287,9 @@ function initNav(pageTitle) {
   const u = localStorage.getItem("username") || "";
   document.getElementById("navUsernameDisplay").textContent = u;
   document.getElementById("navMenuUsername").textContent = u;
+
+  // どのページを開いても、最終更新から1時間以上経ってたら裏で乗車・降車データを更新する
+  navMaybeRefreshRideData(false);
 }
 
 // ===== ④ 開閉ロジック =====
