@@ -2,7 +2,10 @@
  * nav.js — 共通ヘッダー管理ファイル
  * 新しいページを追加するときは NAV_LINKS だけ編集してください
  *
- * version: 1.5.7
+ * version: 1.5.8
+ * 1.5.8: フラグが無くても、実際のキャッシュデータ上で最新の乗車記録に降車駅が
+ *        記録されていなければ、pending_descentを自動生成するように対応。
+ *        投稿直後以外（show.htmlで最新化した時など）でもボタンが正しく出るように
  * 1.5.7: _navVerifyDescentFlagsの「乗車記録が削除された」判定が、投稿直後はまだ
  *        ローカルキャッシュが更新されておらず誤検知して、セットした直後のフラグを
  *        自分で消してしまうバグを修正。この判定は廃止し、「既に降車駅記録済み」の
@@ -281,6 +284,28 @@ function _navVerifyDescentFlags() {
       localStorage.removeItem(key);
     }
   });
+
+  // フラグが両方とも無い場合、実際のキャッシュデータを見て「一番新しい乗車記録に
+  // 降車駅が記録されていない」なら、pending側を自動で作る（投稿直後以外のタイミングで
+  // show.htmlを開いて最新化した時にも、ちゃんとボタンが出るようにするため）
+  if (!localStorage.getItem("tuts4_awaiting_descent_answer") && !localStorage.getItem("tuts4_pending_descent") && rides.length) {
+    const sorted = [...rides].sort((a, b) => new Date(b["時刻"]) - new Date(a["時刻"]));
+    const latest = sorted[0];
+    if (latest && latest["時刻"]) {
+      const answered = transfers.some(t => String(t["元の乗車時刻"]) === String(latest["時刻"]));
+      if (!answered) {
+        localStorage.setItem("tuts4_pending_descent", JSON.stringify({
+          username: uname,
+          rideTime: latest["時刻"],
+          route: latest["路線"] || "",
+          bound: latest["行先"] || "",
+          station: latest["乗車駅"] || "",
+          sujitype: latest["種別"] || "",
+          tripId: uname + "_" + latest["時刻"]
+        }));
+      }
+    }
+  }
 }
 
 function refreshNavDescentButton() {
