@@ -1,6 +1,7 @@
-// version: 1.30.6
-// 1.30.6: 投稿・降車記録のタイミングで、nav.js側の全ページ共通データ更新（navMaybeRefreshRideData）
-//         を強制実行するように連携
+// version: 1.30.7
+// 1.30.7: 降車記録を送信した際、ローカルの降車データキャッシュにもその場で反映するように
+//         対応。反映せずにいると、nav.js側の自動判定がまだ古いキャッシュを見て
+//         「未回答」と誤って再判定し、消したはずのヘッダーボタンが復活してしまっていた
 // 1.30.3: 投稿直後に、今投稿したばかりの分の降車質問が即座に出てしまうバグを修正。
 //         自動トリガー（投稿直後）は「前回の乗車」だけを対象にし、pendingへの
 //         フォールバックはヘッダーボタンからの手動オープン時だけに限定した
@@ -2049,6 +2050,18 @@ async function submitDescentValue(prev, alightStation, tripEnd) {
       }
     }
   } catch (e) { /* ignore */ }
+
+  // ローカルの降車データキャッシュにもその場で反映しておく（サーバー取得を待つと、
+  // その間にヘッダーの自動判定が「まだ未回答」と誤って再判定してしまうため）
+  try {
+    const TCACHE_KEY = "tuts4_transfers_cache_" + prev.username;
+    const cached = JSON.parse(localStorage.getItem(TCACHE_KEY) || "[]");
+    const idx = cached.findIndex(t => String(t["ユーザー名"]) === String(prev.username) && String(t["元の乗車時刻"]) === String(prev.rideTime));
+    const newEntry = { "ユーザー名": prev.username, "元の乗車時刻": prev.rideTime, "降車駅": alightStation };
+    if (idx !== -1) cached[idx] = newEntry; else cached.push(newEntry);
+    localStorage.setItem(TCACHE_KEY, JSON.stringify(cached));
+  } catch (e) { /* ignore */ }
+
   if (typeof refreshNavDescentButton === "function") refreshNavDescentButton();
 
   // 裏で実際に送信する（結果を待たず、1秒後にUIを先に進める）
