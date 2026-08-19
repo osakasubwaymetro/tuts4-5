@@ -1,5 +1,6 @@
-// version: 1.30.5
-// 1.30.5: Discord通知のタイミングを「候補を選んだ時」から「候補一覧に出てきた時」に変更
+// version: 1.30.6
+// 1.30.6: 投稿・降車記録のタイミングで、nav.js側の全ページ共通データ更新（navMaybeRefreshRideData）
+//         を強制実行するように連携
 // 1.30.3: 投稿直後に、今投稿したばかりの分の降車質問が即座に出てしまうバグを修正。
 //         自動トリガー（投稿直後）は「前回の乗車」だけを対象にし、pendingへの
 //         フォールバックはヘッダーボタンからの手動オープン時だけに限定した
@@ -1767,6 +1768,7 @@ function handleTripBookkeeping(routeValue, boundValue, timeValue, stationValue, 
   };
   localStorage.setItem("tuts4_pending_descent", JSON.stringify(newPending));
   if (typeof refreshNavDescentButton === "function") refreshNavDescentButton();
+  if (typeof navMaybeRefreshRideData === "function") navMaybeRefreshRideData(true);
 }
 
 // スタンプポップアップを閉じたあと、聞くべき質問が残っていれば開く
@@ -2055,6 +2057,7 @@ async function submitDescentValue(prev, alightStation, tripEnd) {
     .catch(e => console.error("降車駅の送信に失敗（あとで自動的に再送します）:", e));
 
   await new Promise(r => setTimeout(r, 1000));
+  if (typeof navMaybeRefreshRideData === "function") navMaybeRefreshRideData(true);
 
   _submittingDescent = false;
 
