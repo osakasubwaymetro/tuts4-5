@@ -2,7 +2,11 @@
  * nav.js — 共通ヘッダー管理ファイル
  * 新しいページを追加するときは NAV_LINKS だけ編集してください
  *
- * version: 1.5.6
+ * version: 1.5.7
+ * 1.5.7: _navVerifyDescentFlagsの「乗車記録が削除された」判定が、投稿直後はまだ
+ *        ローカルキャッシュが更新されておらず誤検知して、セットした直後のフラグを
+ *        自分で消してしまうバグを修正。この判定は廃止し、「既に降車駅記録済み」の
+ *        判定だけ残した
  * 1.5.6: 降車駅未回答ボタンを出す前に、ローカルにキャッシュ済みの乗車・降車データと
  *        突き合わせて検証するように追加。乗車記録が削除された・別端末で既に降車記録
  *        済みだった場合に、古いフラグが残ってボタンが消えないケースに対応
@@ -268,12 +272,12 @@ function _navVerifyDescentFlags() {
     let entry;
     try { entry = JSON.parse(raw); } catch (e) { localStorage.removeItem(key); return; }
 
-    // 該当の乗車記録がキャッシュ上から消えている（削除された）
-    const rideExists = rides.some(r => String(r["ユーザー名"]) === String(entry.username) && String(r["時刻"]) === String(entry.rideTime));
-    // 既に降車駅が記録されている（別端末で記録済み等）
+    // 既に降車駅が記録されている（別端末で記録済み等）場合だけ消す。
+    // 「乗車記録がキャッシュに無いから削除された」という判定は、投稿直後はまだ
+    // ローカルキャッシュが更新されておらず誤検知するため行わない
     const alreadyAnswered = transfers.some(t => String(t["ユーザー名"]) === String(entry.username) && String(t["元の乗車時刻"]) === String(entry.rideTime));
 
-    if (!rideExists || alreadyAnswered) {
+    if (alreadyAnswered) {
       localStorage.removeItem(key);
     }
   });
