@@ -1,5 +1,7 @@
-// version: 1.30.7
-// 1.30.7: 降車記録を送信した際、ローカルの降車データキャッシュにもその場で反映するように
+// version: 1.30.8
+// 1.30.8: 未登録駅の表示を「駅名（未登録路線）」から、HeartRails側の実際の路線名を使った
+//         「駅名（【未登録路線】路線名）」に変更。同じ駅に複数路線あれば路線ごとに分けて表示。
+//         選ぶと路線名もテキストモードの路線欄に自動入力されるように対応
 //         対応。反映せずにいると、nav.js側の自動判定がまだ古いキャッシュを見て
 //         「未回答」と誤って再判定し、消したはずのヘッダーボタンが復活してしまっていた
 // 1.30.3: 投稿直後に、今投稿したばかりの分の降車質問が即座に出てしまうバグを修正。
@@ -775,8 +777,12 @@ async function findNearbyStationsFromPosition(lat, lon) {
     Object.entries(byName).forEach(([name, info]) => {
       const stationRows = (allstationData || []).filter(row => normalizeKanaSize(row["駅名"]) === normalizeKanaSize(name));
       if (!stationRows.length) {
-        // 駅自体が未登録でも、候補には出す（選ぶとテキスト手入力モードになる）
-        matches.push({ name, line: "未登録路線", unregistered: true, confident: false, distance: info.distance });
+        // 駅自体が未登録でも、候補には出す（選ぶとテキスト手入力モードになる）。
+        // HeartRails側の実際の路線名を使って、路線ごとに分けて表示する
+        const uniqueApiLines = [...new Set(info.apiLines)];
+        uniqueApiLines.forEach(apiLine => {
+          matches.push({ name, line: apiLine, unregistered: true, confident: false, distance: info.distance });
+        });
         return;
       }
 
@@ -839,7 +845,7 @@ function renderGeoStationResult(matches) {
     const item = document.createElement("button");
     item.type = "button";
     const label = m.unregistered
-      ? `${m.name}（未登録路線）`
+      ? `${m.name}（【未登録路線】${m.line}）`
       : m.confident
         ? `${m.name}（${m.line}）`
         : `${m.name}（${m.line}）※駅名のみ一致・正式名称「${m.apiLine}」`;
@@ -886,7 +892,7 @@ function notifyNameMismatch(match) {
 async function applyGeoStation(match) {
   if (match.unregistered) {
     if (typeof closeHistoryModal === "function") closeHistoryModal();
-    if (typeof enableTextInputMode === "function") enableTextInputMode(match.name);
+    if (typeof enableTextInputMode === "function") enableTextInputMode(match.name, match.line);
     return;
   }
 

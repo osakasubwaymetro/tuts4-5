@@ -10,7 +10,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.13.1 -->
+  <!-- version: 1.13.2 -->
+  <!-- 1.13.2: enableTextInputModeが路線名も受け取れるように対応。未登録駅選択時に
+             HeartRailsの路線名がテキストモードの路線欄に自動入力されるように -->
   <!-- 1.13.1: 手動トグルを廃止。未登録駅を選んだ時だけ自動でテキスト入力モードになる
              シンプルな仕組みに変更 -->
   <!-- 1.12.1: エリア自動判定を、都道府県名の文字列一致だけでなく、より確実な
@@ -847,7 +849,7 @@
   }
 </script>
 <script src="logs.js?v=1.2.1"></script>
-<script src="scripts.js?v=1.30.7"></script>
+<script src="scripts.js?v=1.30.8"></script>
 <script>
   const username = checkLogin();
 
@@ -1075,9 +1077,10 @@
     document.getElementById("textInputSection").style.display = on ? "block" : "none";
     document.getElementById("normalInputSection").style.display = on ? "none" : "block";
   }
-  function enableTextInputMode(stationName) {
+  function enableTextInputMode(stationName, lineName) {
     toggleTextInputMode(true);
     if (stationName) document.getElementById("station_text").value = stationName;
+    if (lineName) document.getElementById("route_text").value = lineName;
   }
 
   function locateAndFill() {
