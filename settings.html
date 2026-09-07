@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="ja">
-<!-- version: 1.4.1 -->
-<!-- 1.4.1: 運営専用設定セクションを追加。「max10件表示モード」トグル
-           （候補一覧の時間窓制限を無視して近い順に最大10件表示、デフォルトOFF） -->
+<!-- version: 1.4.2 -->
+<!-- 1.4.2: 運営設定に「ダイヤキャッシュを今すぐ更新」ボタンを追加。2週間キャッシュを
+           手動で即座にクリアできるようにした -->
 <!-- 1.4.0: ショートカットに任意の時刻（HH:MM）を設定できるように対応 -->
 <!-- 1.3.1: キャッシュ対策（no-cacheメタタグ、logs.js/nav.jsのバージョンクエリ）を追加 -->
 <!-- 1.3.0: 「Googleアカウントを変更」機能を追加。checkLogin()等の重複定義をやめ、
@@ -308,6 +308,8 @@
       <input type="checkbox" id="max10ModeToggle" onchange="localStorage.setItem('tuts4_max10_mode', this.checked ? 'TRUE' : '')">
       <span>候補一覧を「5分前〜1時間後」の窓を無視して、近い順に最大10件表示するモード</span>
     </label>
+    <button type="button" class="btn-secondary" onclick="clearDiagramCache()">🔄 ダイヤキャッシュを今すぐ更新</button>
+    <p class="small" style="color:#999;">ダイヤ一覧・運用シートを編集した直後は、2週間キャッシュが古いままになるのでこのボタンで即反映できます</p>
   </div>
 </main>
 
@@ -329,6 +331,18 @@ checkLogin();
 if (localStorage.getItem("username") === "運営") {
   document.getElementById("adminSettingsSection").style.display = "block";
   document.getElementById("max10ModeToggle").checked = localStorage.getItem("tuts4_max10_mode") === "TRUE";
+}
+
+function clearDiagramCache() {
+  const keysToRemove = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key === "tuts4_diagram_list_cache" || key.startsWith("tuts4_diagram_sheet_")) {
+      keysToRemove.push(key);
+    }
+  }
+  keysToRemove.forEach(k => localStorage.removeItem(k));
+  alert(`ダイヤキャッシュを${keysToRemove.length}件クリアしました。次回、次に発車時刻を選ぶ時に最新のダイヤが取得されます。`);
 }
 
 // ===== Googleアカウントの変更 =====
