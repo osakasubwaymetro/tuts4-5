@@ -1,5 +1,8 @@
-// version: 1.30.8
-// 1.30.8: 未登録駅の表示を「駅名（未登録路線）」から、HeartRails側の実際の路線名を使った
+// version: 1.31.0
+// 1.31.0: ダイヤ情報を2週間キャッシュするように変更し、最寄り駅選択直後（方面選択前）に
+//         その路線のダイヤを裏で先読みするように対応。候補一覧を開く時の応答性が向上。
+//         運用シートに「列車番号」列（A列、駅名の前）を追加対応。候補表示を
+//         「列車番号(運番nn)」形式に変更（例: A0702S(運番02)）
 //         「駅名（【未登録路線】路線名）」に変更。同じ駅に複数路線あれば路線ごとに分けて表示。
 //         選ぶと路線名もテキストモードの路線欄に自動入力されるように対応
 //         対応。反映せずにいると、nav.js側の自動判定がまだ古いキャッシュを見て
@@ -916,6 +919,9 @@ async function applyGeoStation(match) {
   const typeVal = routeRow["区分"];
   const companyVal = routeRow["会社"];
 
+  // 方面を選ぶ前のこの時点で、ダイヤ情報の先読みを裏で開始しておく（待たない）
+  if (typeof prefetchDiagramDataForRoute === "function") prefetchDiagramDataForRoute(companyVal, match.line);
+
   // えりあは「現在時刻を入力」ボタン側でGPS→都道府県→地方のマッピングにより
   // 既に正しく設定済みのはずなので、ここでは上書きしない
   // （会社名だけから逆引きすると、複数えりあにまたがる会社の場合に間違ったえりあになるため）
@@ -1220,42 +1226,71 @@ function isWeekendType(d, holidaySet) {
 ---------------------------------------- */
 const DIAGRAM_SHEET_ID = "1JzY1wIGbj2Z83ItsMnMrz1xQ-cviEv50P0mOHiyi70A";
 let _diagramListCache = null;
+const DIAGRAM_CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 2週間
+function readDiagramCache(key) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "null");
+    if (!parsed || !Array.isArray(parsed.data) || !parsed.fetchedAt) return null;
+    if (Date.now() - parsed.fetchedAt > DIAGRAM_CACHE_TTL_MS) return null; // 期限切れ
+    return parsed.data;
+  } catch (e) { return null; }
+}
+function writeDiagramCache(key, data) {
+  try { localStorage.setItem(key, JSON.stringify({ data, fetchedAt: Date.now() })); } catch (e) { /* 容量超過等は無視 */ }
+}
+function readStaleDiagramCache(key) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "null");
+    return (parsed && Array.isArray(parsed.data)) ? parsed.data : null;
+  } catch (e) { return null; }
+}
+
 async function getDiagramList() {
-  if (_diagramListCache) return _diagramListCache;
   const CACHE_KEY = "tuts4_diagram_list_cache";
+  const cached = readDiagramCache(CACHE_KEY);
+  if (cached) { _diagramListCache = cached; return cached; }
+
   const url = `https://opensheet.elk.sh/${DIAGRAM_SHEET_ID}/${encodeURIComponent("ダイヤ一覧")}`;
   try {
     const res = await fetch(url);
     const data = await res.json();
     if (Array.isArray(data)) {
-      localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+      writeDiagramCache(CACHE_KEY, data);
       _diagramListCache = data;
       return data;
     }
   } catch (e) { /* ignore */ }
-  try {
-    const cached = localStorage.getItem(CACHE_KEY);
-    if (cached) { _diagramListCache = JSON.parse(cached); return _diagramListCache; }
-  } catch (e) { /* ignore */ }
+  const stale = readStaleDiagramCache(CACHE_KEY);
+  if (stale) { _diagramListCache = stale; return stale; }
   return [];
 }
 async function fetchDiagramSheet(id, unban) {
   const sheetName = `${id}_${unban}`;
   const CACHE_KEY = "tuts4_diagram_sheet_" + sheetName;
+  const cached = readDiagramCache(CACHE_KEY);
+  if (cached) return cached;
+
   const url = `https://opensheet.elk.sh/${DIAGRAM_SHEET_ID}/${encodeURIComponent(sheetName)}`;
   try {
     const res = await fetch(url);
     const data = await res.json();
     if (Array.isArray(data)) {
-      localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+      writeDiagramCache(CACHE_KEY, data);
       return data;
     }
   } catch (e) { /* ignore */ }
-  try {
-    const cached = localStorage.getItem(CACHE_KEY);
-    if (cached) return JSON.parse(cached);
-  } catch (e) { /* ignore */ }
+  const stale = readStaleDiagramCache(CACHE_KEY);
+  if (stale) return stale;
   return [];
+}
+// 最寄り駅を選んだ時点（方面を選ぶ前）で、その路線のダイヤ情報を先読みしてキャッシュしておく。
+// 2週間キャッシュが効くので、実際に候補一覧を開く頃には（曜日区分に関わらず）ほぼ即表示できる
+async function prefetchDiagramDataForRoute(companyVal, routeVal) {
+  try {
+    const list = await getDiagramList();
+    const matches = list.filter(d => d["会社"] === companyVal && d["路線"] === routeVal);
+    await Promise.all(matches.map(d => fetchDiagramSheet(d["ID"], d["運番"])));
+  } catch (e) { /* ignore */ }
 }
 function isFlaggedExtraGeneric(v) {
   return ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
@@ -1294,12 +1329,13 @@ async function getDiagramCandidates(routeVal, boardingStation, todayIsWeekendTyp
       // 種別・行先は増結対応で「/」区切り（併結時と同じ形式）
       const bounds = String(r["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
       const types = String(r["種別"] || "").split("/").map(s => s.trim());
+      const trainNumber = r["列車番号"] || "";
       if (bounds.length) {
         bounds.forEach((b, i) => {
-          results.push({ isDiagram: true, time, unban: d["運番"], isExtra, type: types[i] || types[0] || "", bound: b });
+          results.push({ isDiagram: true, time, unban: d["運番"], trainNumber, isExtra, type: types[i] || types[0] || "", bound: b });
         });
       } else {
-        results.push({ isDiagram: true, time, unban: d["運番"], isExtra, type: "", bound: "" });
+        results.push({ isDiagram: true, time, unban: d["運番"], trainNumber, isExtra, type: "", bound: "" });
       }
     });
   }
@@ -1552,7 +1588,7 @@ function renderHistoryPopupList(candidates, routeVal, boardingStation, dirVal) {
         item.style.gap = "8px";
         item.innerHTML = `
           <span>${mainLabel}</span>
-          <span style="color:#999; font-size:12px; white-space:nowrap;">運番${c.unban}</span>
+          <span style="color:#999; font-size:12px; white-space:nowrap;">${c.trainNumber ? `${c.trainNumber}(運番${c.unban})` : `運番${c.unban}`}</span>
         `;
       } else {
         const dest = c.type ? `${c.type}${c.bound}行き` : `${c.bound}行き`;
@@ -2397,6 +2433,8 @@ async function applyAdminStation(areaVal, typeVal, countryVal, routeVal, station
     el.dispatchEvent(new Event("change", { bubbles: true }));
   }
   function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  if (typeof prefetchDiagramDataForRoute === "function") prefetchDiagramDataForRoute(countryVal, routeVal);
 
   setAndTrigger("area", areaVal);
   setAndTrigger("type", typeVal);
