@@ -1,5 +1,6 @@
-// version: 1.31.0
-// 1.31.0: ダイヤ情報を2週間キャッシュするように変更し、最寄り駅選択直後（方面選択前）に
+// version: 1.31.1
+// 1.31.1: 運営設定「max10件表示モード」に対応。ONの時は「5分前〜1時間後」の窓を
+//         無視して、近い順に最大10件表示するようになる（デフォルトOFF）
 //         その路線のダイヤを裏で先読みするように対応。候補一覧を開く時の応答性が向上。
 //         運用シートに「列車番号」列（A列、駅名の前）を追加対応。候補表示を
 //         「列車番号(運番nn)」形式に変更（例: A0702S(運番02)）
@@ -1486,14 +1487,16 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
   const dayTypePool = sameDayType.length ? sameDayType : raw;
 
   // 「5分前〜1時間後」の窓の中にある記録だけを対象にし、近い順に並べる。
-  // 窓の中に10件以上あれば近い方から10件、10件未満ならその窓の中の分だけ全部出す
+  // 窓の中に10件以上あれば近い方から10件、10件未満ならその窓の中の分だけ全部出す。
+  // 運営設定で「max10件表示モード」がONなら、この窓の制限を無視して近い順に最大10件出す
+  const max10Mode = localStorage.getItem("tuts4_max10_mode") === "TRUE";
   const nowMin = timeOfDayMinutes(new Date());
   const refMin = (nowMin - 5 + 1440) % 1440;
   const WINDOW_MINUTES = 65; // 5分前 〜 1時間後 ＝ 合計65分の窓
   const pool = dayTypePool
     .filter(c => c.time)
     .map(c => ({ ...c, _diff: (timeOfDayMinutes(c.time) - refMin + 1440) % 1440 }))
-    .filter(c => c._diff <= WINDOW_MINUTES)
+    .filter(c => max10Mode || c._diff <= WINDOW_MINUTES)
     .sort((a, b) => (a._diff - b._diff) || (b.time - a.time))
     .slice(0, 10);
 
@@ -1538,7 +1541,7 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
   const diagramRaw = await getDiagramCandidates(routeVal, boardingStation, todayIsWeekendType);
   diagramRaw
     .map(c => ({ ...c, _diff: (timeOfDayMinutes(c.time) - refMin + 1440) % 1440 }))
-    .filter(c => c._diff <= WINDOW_MINUTES)
+    .filter(c => max10Mode || c._diff <= WINDOW_MINUTES)
     .sort((a, b) => a._diff - b._diff)
     .slice(0, 10)
     .forEach(c => {

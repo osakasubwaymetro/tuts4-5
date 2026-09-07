@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="ja">
-<!-- version: 1.4.0 -->
+<!-- version: 1.4.1 -->
+<!-- 1.4.1: 運営専用設定セクションを追加。「max10件表示モード」トグル
+           （候補一覧の時間窓制限を無視して近い順に最大10件表示、デフォルトOFF） -->
 <!-- 1.4.0: ショートカットに任意の時刻（HH:MM）を設定できるように対応 -->
 <!-- 1.3.1: キャッシュ対策（no-cacheメタタグ、logs.js/nav.jsのバージョンクエリ）を追加 -->
 <!-- 1.3.0: 「Googleアカウントを変更」機能を追加。checkLogin()等の重複定義をやめ、
@@ -210,6 +212,15 @@
     opacity: 1;
     transform: translateX(-50%) translateY(0);
   }
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #555;
+    margin: 10px 0;
+  }
+  .toggle-row input[type="checkbox"] { width: 18px; height: 18px; }
 </style>
 </head>
 <body>
@@ -290,6 +301,14 @@
   <!-- 登録済みショートカット一覧 -->
   <h2>📋 登録済みショートカット</h2>
   <div class="shortcut-list" id="shortcutList"></div>
+
+  <div id="adminSettingsSection" style="display:none;">
+    <h2>🛠 運営設定</h2>
+    <label class="toggle-row">
+      <input type="checkbox" id="max10ModeToggle" onchange="localStorage.setItem('tuts4_max10_mode', this.checked ? 'TRUE' : '')">
+      <span>候補一覧を「5分前〜1時間後」の窓を無視して、近い順に最大10件表示するモード</span>
+    </label>
+  </div>
 </main>
 
 <div class="save-toast" id="saveToast"></div>
@@ -305,6 +324,12 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 <script>
 checkLogin();
+
+// ===== 運営専用設定 =====
+if (localStorage.getItem("username") === "運営") {
+  document.getElementById("adminSettingsSection").style.display = "block";
+  document.getElementById("max10ModeToggle").checked = localStorage.getItem("tuts4_max10_mode") === "TRUE";
+}
 
 // ===== Googleアカウントの変更 =====
 const GOOGLE_CLIENT_ID = "63849227908-th525fl0grpko8l0m78m98rbp03fnni7.apps.googleusercontent.com";
