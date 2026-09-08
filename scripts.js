@@ -1,5 +1,9 @@
-// version: 1.31.1
-// 1.31.1: 運営設定「max10件表示モード」に対応。ONの時は「5分前〜1時間後」の窓を
+// version: 1.32.0
+// 1.32.0: ダイヤキャッシュの仕組みを見直し。ダイヤ一覧自体は1時間キャッシュ（軽いので
+//         新規追加が早く全端末に届く）。運用シートは、ダイヤ一覧の「最終更新」列を見て、
+//         編集日時がキャッシュより新しければ2週間以内でも自動で取り直すように変更。
+//         これにより、運営が編集するだけで全ユーザーの端末に自動反映されるようになった
+//         （前バージョンの「自分の端末のキャッシュしか消せない」問題を解消）
 //         無視して、近い順に最大10件表示するようになる（デフォルトOFF）
 //         その路線のダイヤを裏で先読みするように対応。候補一覧を開く時の応答性が向上。
 //         運用シートに「列車番号」列（A列、駅名の前）を追加対応。候補表示を
@@ -1227,13 +1231,19 @@ function isWeekendType(d, holidaySet) {
 ---------------------------------------- */
 const DIAGRAM_SHEET_ID = "1JzY1wIGbj2Z83ItsMnMrz1xQ-cviEv50P0mOHiyi70A";
 let _diagramListCache = null;
-const DIAGRAM_CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 2週間
-function readDiagramCache(key) {
+const DIAGRAM_CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 2週間（既定値。呼び出し側で個別のTTLを渡すことも可）
+function readDiagramCache(key, ttlMs) {
   try {
     const parsed = JSON.parse(localStorage.getItem(key) || "null");
     if (!parsed || !Array.isArray(parsed.data) || !parsed.fetchedAt) return null;
-    if (Date.now() - parsed.fetchedAt > DIAGRAM_CACHE_TTL_MS) return null; // 期限切れ
+    if (Date.now() - parsed.fetchedAt > (ttlMs || DIAGRAM_CACHE_TTL_MS)) return null; // 期限切れ
     return parsed.data;
+  } catch (e) { return null; }
+}
+function readDiagramCacheMeta(key) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "null");
+    return (parsed && parsed.fetchedAt) ? parsed : null;
   } catch (e) { return null; }
 }
 function writeDiagramCache(key, data) {
@@ -1246,9 +1256,10 @@ function readStaleDiagramCache(key) {
   } catch (e) { return null; }
 }
 
+const DIAGRAM_LIST_CACHE_TTL_MS = 60 * 60 * 1000; // 1時間（軽いデータなので短めにして、新規追加が早く全端末に届くようにする）
 async function getDiagramList() {
   const CACHE_KEY = "tuts4_diagram_list_cache";
-  const cached = readDiagramCache(CACHE_KEY);
+  const cached = readDiagramCache(CACHE_KEY, DIAGRAM_LIST_CACHE_TTL_MS);
   if (cached) { _diagramListCache = cached; return cached; }
 
   const url = `https://opensheet.elk.sh/${DIAGRAM_SHEET_ID}/${encodeURIComponent("ダイヤ一覧")}`;
@@ -1265,11 +1276,26 @@ async function getDiagramList() {
   if (stale) { _diagramListCache = stale; return stale; }
   return [];
 }
-async function fetchDiagramSheet(id, unban) {
+// ダイヤ一覧の「最終更新」列（運用シートを編集したらその日付を入れてもらう運用）を見て、
+// キャッシュした時点より後に更新されていたら、2週間以内でも古いキャッシュを捨てて取り直す。
+// これにより、運営が編集するだけで全ユーザーの端末に自動で反映される（手動キャッシュクリア不要）
+async function fetchDiagramSheet(id, unban, listRowLastUpdated) {
   const sheetName = `${id}_${unban}`;
   const CACHE_KEY = "tuts4_diagram_sheet_" + sheetName;
-  const cached = readDiagramCache(CACHE_KEY);
-  if (cached) return cached;
+
+  let forceRefresh = false;
+  if (listRowLastUpdated) {
+    const updatedAt = new Date(listRowLastUpdated);
+    const cachedMeta = readDiagramCacheMeta(CACHE_KEY);
+    if (!isNaN(updatedAt) && cachedMeta && updatedAt.getTime() > cachedMeta.fetchedAt) {
+      forceRefresh = true;
+    }
+  }
+
+  if (!forceRefresh) {
+    const cached = readDiagramCache(CACHE_KEY, DIAGRAM_CACHE_TTL_MS);
+    if (cached) return cached;
+  }
 
   const url = `https://opensheet.elk.sh/${DIAGRAM_SHEET_ID}/${encodeURIComponent(sheetName)}`;
   try {
@@ -1284,13 +1310,12 @@ async function fetchDiagramSheet(id, unban) {
   if (stale) return stale;
   return [];
 }
-// 最寄り駅を選んだ時点（方面を選ぶ前）で、その路線のダイヤ情報を先読みしてキャッシュしておく。
-// 2週間キャッシュが効くので、実際に候補一覧を開く頃には（曜日区分に関わらず）ほぼ即表示できる
+// 最寄り駅を選んだ時点（方面を選ぶ前）で、その路線のダイヤ情報を先読みしてキャッシュしておく
 async function prefetchDiagramDataForRoute(companyVal, routeVal) {
   try {
     const list = await getDiagramList();
     const matches = list.filter(d => d["会社"] === companyVal && d["路線"] === routeVal);
-    await Promise.all(matches.map(d => fetchDiagramSheet(d["ID"], d["運番"])));
+    await Promise.all(matches.map(d => fetchDiagramSheet(d["ID"], d["運番"], d["最終更新"])));
   } catch (e) { /* ignore */ }
 }
 function isFlaggedExtraGeneric(v) {
@@ -1311,7 +1336,7 @@ async function getDiagramCandidates(routeVal, boardingStation, todayIsWeekendTyp
 
   const results = [];
   for (const d of matches) {
-    const rows = await fetchDiagramSheet(d["ID"], d["運番"]);
+    const rows = await fetchDiagramSheet(d["ID"], d["運番"], d["最終更新"]);
     const isExtra = isFlaggedExtraGeneric(d["臨時"]);
     rows.forEach(r => {
       if (r["駅名"] !== boardingStation) return;
