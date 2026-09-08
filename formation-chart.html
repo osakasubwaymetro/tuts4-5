@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>編成表</title>
+<!-- version: 1.0.0 -->
+<style>
+  body {
+    font-family: "Hiragino Sans", "Segoe UI", sans-serif;
+    background: #F7F8FA;
+    margin: 0;
+    padding-bottom: 40px;
+  }
+  main { max-width: 680px; margin: 0 auto; padding: 16px; }
+  h2 { color: #004C97; margin: 20px 0 10px; }
+  .small { color: #999; font-size: 13px; }
+  .select-card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+  }
+  .select-card label { display:block; font-size:12px; color:#888; margin:8px 0 3px; }
+  .select-card label:first-child { margin-top: 0; }
+  .select-card select, .select-card input {
+    width: 100%;
+    padding: 9px 10px;
+    border-radius: 8px;
+    border: 1.5px solid #E3E8F0;
+    font-size: 14px;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .search-row { display: flex; gap: 8px; align-items: center; margin: 12px 0; }
+  .search-row .divider { color: #bbb; font-size: 12px; white-space: nowrap; }
+  .search-results {
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+    margin-top: 6px;
+    overflow: hidden;
+  }
+  .search-results button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: #fff;
+    border: none;
+    border-bottom: 1px solid #f0f0f0;
+    padding: 10px 12px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .search-results button:last-child { border-bottom: none; }
+  .search-results button:active { background: #F4F7FB; }
+
+  .formation-card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 14px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+  }
+  .formation-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .formation-icon {
+    width: 48px;
+    height: 48px;
+    object-fit: contain;
+    border-radius: 8px;
+    background: #f7f7f7;
+    flex-shrink: 0;
+  }
+  .formation-title { font-weight: bold; font-size: 16px; color: #17324f; }
+  .formation-badges { margin-top: 4px; }
+  .badge {
+    display: inline-block;
+    background: #eee;
+    color: #555;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 6px;
+    margin: 0 4px 4px 0;
+  }
+  .car-row {
+    display: flex;
+    align-items: center;
+    overflow-x: auto;
+    padding: 6px 0;
+    gap: 0;
+  }
+  .car-box {
+    flex-shrink: 0;
+    background: #d9dde3;
+    border-radius: 6px;
+    padding: 10px 14px;
+    text-align: center;
+    min-width: 54px;
+  }
+  .car-box .num { font-weight: bold; font-size: 13px; color: #222; }
+  .car-box .label { font-size: 9px; color: #777; margin-top: 2px; }
+  .car-connector { width: 8px; height: 2px; background: #999; flex-shrink: 0; }
+  .empty-msg { color: #999; text-align: center; padding: 30px; }
+</style>
+</head>
+<body>
+
+<main>
+  <h2>🚃 編成表</h2>
+  <p class="small">エリア〜路線を選ぶとその路線を走る車両形式を選べます。形式名で直接検索もできます。</p>
+
+  <div class="select-card">
+    <label>形式名で検索</label>
+    <input type="text" id="modelSearchInput" placeholder="例: 6600系" oninput="runModelSearch()">
+    <div id="modelSearchResults"></div>
+  </div>
+
+  <div class="select-card">
+    <label>エリア</label>
+    <select id="fcArea"><option value="">選択してください</option></select>
+    <label>区分</label>
+    <select id="fcType"><option value="">選択してください</option></select>
+    <label>会社</label>
+    <select id="fcCompany"><option value="">選択してください</option></select>
+    <label>路線</label>
+    <select id="fcRoute"><option value="">選択してください</option></select>
+    <label>車両形式</label>
+    <select id="fcModel"><option value="">選択してください</option></select>
+  </div>
+
+  <div id="fcResult"></div>
+</main>
+
+<script src="nav.js"></script>
+<script>initNav("編成表");</script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  if (typeof logAction === "function") logAction("view", "ページ閲覧: formation-chart.html");
+});
+
+let allAreaData = [], allCountryData = [], allTypeData = [], allRouteData = [], allModelData = [], allNumberData = [];
+
+async function fetchJsonArrayWithRetry(url, attempts = 2) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      if (Array.isArray(data)) return data;
+    } catch (e) { /* リトライ */ }
+    if (i < attempts - 1) await new Promise(r => setTimeout(r, 1000));
+  }
+  return [];
+}
+function fetchCachedMasterData(cacheKey, url, handler) {
+  const key = "tuts4_master_" + cacheKey;
+  try {
+    const cached = localStorage.getItem(key);
+    if (cached) handler(JSON.parse(cached));
+  } catch (e) { /* 壊れたキャッシュは無視 */ }
+  fetchJsonArrayWithRetry(url).then(data => {
+    if (!data.length) return;
+    handler(data);
+    try { localStorage.setItem(key, JSON.stringify(data)); } catch (e) { /* 容量超過等は無視 */ }
+  });
+}
+
+const BASE = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/";
+fetchCachedMasterData("area", BASE + "area", data => { allAreaData = data; buildAreaSelect(); });
+fetchCachedMasterData("country", BASE + "country", data => { allCountryData = data; });
+fetchCachedMasterData("type", BASE + "type", data => { allTypeData = data; });
+fetchCachedMasterData("route", BASE + "route", data => { allRouteData = data; });
+fetchCachedMasterData("model", BASE + "model", data => { allModelData = data; });
+fetchCachedMasterData("number", BASE + "number", data => { allNumberData = data; });
+
+function buildAreaSelect() {
+  const areas = [...new Set(allAreaData.map(r => r["えりあ"]))].filter(Boolean);
+  fillSelect(document.getElementById("fcArea"), areas);
+}
+function fillSelect(sel, items) {
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">選択してください</option>' + items.map(i => `<option value="${i}">${i}</option>`).join("");
+  if (items.includes(cur)) sel.value = cur;
+}
+
+document.getElementById("fcArea").addEventListener("change", () => { buildTypeSelect(); clearResult(); });
+document.getElementById("fcType").addEventListener("change", () => { buildCompanySelect(); clearResult(); });
+document.getElementById("fcCompany").addEventListener("change", () => { buildRouteSelect(); clearResult(); });
+document.getElementById("fcRoute").addEventListener("change", () => { buildModelSelect(); clearResult(); });
+document.getElementById("fcModel").addEventListener("change", () => renderFormationChart(document.getElementById("fcModel").value));
+
+function buildTypeSelect() {
+  const areaVal = document.getElementById("fcArea").value;
+  const types = [...new Set(allCountryData.filter(r => r["えりあ"] === areaVal).map(r => r["区分"]))].filter(Boolean);
+  fillSelect(document.getElementById("fcType"), types);
+  buildCompanySelect();
+}
+function buildCompanySelect() {
+  const areaVal = document.getElementById("fcArea").value;
+  const typeVal = document.getElementById("fcType").value;
+  const companies = [...new Set(allCountryData.filter(r => r["えりあ"] === areaVal && r["区分"] === typeVal).map(r => r["会社"]))].filter(Boolean);
+  fillSelect(document.getElementById("fcCompany"), companies);
+  buildRouteSelect();
+}
+function buildRouteSelect() {
+  const typeVal = document.getElementById("fcType").value;
+  const companyVal = document.getElementById("fcCompany").value;
+  const routes = [...new Set(allRouteData.filter(r => r["区分"] === typeVal && r["会社"] === companyVal).map(r => r["路線"]))].filter(Boolean);
+  fillSelect(document.getElementById("fcRoute"), routes);
+  buildModelSelect();
+}
+function buildModelSelect() {
+  const routeVal = document.getElementById("fcRoute").value;
+  const models = [...new Set(allModelData.filter(r => r["路線"] === routeVal).map(r => r["車両形式"]))].filter(Boolean);
+  fillSelect(document.getElementById("fcModel"), models);
+}
+
+function clearResult() {
+  document.getElementById("fcResult").innerHTML = "";
+}
+
+/* ----------------------------------------
+   形式名の直接検索
+---------------------------------------- */
+function runModelSearch() {
+  const q = document.getElementById("modelSearchInput").value.trim();
+  const box = document.getElementById("modelSearchResults");
+  if (!q) { box.innerHTML = ""; return; }
+
+  const models = [...new Set(allModelData.map(r => r["車両形式"]))].filter(m => m && m.includes(q));
+  if (!models.length) {
+    box.innerHTML = '<p class="small">見つかりませんでした</p>';
+    return;
+  }
+  box.innerHTML = `<div class="search-results">${models.map(m => `<button type="button" data-m="${m}">${m}</button>`).join("")}</div>`;
+  box.querySelectorAll("button").forEach(btn => {
+    btn.onclick = () => {
+      document.getElementById("modelSearchInput").value = "";
+      box.innerHTML = "";
+      renderFormationChart(btn.dataset.m);
+    };
+  });
+}
+
+/* ----------------------------------------
+   編成表の描画
+---------------------------------------- */
+const FALLBACK_TRAIN_IMAGE = "https://img.elesite-next.com/hatena.webp";
+function toDisplayableImageUrl(url) {
+  const s = String(url || "").trim();
+  if (!s) return "";
+  let m = s.match(/drive\.google\.com\/file\/d\/([^/]+)/);
+  if (m) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w300`;
+  m = s.match(/[?&]id=([^&]+)/);
+  if (m && s.includes("drive.google.com")) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w300`;
+  return s;
+}
+function resolveTrainImage(numberRow) {
+  if (numberRow) {
+    const own = toDisplayableImageUrl(numberRow["画像URL"]);
+    if (own) return own;
+    const modelRows = allModelData.filter(r => r["車両形式"] === numberRow["車両形式"]);
+    for (const row of modelRows) {
+      const img = toDisplayableImageUrl(row["画像URL"]);
+      if (img) return img;
+    }
+  }
+  return FALLBACK_TRAIN_IMAGE;
+}
+function cleanFormationNumber(num) {
+  return String(num || "").trim().replace(/\*/g, "");
+}
+function formationGroupHeaderLabel(raw) {
+  const m = String(raw || "").trim().match(/^\*+(.+?)\*+$/);
+  return m ? m[1].trim() : null;
+}
+function getCarNumbers(r) {
+  const carKeys = Object.keys(r)
+    .filter(k => /号車$/.test(k))
+    .sort((a, b) => (parseInt(a) || 0) - (parseInt(b) || 0));
+  const cars = carKeys.map(k => String(r[k] || "").trim()).filter(Boolean);
+  return cars.length ? cars : [cleanFormationNumber(r["車番"])].filter(Boolean);
+}
+function noteBadgeHtml(r) {
+  const note = String((r && r["備考"]) || "").trim();
+  if (!note) return "";
+  return note.split(",").map(s => s.trim()).filter(Boolean)
+    .map(s => `<span class="badge">${s}</span>`).join("");
+}
+
+function renderFormationChart(modelVal) {
+  const box = document.getElementById("fcResult");
+  if (!modelVal) { box.innerHTML = ""; return; }
+
+  const rows = allNumberData.filter(r => r["車両形式"] === modelVal && formationGroupHeaderLabel(r["車番"]) === null);
+  if (!rows.length) {
+    box.innerHTML = `<h2>${modelVal}</h2><p class="empty-msg">この形式の編成データがありません</p>`;
+    return;
+  }
+
+  box.innerHTML = `<h2>${modelVal}（${rows.length}編成）</h2>` + rows.map(r => {
+    const cars = getCarNumbers(r);
+    const carHTML = cars.map((c, i) => {
+      const connector = i < cars.length - 1 ? '<div class="car-connector"></div>' : "";
+      return `<div class="car-box"><div class="num">${c}</div><div class="label">${i + 1}号車</div></div>${connector}`;
+    }).join("");
+    return `
+      <div class="formation-card">
+        <div class="formation-head">
+          <img class="formation-icon" src="${resolveTrainImage(r)}" loading="lazy"
+               onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';">
+          <div>
+            <div class="formation-title">${cleanFormationNumber(r["車番"])}編成</div>
+            <div class="formation-badges">${noteBadgeHtml(r)}</div>
+          </div>
+        </div>
+        <div class="car-row">${carHTML}</div>
+      </div>
+    `;
+  }).join("");
+}
+</script>
+
+</body>
+</html>

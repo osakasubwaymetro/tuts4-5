@@ -2,7 +2,8 @@
  * nav.js — 共通ヘッダー管理ファイル
  * 新しいページを追加するときは NAV_LINKS だけ編集してください
  *
- * version: 1.6.0
+ * version: 1.6.1
+ * 1.6.1: メニューに「編成表」（formation-chart.html）を追加
  * 1.6.0: どのページを開いても、乗車・降車データを裏で最新化する仕組みを追加。
  *        最終更新から1時間以上経ってたら自動更新、乗車・降車を記録した時は即時更新
  * 1.5.8: フラグが無くても、実際のキャッシュデータ上で最新の乗車記録に降車駅が
@@ -36,6 +37,7 @@ const NAV_LINKS = [
   { href: "show.html",       icon: "📜", label: "投稿履歴" },
   { href: "statistick.html", icon: "📊", label: "統計情報" },
   { href: "linemap.html",    icon: "🗺", label: "乗車路線マップ確認用" },
+  { href: "formation-chart.html", icon: "🚃", label: "編成表" },
   { href: "stampbook.html",  icon: "🎫", label: "スタンプ帳" },
   { href: "contact.html",    icon: "📩", label: "お知らせ・お問い合わせ" },
   { href: "settings.html",   icon: "⚙️", label: "設定" },

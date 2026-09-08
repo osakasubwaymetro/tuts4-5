@@ -1,5 +1,5 @@
-// version: 1.32.0
-// 1.32.0: ダイヤキャッシュの仕組みを見直し。ダイヤ一覧自体は1時間キャッシュ（軽いので
+// version: 1.32.1
+// 1.32.1: 備考列をカンマ区切りで複数バッジに分けて表示するように対応
 //         新規追加が早く全端末に届く）。運用シートは、ダイヤ一覧の「最終更新」列を見て、
 //         編集日時がキャッシュより新しければ2週間以内でも自動で取り直すように変更。
 //         これにより、運営が編集するだけで全ユーザーの端末に自動反映されるようになった
@@ -2673,7 +2673,9 @@ function cleanFormationNumber(num) {
 
 function noteBadgeHtml(r) {
   const note = String((r && r["備考"]) || "").trim();
-  return note ? `<span class="csr-note-badge">${note}</span>` : "";
+  if (!note) return "";
+  return note.split(",").map(s => s.trim()).filter(Boolean)
+    .map(s => `<span class="csr-note-badge">${s}</span>`).join("");
 }
 
 function formatFormationLabel(num) {

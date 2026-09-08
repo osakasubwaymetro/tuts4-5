@@ -10,7 +10,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.13.2 -->
+  <!-- version: 1.13.3 -->
+  <!-- 1.13.3: 備考バッジ間の余白を調整（カンマ区切りで複数バッジに対応したため） -->
   <!-- 1.13.2: enableTextInputModeが路線名も受け取れるように対応。未登録駅選択時に
              HeartRailsの路線名がテキストモードの路線欄に自動入力されるように -->
   <!-- 1.13.1: 手動トグルを廃止。未登録駅を選んだ時だけ自動でテキスト入力モードになる
@@ -596,7 +597,7 @@
       font-weight: 600;
       padding: 2px 8px;
       border-radius: 6px;
-      margin: 3px 0 5px;
+      margin: 3px 4px 5px 0;
     }
     .csr-cars {
       display: flex;
@@ -849,7 +850,7 @@
   }
 </script>
 <script src="logs.js?v=1.2.1"></script>
-<script src="scripts.js?v=1.32.0"></script>
+<script src="scripts.js?v=1.32.1"></script>
 <script>
   const username = checkLogin();
 
