@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>編成表</title>
-<!-- version: 1.0.0 -->
+<!-- version: 1.0.1 -->
+<!-- 1.0.1: 形式名検索を大文字小文字区別なしに変更 -->
 <style>
   body {
     font-family: "Hiragino Sans", "Segoe UI", sans-serif;
@@ -232,11 +233,11 @@ function clearResult() {
    形式名の直接検索
 ---------------------------------------- */
 function runModelSearch() {
-  const q = document.getElementById("modelSearchInput").value.trim();
+  const q = document.getElementById("modelSearchInput").value.trim().toLowerCase();
   const box = document.getElementById("modelSearchResults");
   if (!q) { box.innerHTML = ""; return; }
 
-  const models = [...new Set(allModelData.map(r => r["車両形式"]))].filter(m => m && m.includes(q));
+  const models = [...new Set(allModelData.map(r => r["車両形式"]))].filter(m => m && m.toLowerCase().includes(q));
   if (!models.length) {
     box.innerHTML = '<p class="small">見つかりませんでした</p>';
     return;
