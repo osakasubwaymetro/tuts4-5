@@ -10,7 +10,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.13.3 -->
+  <!-- version: 1.14.0 -->
+  <!-- 1.14.0: 運営アカウント専用に、右下の時刻ボタン（🕐）から「現在時刻」をシミュレーション
+             できる機能を追加。設定した時刻はダイヤ検索系の候補一覧に反映される -->
   <!-- 1.13.3: 備考バッジ間の余白を調整（カンマ区切りで複数バッジに対応したため） -->
   <!-- 1.13.2: enableTextInputModeが路線名も受け取れるように対応。未登録駅選択時に
              HeartRailsの路線名がテキストモードの路線欄に自動入力されるように -->
@@ -697,6 +699,23 @@
   </div>
 </div>
 
+<button type="button" id="adminTimeSimBtn" onclick="openAdminTimeSimModal()"
+  style="display:none; position:fixed; right:16px; bottom:16px; z-index:900; background:#222; color:#fff; border:none; border-radius:999px; padding:10px 16px; font-weight:bold; font-size:14px; box-shadow:0 4px 12px rgba(0,0,0,0.25); cursor:pointer;">
+  🕐 <span id="adminTimeSimLabel">現在時刻</span>
+</button>
+
+<div id="adminTimeSimOverlay" class="modal-overlay">
+  <div class="modal-panel" onclick="event.stopPropagation()" style="max-width:420px;">
+    <div class="modal-header">
+      <span>🕐【運営テスト】時刻を選ぶ</span>
+      <button type="button" class="modal-close" onclick="closeAdminTimeSimModal()">✕</button>
+    </div>
+    <input type="datetime-local" id="adminTimeSimInput" style="width:100%; padding:10px; border-radius:8px; border:1px solid #ccc; box-sizing:border-box; font-size:16px; margin-bottom:14px;">
+    <button type="button" class="secondary-btn" style="width:100%; margin-bottom:10px;" onclick="resetAdminTimeSim()">現在時刻に戻す</button>
+    <button type="button" class="save-btn" style="width:100%;" onclick="confirmAdminTimeSim()">決定</button>
+  </div>
+</div>
+
 
 
 <main>
@@ -850,7 +869,7 @@
   }
 </script>
 <script src="logs.js?v=1.2.1"></script>
-<script src="scripts.js?v=1.32.1"></script>
+<script src="scripts.js?v=1.32.2"></script>
 <script>
   const username = checkLogin();
 
@@ -1185,6 +1204,47 @@
 
   // 【運営専用】マップにピンを打って緯度経度を指定する
   let _adminMap = null, _adminMarker = null, _adminPinLatLng = null;
+  // 【運営専用】時刻シミュレーション（右下のボタンで、選んだ時刻を「現在時刻」とみなす）
+  function updateAdminTimeSimLabel() {
+    const btn = document.getElementById("adminTimeSimBtn");
+    const raw = localStorage.getItem("tuts4_admin_time_override");
+    if (raw) {
+      const d = new Date(raw);
+      const pad = n => String(n).padStart(2, "0");
+      document.getElementById("adminTimeSimLabel").textContent = isNaN(d) ? "現在時刻" : `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      btn.style.background = "#c0392b";
+    } else {
+      document.getElementById("adminTimeSimLabel").textContent = "現在時刻";
+      btn.style.background = "#222";
+    }
+  }
+  function openAdminTimeSimModal() {
+    const pad = n => String(n).padStart(2, "0");
+    const raw = localStorage.getItem("tuts4_admin_time_override");
+    const base = raw && !isNaN(new Date(raw)) ? new Date(raw) : new Date();
+    document.getElementById("adminTimeSimInput").value =
+      `${base.getFullYear()}-${pad(base.getMonth() + 1)}-${pad(base.getDate())}T${pad(base.getHours())}:${pad(base.getMinutes())}`;
+    document.getElementById("adminTimeSimOverlay").classList.add("show");
+  }
+  function closeAdminTimeSimModal() {
+    document.getElementById("adminTimeSimOverlay").classList.remove("show");
+  }
+  function confirmAdminTimeSim() {
+    const val = document.getElementById("adminTimeSimInput").value;
+    if (val) localStorage.setItem("tuts4_admin_time_override", val);
+    updateAdminTimeSimLabel();
+    closeAdminTimeSimModal();
+  }
+  function resetAdminTimeSim() {
+    localStorage.removeItem("tuts4_admin_time_override");
+    updateAdminTimeSimLabel();
+    closeAdminTimeSimModal();
+  }
+  if (localStorage.getItem("username") === "運営") {
+    document.getElementById("adminTimeSimBtn").style.display = "block";
+    updateAdminTimeSimLabel();
+  }
+
   function openAdminMapPicker() {
     document.getElementById("adminMapOverlay").classList.add("show");
     document.getElementById("adminMapConfirmBtn").style.display = "none";

@@ -1,5 +1,6 @@
-// version: 1.32.1
-// 1.32.1: 備考列をカンマ区切りで複数バッジに分けて表示するように対応
+// version: 1.32.2
+// 1.32.2: getEffectiveNow()を追加。運営が時刻シミュレーションを設定してる場合、
+//         ダイヤ検索・過去の乗車記録候補の「現在時刻」判定にそれを使うように対応
 //         新規追加が早く全端末に届く）。運用シートは、ダイヤ一覧の「最終更新」列を見て、
 //         編集日時がキャッシュより新しければ2週間以内でも自動で取り直すように変更。
 //         これにより、運営が編集するだけで全ユーザーの端末に自動反映されるようになった
@@ -74,6 +75,15 @@ document.getElementById("username").value = localStorage.getItem("username");
 // キャッシュがあれば即座にhandlerへ渡し（体感速度優先）、裏で最新を取得して
 // 取れ次第もう一度handlerへ渡す＋キャッシュを更新する（「更新中」表示等は出さず静かに行う）。
 // opensheet側が一時的に配列以外（エラーレスポンス等）を返すことがあるため、1回だけ自動リトライする
+// 運営専用：時刻シミュレーション（右下の時計ボタンで設定した時刻を「現在時刻」とみなす）
+function getEffectiveNow() {
+  if (localStorage.getItem("username") !== "運営") return new Date();
+  const raw = localStorage.getItem("tuts4_admin_time_override");
+  if (!raw) return new Date();
+  const d = new Date(raw);
+  return isNaN(d) ? new Date() : d;
+}
+
 function fetchCachedMasterData(cacheKey, url, handler) {
   const key = "tuts4_master_" + cacheKey;
 
@@ -1467,7 +1477,7 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
 
   const rides = await getRideHistoryCached();
   const holidaySet = await getHolidaySet();
-  const todayIsWeekendType = isWeekendType(new Date(), holidaySet);
+  const todayIsWeekendType = isWeekendType(getEffectiveNow(), holidaySet);
 
   // 同じ路線・同じ乗車駅の記録のみを対象にする（ユーザーは問わない）。
   // 「臨時列車」フラグが立っている記録は、定期的な候補として出すのにふさわしくないので除外する
@@ -1515,7 +1525,7 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
   // 窓の中に10件以上あれば近い方から10件、10件未満ならその窓の中の分だけ全部出す。
   // 運営設定で「max10件表示モード」がONなら、この窓の制限を無視して近い順に最大10件出す
   const max10Mode = localStorage.getItem("tuts4_max10_mode") === "TRUE";
-  const nowMin = timeOfDayMinutes(new Date());
+  const nowMin = timeOfDayMinutes(getEffectiveNow());
   const refMin = (nowMin - 5 + 1440) % 1440;
   const WINDOW_MINUTES = 65; // 5分前 〜 1時間後 ＝ 合計65分の窓
   const pool = dayTypePool
