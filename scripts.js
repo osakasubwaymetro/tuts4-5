@@ -1,5 +1,6 @@
-// version: 1.32.2
-// 1.32.2: getEffectiveNow()を追加。運営が時刻シミュレーションを設定してる場合、
+// version: 1.32.3
+// 1.32.3: ダイヤ一覧の「路線」列を、「東海道新幹線, 山陽新幹線」のようにカンマ区切りで
+//         複数入れられるように対応（直通運転で同じダイヤを2行に分けなくて済むように）
 //         ダイヤ検索・過去の乗車記録候補の「現在時刻」判定にそれを使うように対応
 //         新規追加が早く全端末に届く）。運用シートは、ダイヤ一覧の「最終更新」列を見て、
 //         編集日時がキャッシュより新しければ2週間以内でも自動で取り直すように変更。
@@ -1321,10 +1322,15 @@ async function fetchDiagramSheet(id, unban, listRowLastUpdated) {
   return [];
 }
 // 最寄り駅を選んだ時点（方面を選ぶ前）で、その路線のダイヤ情報を先読みしてキャッシュしておく
+// 路線列は直通対応で「東海道新幹線, 山陽新幹線」のようにカンマ区切りで複数入れられる
+function diagramRowMatchesRoute(row, routeVal) {
+  return String(row["路線"] || "").split(",").map(s => s.trim()).includes(routeVal);
+}
+
 async function prefetchDiagramDataForRoute(companyVal, routeVal) {
   try {
     const list = await getDiagramList();
-    const matches = list.filter(d => d["会社"] === companyVal && d["路線"] === routeVal);
+    const matches = list.filter(d => d["会社"] === companyVal && diagramRowMatchesRoute(d, routeVal));
     await Promise.all(matches.map(d => fetchDiagramSheet(d["ID"], d["運番"], d["最終更新"])));
   } catch (e) { /* ignore */ }
 }
@@ -1337,7 +1343,7 @@ async function getDiagramCandidates(routeVal, boardingStation, todayIsWeekendTyp
   const companyVal = document.getElementById("country")?.value || "";
   const list = await getDiagramList();
   const matches = list.filter(d => {
-    if (d["会社"] !== companyVal || d["路線"] !== routeVal) return false;
+    if (d["会社"] !== companyVal || !diagramRowMatchesRoute(d, routeVal)) return false;
     const dayType = String(d["曜日区分"] || "").trim();
     if (!dayType) return true; // 未指定なら平日・土休日を問わず対象
     const isHolidayRow = dayType.includes("土") || dayType.includes("休");
