@@ -1,5 +1,12 @@
 // timetable.js
-// version: 1.5.2
+// version: 1.5.3
+// 1.5.3: 直通運転で複数路線にまたがる運用（例：JR京都線, JR湖西線, JR北陸本線をまたぐ
+//        サンダーバードを1行にまとめて登録した場合）で、京都線内の駅は時刻表に出るのに
+//        湖西線・北陸本線内の駅だけ出てこない不具合を修正。原因は、各駅の方向判定が
+//        「すぐ隣の停車駅」1つだけを見ていたため、隣の駅がちょうど他路線側（駅マスタに
+//        無い駅）だった場合に判定不能になり、その駅がまるごと表から除外されていたこと。
+//        隣1駅だけでなく、この路線の駅マスタ上に見つかる駅が出てくるまで列車の停車順を
+//        前後にたどって方向判定するように変更した
 // 1.5.2: ダイヤ改正前除外（ttFilterLatestRevision）が、路線全体で一番新しい適用開始日を
 //        1つだけ選び、それ以外の運番を丸ごと除外してしまうバグを修正。同じ路線に運番の
 //        違う複数の列車（特急・普通など）が別々の時期に登録されている場合、片方の適用
@@ -357,13 +364,18 @@ async function ttCollectStationEntries(stationName, routeVal) {
         const hm = timeRaw.match(/^(\d{1,2}):(\d{2})$/);
         if (!hm) return;
 
+        // 直通運転で複数路線にまたがる運用の場合、すぐ隣の停車駅がこの路線の駅マスタに
+        // 無い（＝他路線の駅）ことがあるので、隣1駅だけでなく、この路線の駅マスタ上に
+        // 見つかる駅が出てくるまで前後を辿って方向を判定する
         let sign = null;
-        if (idx + 1 < group.length) {
-          sign = ttDirectionSign(routeVal, orderList, stationName, group[idx + 1]["駅名"]);
+        for (let j = idx + 1; j < group.length && sign === null; j++) {
+          sign = ttDirectionSign(routeVal, orderList, stationName, group[j]["駅名"]);
         }
-        if (sign === null && idx - 1 >= 0) {
-          const back = ttDirectionSign(routeVal, orderList, group[idx - 1]["駅名"], stationName);
-          if (back !== null) sign = back;
+        if (sign === null) {
+          for (let j = idx - 1; j >= 0 && sign === null; j--) {
+            const back = ttDirectionSign(routeVal, orderList, group[j]["駅名"], stationName);
+            if (back !== null) sign = back;
+          }
         }
         if (sign === null) return; // どちら向きか判定できない場合は表に出さない
 
