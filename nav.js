@@ -2,7 +2,8 @@
  * nav.js — 共通ヘッダー管理ファイル
  * 新しいページを追加するときは NAV_LINKS だけ編集してください
  *
- * version: 1.6.2
+ * version: 1.6.3
+ * 1.6.3: メニューに「時刻表」（timetable.html）を追加
  * 1.6.2: ヘッダーの「降車駅未回答」から回答しても赤ボタンが消えない不具合を修正。
  *        原因は、スプレッドシート側の時刻（"yyyy-MM-dd HH:mm"、スペース区切り）と
  *        ローカルのdatetime-local由来の時刻（"yyyy-MM-ddTHH:mm"、T区切り）の
@@ -45,6 +46,7 @@ const NAV_LINKS = [
   { href: "statistick.html", icon: "📊", label: "統計情報" },
   { href: "linemap.html",    icon: "🗺", label: "乗車路線マップ確認用" },
   { href: "formation-chart.html", icon: "🚃", label: "編成表" },
+  { href: "timetable.html",  icon: "🕐", label: "時刻表" },
   { href: "stampbook.html",  icon: "🎫", label: "スタンプ帳" },
   { href: "contact.html",    icon: "📩", label: "お知らせ・お問い合わせ" },
   { href: "settings.html",   icon: "⚙️", label: "設定" },

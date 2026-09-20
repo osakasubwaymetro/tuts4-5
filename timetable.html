@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ja">
+<!-- version: 1.0.0 -->
+<!-- 1.0.0: 新規追加。乗車記録とダイヤ情報を組み合わせて、駅・路線・方向を選ぶと
+           時刻表を表示できるページ（駅の掲示時刻表っぽい見た目を目指した） -->
+<head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>時刻表 | tuts4</title>
+<style>
+  body {
+    font-family: "Hiragino Sans", "Segoe UI", sans-serif;
+    background-color: #F7F8FA;
+    margin: 0;
+    color: #222;
+  }
+
+  main {
+    max-width: 720px;
+    margin: 30px auto;
+    padding: 0 16px 60px;
+  }
+
+  h2 {
+    color: #004C97;
+    font-size: 20px;
+    margin: 0 0 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .section-desc {
+    font-size: 13px;
+    color: #888;
+    margin-bottom: 16px;
+  }
+
+  .picker-card {
+    background: white;
+    border-radius: 14px;
+    padding: 18px 20px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    margin-bottom: 20px;
+  }
+
+  .form-row {
+    margin-bottom: 14px;
+  }
+  .form-row:last-child { margin-bottom: 0; }
+
+  .form-row label {
+    display: block;
+    font-size: 12px;
+    font-weight: bold;
+    color: #555;
+    margin-bottom: 4px;
+    letter-spacing: 0.04em;
+  }
+
+  .form-row input,
+  .form-row select {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1.5px solid #ddd;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+    background: #fafafa;
+    transition: border-color 0.2s;
+    box-sizing: border-box;
+  }
+  .form-row input:focus,
+  .form-row select:focus {
+    border-color: #004C97;
+    outline: none;
+    background: white;
+  }
+  .form-row select:disabled,
+  .form-row input:disabled {
+    color: #bbb;
+    background: #f2f2f2;
+  }
+
+  #ttStatus {
+    font-size: 13px;
+    color: #888;
+    text-align: center;
+    padding: 24px 0;
+  }
+  #ttStatus.error { color: #E60012; }
+
+  .tt-block {
+    background: white;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    margin-bottom: 22px;
+  }
+
+  .tt-block-title {
+    background: #004C97;
+    color: white;
+    text-align: center;
+    padding: 10px 12px;
+    font-size: 15px;
+    font-weight: bold;
+    letter-spacing: 0.03em;
+  }
+  .tt-block-title .sub { font-size: 11px; font-weight: normal; opacity: 0.85; display: block; margin-top: 2px; }
+
+  .tt-daytype-header {
+    color: white;
+    text-align: center;
+    padding: 6px 8px;
+    font-size: 13px;
+    font-weight: bold;
+  }
+  .tt-daytype-header.weekday { background: #004C97; }
+  .tt-daytype-header.holiday { background: #E60012; }
+
+  table.tt-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  table.tt-table tr:nth-child(even) td { background: #F5F7FA; }
+  table.tt-table td {
+    padding: 5px 6px;
+    border-bottom: 1px solid #eee;
+    vertical-align: top;
+  }
+  table.tt-table td.tt-hour {
+    width: 34px;
+    text-align: center;
+    font-weight: bold;
+    color: #004C97;
+    background: #EEF4FF !important;
+    font-size: 14px;
+  }
+  table.tt-table td.tt-minutes {
+    line-height: 1.9;
+  }
+  .tt-min {
+    display: inline-block;
+    margin-right: 9px;
+    white-space: nowrap;
+  }
+  .tt-min sup {
+    color: #E60012;
+    font-size: 10px;
+    margin-left: 1px;
+  }
+  .tt-min.extra { color: #888; font-style: italic; }
+
+  .tt-legend {
+    font-size: 12px;
+    color: #666;
+    padding: 10px 14px;
+    border-top: 1px solid #eee;
+    line-height: 1.7;
+  }
+  .tt-legend .mark { color: #E60012; font-weight: bold; }
+
+  .empty-msg {
+    text-align: center;
+    color: #bbb;
+    font-size: 14px;
+    padding: 30px 0;
+  }
+</style>
+</head>
+<body>
+
+<main>
+  <h2>🕐 時刻表</h2>
+  <div class="section-desc">乗車記録とダイヤ情報をもとに、駅ごとの時刻表を表示します。</div>
+
+  <div class="picker-card">
+    <div class="form-row">
+      <label>駅名</label>
+      <input type="text" id="ttStationInput" list="ttStationList" placeholder="駅名を入力・選択" autocomplete="off">
+      <datalist id="ttStationList"></datalist>
+    </div>
+    <div class="form-row">
+      <label>路線</label>
+      <select id="ttRouteSelect" disabled><option value="">まず駅名を選んでください</option></select>
+    </div>
+    <div class="form-row">
+      <label>方向</label>
+      <select id="ttDirSelect" disabled><option value="">まず路線を選んでください</option></select>
+    </div>
+  </div>
+
+  <div id="ttStatus"></div>
+  <div id="ttResult"></div>
+</main>
+
+<script src="nav.js"></script>
+<script>initNav("時刻表");</script>
+<script src="logs.js?v=1.2.1"></script>
+<script>checkLogin();</script>
+<script src="timetable.js?v=1.0.0"></script>
+</body>
+</html>
