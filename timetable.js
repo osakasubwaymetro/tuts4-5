@@ -1,5 +1,9 @@
 // timetable.js
-// version: 1.2.0
+// version: 1.3.0
+// 1.3.0: 路線を選んだ後の「方向」の選択肢を、ダイヤ・乗車記録を全部fetchして中身がある
+//        方向だけ出す方式から、index.htmlの投稿フォーム（現在地からの方面選択）と同じ、
+//        駅マスタの並び順だけを見て即座に組み立てる方式に変更。方向選択がすぐ出るようになった
+//        （実際の時刻データの取得は、方向を選んでからttRenderTimetableで行う）
 // 1.2.0: 種別（普通／急行／快速急行など）が2種類以上ある路線・方向だけ、時刻の左に
 //        小さく種別マークを表示するように対応（1種類しか無い路線では今まで通り非表示）。
 //        一番多い種別を無印、それ以外を短縮マークにして凡例も表示する（行先マークと同じ方式）
@@ -515,29 +519,47 @@ function ttPopulateRouteSelect(stationName) {
   routeSel.disabled = false;
 }
 
-async function ttPopulateDirSelect(stationName, routeVal) {
+// route シートの「環状方向限定」列（片方向のみ運行の環状線）。scripts.jsのgetCircularFixedDirectionと同じ
+function ttGetCircularFixedDirection(routeVal) {
+  const row = ttRouteRow(routeVal);
+  if (!row) return null;
+  const v = String(row["環状方向限定"] || "").trim();
+  if (v.includes("外回り")) return "外回り";
+  if (v.includes("内回り")) return "内回り";
+  return null;
+}
+
+// index.htmlの投稿フォーム（startStationPopupFlow）と同じ考え方で、駅マスタのデータだけを
+// 見て方向の選択肢を即座に組み立てる（ダイヤ・乗車記録のfetchを待たないので高速）
+function ttComputeDirectionOptions(stationName, routeVal) {
+  if (ttIsCircular(routeVal)) {
+    const fixedDir = ttGetCircularFixedDirection(routeVal);
+    if (fixedDir) {
+      // 環状反転を考慮して、指定された方向に対応する実際のsignを求める
+      const sign = ttCircularDirLabel(routeVal, 1) === fixedDir ? 1 : -1;
+      return [{ sign, label: fixedDir }];
+    }
+    return [1, -1].map(sign => ({ sign, label: ttCircularDirLabel(routeVal, sign) }));
+  }
+
+  const order = ttRouteStationOrder(routeVal);
+  const idx = order.indexOf(stationName);
+  if (idx === -1 || order.length < 2) return [];
+
+  const opts = [];
+  if (idx < order.length - 1) opts.push({ sign: 1, label: `${order[order.length - 1]}方面` });
+  if (idx > 0) opts.push({ sign: -1, label: `${order[0]}方面` });
+  return opts;
+}
+
+function ttPopulateDirSelect(stationName, routeVal) {
   const dirSel = document.getElementById("ttDirSelect");
-  dirSel.innerHTML = '<option value="">読み込み中...</option>';
-  dirSel.disabled = true;
   document.getElementById("ttResult").innerHTML = "";
   document.getElementById("ttStatus").textContent = "";
 
-  const allEntries = await ttCollectStationEntries(stationName, routeVal);
-  const opts = [];
-  [1, -1].forEach(sign => {
-    if (!allEntries[sign] || !allEntries[sign].length) return;
-    const label = ttIsCircular(routeVal)
-      ? ttCircularDirLabel(routeVal, sign)
-      : (() => {
-          const order = ttRouteStationOrder(routeVal);
-          const terminal = sign === 1 ? order[order.length - 1] : order[0];
-          return `${terminal || ""}方面`;
-        })();
-    opts.push({ sign, label });
-  });
-
+  const opts = ttComputeDirectionOptions(stationName, routeVal);
   if (!opts.length) {
-    dirSel.innerHTML = '<option value="">ダイヤ登録が見つかりませんでした</option>';
+    dirSel.innerHTML = '<option value="">方向を判定できませんでした</option>';
     dirSel.disabled = true;
     return;
   }
