@@ -1,5 +1,12 @@
 // timetable.js
-// version: 1.0.0
+// version: 1.1.0
+// 1.1.0: 「ダイヤ」登録分だけだとデータが少なすぎるため、全ユーザーの乗車記録（実際に
+//        記録された乗車時刻）もあわせて時刻表に混ぜるように対応。ダイヤと乗車記録で
+//        同じ時刻（分単位）が重複した場合はダイヤ側を優先し、乗車記録側は捨てて重複表示
+//        を防ぐ。乗車記録には未来の平日/土休日区分が無いので、実際の乗車日の曜日・祝日
+//        （holidays-jp API、scripts.jsと同じキャッシュを利用）から都度判定する。
+//        方向判定は、行先がその路線の駅マスタに無い（直通運転で他路線に抜ける）場合、
+//        駅マスタ上のvia_エントリの実位置を使って簡易的に判定するようにした。
 // 1.0.0: 新規追加。乗車記録用の駅・路線マスタと「ダイヤ」スプレッドシートを組み合わせて、
 //        駅を選ぶ→その駅がある路線を選ぶ→方向を選ぶ、で時刻表（平日／土休日）を表示する。
 //        方向は、各運用シート内で同じ列車番号の行を1本の列車の停車順とみなし、選んだ駅の
@@ -9,6 +16,9 @@
 
 const TT_MASTER_BASE = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s";
 const TT_DIAGRAM_SHEET_ID = "1JzY1wIGbj2Z83ItsMnMrz1xQ-cviEv50P0mOHiyi70A";
+// 全ユーザーの乗車記録を返すGAS（nav.jsで既に定義されているものと同じ。nav.jsが先に
+// 読み込まれるので、ここで再宣言せずそのまま使う）
+// -> NAV_RIDES_GAS_URL
 
 let ttStationData = [];
 let ttRouteData = [];
@@ -101,9 +111,81 @@ function ttDiagramRowMatchesRoute(row, routeVal) {
   return String(row["路線"] || "").split(",").map(s => s.trim()).includes(routeVal);
 }
 
+/* ---------- 平日／土日祝の判定（scripts.jsと同じキャッシュを共有） ---------- */
+let _ttHolidaySetPromise = null;
+async function ttGetHolidaySet() {
+  if (_ttHolidaySetPromise) return _ttHolidaySetPromise;
+  _ttHolidaySetPromise = (async () => {
+    const CACHE_KEY = "tuts4_holidays_cache";
+    const ONE_WEEK = 7 * 24 * 60 * 60 * 1000;
+    try {
+      const cached = localStorage.getItem(CACHE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Date.now() - parsed.fetchedAt < ONE_WEEK) return new Set(parsed.dates);
+      }
+    } catch (e) { /* ignore */ }
+    try {
+      const res = await fetch("https://holidays-jp.github.io/api/v1/date.json");
+      const data = await res.json();
+      const dates = Object.keys(data);
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ fetchedAt: Date.now(), dates }));
+      return new Set(dates);
+    } catch (e) {
+      return new Set();
+    }
+  })();
+  return _ttHolidaySetPromise;
+}
+function ttDateKey(d) {
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+// true = 土日祝、false = 平日
+function ttIsHolidayType(d, holidaySet) {
+  const day = d.getDay();
+  if (day === 0 || day === 6) return true;
+  return holidaySet.has(ttDateKey(d));
+}
+function ttIsFlaggedExtra(v) {
+  return ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
+}
+
+/* ---------- 全ユーザーの乗車記録（実際に記録された分）を取得 ---------- */
+async function ttGetAllRides() {
+  const CACHE_KEY = "tuts4_tt_allrides_cache";
+  const TTL = 60 * 60 * 1000; // 1時間
+  try {
+    const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
+    if (cached && Array.isArray(cached.data) && Date.now() - cached.fetchedAt < TTL) return cached.data;
+  } catch (e) { /* ignore */ }
+
+  try {
+    const res = await fetch(NAV_RIDES_GAS_URL);
+    const data = await res.json();
+    if (Array.isArray(data)) {
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data, fetchedAt: Date.now() })); } catch (e) { /* ignore */ }
+      return data;
+    }
+  } catch (e) { /* ignore */ }
+
+  try {
+    const stale = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
+    if (stale && Array.isArray(stale.data)) return stale.data;
+  } catch (e) { /* ignore */ }
+  return [];
+}
+
 /* ---------- 駅マスタ関連ヘルパー ---------- */
 function ttIsViaEntry(name) {
   return typeof name === "string" && name.startsWith("via_");
+}
+function ttViaTargetRoute(name) {
+  return name.slice(4).split("#")[0];
+}
+// via_を除かない、駅マスタ上の生の並び順（直通先の判定に使う）
+function ttRouteRawOrder(routeVal) {
+  return (ttStationData || []).filter(r => r["路線"] === routeVal).map(r => r["駅名"]);
 }
 
 function ttRouteRow(routeVal) {
@@ -154,6 +236,29 @@ function ttDirectionSign(routeVal, orderList, fromName, toName) {
   return fwd <= bwd ? 1 : -1;
 }
 
+// 乗車記録の「行先」から方向を判定する。行先がこの路線の駅マスタに無い場合
+// （直通運転で他路線の駅が行先になっている場合）は、駅マスタ上のvia_エントリのうち、
+// 直通先の路線にその行先駅がある最初のものを「乗り換え地点」とみなし、その生の並び順の
+// 位置で簡易的に方向を判定する（環状線のラップアラウンドは考慮しない簡易版）
+function ttResolveRideDirectionSign(routeVal, orderList, rawOrder, stationName, bound) {
+  if (!bound) return null;
+  const direct = ttDirectionSign(routeVal, orderList, stationName, bound);
+  if (direct !== null) return direct;
+
+  const curRawIdx = rawOrder.indexOf(stationName);
+  if (curRawIdx === -1) return null;
+
+  for (let i = 0; i < rawOrder.length; i++) {
+    if (!ttIsViaEntry(rawOrder[i])) continue;
+    const targetRoute = ttViaTargetRoute(rawOrder[i]);
+    const targetOrder = ttRouteStationOrder(targetRoute);
+    if (targetOrder.indexOf(bound) === -1) continue;
+    if (i === curRawIdx) continue;
+    return i > curRawIdx ? 1 : -1;
+  }
+  return null;
+}
+
 // 環状線用：indexが増える方向(sign=1)が外回りか内回りか
 function ttCircularDirLabel(routeVal, sign) {
   const reversed = ttIsCircularReversed(routeVal);
@@ -171,8 +276,18 @@ async function ttCollectStationEntries(stationName, routeVal) {
   const list = await ttGetDiagramList();
   const matches = list.filter(d => d["会社"] === companyVal && ttDiagramRowMatchesRoute(d, routeVal));
 
-  // entries[sign] = [{ time:"HH:MM", bound, dayType, isExtra }]
+  // entries[sign] = [{ hour, minute, bound, dayType, isExtra, source }]
   const entries = { 1: [], "-1": [] };
+
+  // ダイヤと乗車記録で同じ時刻（分単位）が重複したら、ダイヤ側を優先して片方だけ残す
+  function pushEntry(sign, entry) {
+    const dup = entries[sign].some(e =>
+      e.hour === entry.hour && e.minute === entry.minute &&
+      (e.dayType === "both" || entry.dayType === "both" || e.dayType === entry.dayType)
+    );
+    if (dup) return;
+    entries[sign].push(entry);
+  }
 
   for (const d of matches) {
     const rows = await ttFetchDiagramSheet(d["ID"], d["運番"], d["最終更新"]);
@@ -201,12 +316,31 @@ async function ttCollectStationEntries(stationName, routeVal) {
         const bounds = String(row["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
         const bound = bounds[0] || "";
 
-        entries[sign].push({
-          hour: Number(hm[1]), minute: Number(hm[2]), bound, dayType, isExtra
-        });
+        pushEntry(sign, { hour: Number(hm[1]), minute: Number(hm[2]), bound, dayType, isExtra, source: "diagram" });
       });
     });
   }
+
+  // ここから乗車記録（全ユーザー分）も、ダイヤに無い時刻を補う形で混ぜる
+  const rawOrder = ttRouteRawOrder(routeVal);
+  const [allRides, holidaySet] = await Promise.all([ttGetAllRides(), ttGetHolidaySet()]);
+  allRides.forEach(r => {
+    if (r["路線"] !== routeVal || r["乗車駅"] !== stationName) return;
+    if (companyVal && r["会社"] && r["会社"] !== companyVal) return;
+
+    const timeRaw = String(r["時刻"] || "").trim();
+    const d = new Date(timeRaw.replace(" ", "T"));
+    if (isNaN(d)) return;
+
+    const bound = String(r["行先"] || "").split("/")[0].trim();
+    const sign = ttResolveRideDirectionSign(routeVal, orderList, rawOrder, stationName, bound);
+    if (sign === null) return;
+
+    const dayType = ttIsHolidayType(d, holidaySet) ? "holiday" : "weekday";
+    const isExtra = ttIsFlaggedExtra(r["臨時"]);
+
+    pushEntry(sign, { hour: d.getHours(), minute: d.getMinutes(), bound, dayType, isExtra, source: "ride" });
+  });
 
   return entries;
 }
