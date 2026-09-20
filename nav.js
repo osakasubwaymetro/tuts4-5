@@ -2,7 +2,14 @@
  * nav.js — 共通ヘッダー管理ファイル
  * 新しいページを追加するときは NAV_LINKS だけ編集してください
  *
- * version: 1.6.1
+ * version: 1.6.2
+ * 1.6.2: ヘッダーの「降車駅未回答」から回答しても赤ボタンが消えない不具合を修正。
+ *        原因は、スプレッドシート側の時刻（"yyyy-MM-dd HH:mm"、スペース区切り）と
+ *        ローカルのdatetime-local由来の時刻（"yyyy-MM-ddTHH:mm"、T区切り）の
+ *        文字列表記が異なり、_navVerifyDescentFlagsの一致判定が全部falseになって、
+ *        回答直後に自動生成ロジックがpending_descentを作り直してしまっていたこと。
+ *        show.html側で使われているtimeKeyMatch（文字列一致→ダメならDateとして比較）
+ *        と同じ方式の時刻比較に統一した
  * 1.6.1: メニューに「編成表」（formation-chart.html）を追加
  * 1.6.0: どのページを開いても、乗車・降車データを裏で最新化する仕組みを追加。
  *        最終更新から1時間以上経ってたら自動更新、乗車・降車を記録した時は即時更新
@@ -190,6 +197,16 @@ function _navStripRideTimePrefix(v) {
   return typeof v === "string" && v.indexOf(NAV_RIDE_TIME_PREFIX) === 0 ? v.slice(NAV_RIDE_TIME_PREFIX.length) : v;
 }
 
+// スプシ側の時刻（"yyyy-MM-dd HH:mm"）とローカルのdatetime-local由来の時刻
+// （"yyyy-MM-ddTHH:mm"）は文字列表記が違うだけで同じ時刻を指していることがあるため、
+// 単純な文字列一致がダメならDateとして比較する（show.htmlのtimeKeyMatchと同じ方式）
+function _navTimeKeyMatch(a, b) {
+  if (!a || !b) return false;
+  if (String(a) === String(b)) return true;
+  const da = new Date(a), db = new Date(b);
+  return !isNaN(da) && !isNaN(db) && da.getTime() === db.getTime();
+}
+
 function navMaybeRefreshRideData(force) {
   const uname = localStorage.getItem("username");
   if (!uname) return;
@@ -331,7 +348,7 @@ function _navVerifyDescentFlags() {
     // 既に降車駅が記録されている（別端末で記録済み等）場合だけ消す。
     // 「乗車記録がキャッシュに無いから削除された」という判定は、投稿直後はまだ
     // ローカルキャッシュが更新されておらず誤検知するため行わない
-    const alreadyAnswered = transfers.some(t => String(t["ユーザー名"]) === String(entry.username) && String(t["元の乗車時刻"]) === String(entry.rideTime));
+    const alreadyAnswered = transfers.some(t => String(t["ユーザー名"]) === String(entry.username) && _navTimeKeyMatch(t["元の乗車時刻"], entry.rideTime));
 
     if (alreadyAnswered) {
       localStorage.removeItem(key);
@@ -345,7 +362,7 @@ function _navVerifyDescentFlags() {
     const sorted = [...rides].sort((a, b) => new Date(b["時刻"]) - new Date(a["時刻"]));
     const latest = sorted[0];
     if (latest && latest["時刻"]) {
-      const answered = transfers.some(t => String(t["元の乗車時刻"]) === String(latest["時刻"]));
+      const answered = transfers.some(t => _navTimeKeyMatch(t["元の乗車時刻"], latest["時刻"]));
       if (!answered) {
         localStorage.setItem("tuts4_pending_descent", JSON.stringify({
           username: uname,

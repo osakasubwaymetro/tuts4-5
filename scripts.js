@@ -1,4 +1,9 @@
-// version: 1.32.3
+// version: 1.32.4
+// 1.32.4: ヘッダーの「降車駅未回答」から回答しても赤ボタンが消えない不具合の修正の一環。
+//         submitDescentValue内のローカルキャッシュ照合も、show.htmlのtimeKeyMatchと
+//         同じ方式（文字列一致→ダメならDateとして比較）に統一して、時刻の表記ゆれ
+//         （スプシ側"yyyy-MM-dd HH:mm" / ローカルdatetime-local由来"yyyy-MM-ddTHH:mm"）
+//         で照合に失敗しないようにした（本体の原因はnav.js側、詳細はnav.js参照）
 // 1.32.3: ダイヤ一覧の「路線」列を、「東海道新幹線, 山陽新幹線」のようにカンマ区切りで
 //         複数入れられるように対応（直通運転で同じダイヤを2行に分けなくて済むように）
 //         ダイヤ検索・過去の乗車記録候補の「現在時刻」判定にそれを使うように対応
@@ -2101,6 +2106,16 @@ function openDescentPopup(prev) {
 
 let _submittingDescent = false;
 
+// スプシ側の時刻（"yyyy-MM-dd HH:mm"）とローカルのdatetime-local由来の時刻
+// （"yyyy-MM-ddTHH:mm"）は文字列表記が違うだけで同じ時刻を指していることがあるため、
+// 単純な文字列一致がダメならDateとして比較する（show.htmlのtimeKeyMatchと同じ方式）
+function _timeKeyMatch(a, b) {
+  if (!a || !b) return false;
+  if (String(a) === String(b)) return true;
+  const da = new Date(a), db = new Date(b);
+  return !isNaN(da) && !isNaN(db) && da.getTime() === db.getTime();
+}
+
 async function submitDescentValue(prev, alightStation, tripEnd) {
   if (_submittingDescent) return; // 連打防止
   if (!alightStation) return;
@@ -2131,7 +2146,7 @@ async function submitDescentValue(prev, alightStation, tripEnd) {
     const pendingRaw = localStorage.getItem("tuts4_pending_descent");
     if (pendingRaw) {
       const pending = JSON.parse(pendingRaw);
-      if (pending.username === prev.username && pending.rideTime === prev.rideTime) {
+      if (pending.username === prev.username && _timeKeyMatch(pending.rideTime, prev.rideTime)) {
         localStorage.removeItem("tuts4_pending_descent");
       }
     }
@@ -2142,7 +2157,7 @@ async function submitDescentValue(prev, alightStation, tripEnd) {
   try {
     const TCACHE_KEY = "tuts4_transfers_cache_" + prev.username;
     const cached = JSON.parse(localStorage.getItem(TCACHE_KEY) || "[]");
-    const idx = cached.findIndex(t => String(t["ユーザー名"]) === String(prev.username) && String(t["元の乗車時刻"]) === String(prev.rideTime));
+    const idx = cached.findIndex(t => String(t["ユーザー名"]) === String(prev.username) && _timeKeyMatch(t["元の乗車時刻"], prev.rideTime));
     const newEntry = { "ユーザー名": prev.username, "元の乗車時刻": prev.rideTime, "降車駅": alightStation };
     if (idx !== -1) cached[idx] = newEntry; else cached.push(newEntry);
     localStorage.setItem(TCACHE_KEY, JSON.stringify(cached));
