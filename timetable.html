@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="ja">
-<!-- version: 1.1.1 -->
+<!-- version: 1.2.0 -->
+<!-- 1.2.0: 列車詳細モーダルに種別・行先の表示を追加（幅・フォントサイズも調整）。
+           timetable.jsのバージョンクエリを更新 -->
 <!-- 1.1.1: timetable.jsの更新（乗車記録の改正前除外を既存のroute『ダイヤ改正日』列に
            合わせて修正）にあわせてバージョンクエリを更新 -->
 <!-- 1.1.0: ダイヤ由来の時刻をクリックした時に出す列車詳細モーダルを追加。
@@ -210,7 +212,7 @@
   .tt-modal {
     background: white;
     border-radius: 14px;
-    max-width: 360px;
+    max-width: 440px;
     width: 100%;
     max-height: 80vh;
     display: flex;
@@ -227,6 +229,7 @@
     font-size: 14px;
     font-weight: bold;
   }
+  .tt-modal-header .sub { display: block; font-size: 11px; font-weight: normal; opacity: 0.85; margin-top: 2px; }
   .tt-modal-header button {
     background: none;
     border: none;
@@ -242,18 +245,20 @@
   table.tt-detail-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 13px;
+    font-size: 12px;
   }
   table.tt-detail-table th {
     text-align: left;
     color: #888;
     font-weight: normal;
-    padding: 4px 6px;
+    padding: 4px 5px;
     border-bottom: 2px solid #eee;
+    white-space: nowrap;
   }
   table.tt-detail-table td {
-    padding: 5px 6px;
+    padding: 5px;
     border-bottom: 1px solid #eee;
+    white-space: nowrap;
   }
 </style>
 </head>
@@ -297,6 +302,6 @@
 <script>initNav("時刻表");</script>
 <script src="logs.js?v=1.2.1"></script>
 <script>checkLogin();</script>
-<script src="timetable.js?v=1.4.1"></script>
+<script src="timetable.js?v=1.5.0"></script>
 </body>
 </html>

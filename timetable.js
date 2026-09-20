@@ -1,5 +1,9 @@
 // timetable.js
-// version: 1.4.1
+// version: 1.5.0
+// 1.5.0: 列車詳細モーダルに種別・行先の列を追加。また、終点駅（行先）が運用シート上で
+//        発車時刻の入っていない行になっていて表示されないケースがあったため、停車駅の
+//        絞り込みを「時刻がある行だけ」から「駅名がある行は全部」に変更し、それでも
+//        終点駅の行が運用シートに無い場合は行先データから終点駅を末尾に補うようにした
 // 1.4.1: 乗車記録側の「ダイヤ改正前を除外」を、新しく列を作る案ではなく、routeシートに
 //        既にある「ダイヤ改正日」列（scripts.jsのloadAndShowHistoryPopupで使っているのと
 //        同じ既存の仕組み）を使うように修正。新しい列の追加は不要になった
@@ -363,11 +367,22 @@ async function ttCollectStationEntries(stationName, routeVal) {
         const types = String(row["種別"] || "").split("/").map(s => s.trim()).filter(Boolean);
         const type = types[0] || "";
 
-        // クリックした時に各駅の発車時刻を出せるよう、この列車（同じ列車番号のグループ）の
-        // 停車駅・発車時刻を丸ごと持たせておく
+        // クリックした時に各駅の発車時刻・種別・行先を出せるよう、この列車（同じ列車番号の
+        // グループ）の停車駅を丸ごと持たせておく。終点駅は発車時刻が入っていないことが
+        // 多いので、時刻の有無では絞り込まず駅名があれば全部残す
         const stops = group
-          .map(r2 => ({ station: r2["駅名"], time: String(r2["発車時刻"] || "").trim() }))
-          .filter(s => s.station && /^\d{1,2}:\d{2}$/.test(s.time));
+          .filter(r2 => r2["駅名"])
+          .map(r2 => ({
+            station: r2["駅名"],
+            time: String(r2["発車時刻"] || "").trim(),
+            type: String(r2["種別"] || "").split("/").map(s => s.trim()).filter(Boolean)[0] || "",
+            bound: String(r2["行先"] || "").split("/").map(s => s.trim()).filter(Boolean)[0] || ""
+          }));
+        // 運用シート自体に終点駅の行が無い場合（行先の駅が最後の停車駅として登録されて
+        // いない）は、行先データから終点駅を補って末尾に足す
+        if (bound && (!stops.length || stops[stops.length - 1].station !== bound)) {
+          stops.push({ station: bound, time: "", type: "", bound: "" });
+        }
 
         pushEntry(sign, {
           hour: Number(hm[1]), minute: Number(hm[2]), bound, type, dayType, isExtra, source: "diagram",
@@ -520,16 +535,17 @@ function ttShowTrainDetail(idx) {
   if (!e || !e.stops || !e.stops.length) return;
 
   const rowsHTML = e.stops.map(s =>
-    `<tr><td>${escapeHtmlTT(s.station)}</td><td>${escapeHtmlTT(s.time)}</td></tr>`
+    `<tr><td>${escapeHtmlTT(s.station)}</td><td>${escapeHtmlTT(s.time)}</td><td>${escapeHtmlTT(s.type)}</td><td>${escapeHtmlTT(s.bound ? s.bound + "行き" : "")}</td></tr>`
   ).join("");
 
   const title = [e.unban ? `運番${escapeHtmlTT(e.unban)}` : "", e.trainNumber ? `列車番号${escapeHtmlTT(e.trainNumber)}` : ""]
     .filter(Boolean).join("　");
+  const subtitle = [e.type, e.bound ? `${e.bound}行き` : ""].filter(Boolean).join("　");
 
-  document.getElementById("ttTrainDetailTitle").textContent = title || "列車詳細";
+  document.getElementById("ttTrainDetailTitle").innerHTML = (title || "列車詳細") + (subtitle ? `<span class="sub">${escapeHtmlTT(subtitle)}</span>` : "");
   document.getElementById("ttTrainDetailBody").innerHTML = `
     <table class="tt-detail-table">
-      <tr><th>駅名</th><th>発車時刻</th></tr>
+      <tr><th>駅名</th><th>発車時刻</th><th>種別</th><th>行先</th></tr>
       ${rowsHTML}
     </table>
   `;
