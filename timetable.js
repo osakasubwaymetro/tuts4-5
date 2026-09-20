@@ -1,5 +1,14 @@
 // timetable.js
-// version: 1.3.0
+// version: 1.4.1
+// 1.4.1: 乗車記録側の「ダイヤ改正前を除外」を、新しく列を作る案ではなく、routeシートに
+//        既にある「ダイヤ改正日」列（scripts.jsのloadAndShowHistoryPopupで使っているのと
+//        同じ既存の仕組み）を使うように修正。新しい列の追加は不要になった
+// 1.4.0: ①ダイヤ改正前の古いデータが混ざる問題に対応。ダイヤ一覧に「適用開始日」列を
+//        追加運用する前提で、同じ会社・路線の中で今日時点で有効な一番新しい適用開始日の
+//        運用登録だけを使うようにした（適用開始日が無い行は今まで通り常に使う＝後方互換）。
+//        乗車記録側は、routeシートの「開始日」列より前の乗車記録（改正前に乗った分）を除外。
+//        ②ダイヤから追加された時刻（乗車記録由来は対象外）だけ、クリックするとその列車の
+//        運番・列車番号・各駅の発車時刻一覧をモーダルで表示できるようにした。
 // 1.3.0: 路線を選んだ後の「方向」の選択肢を、ダイヤ・乗車記録を全部fetchして中身がある
 //        方向だけ出す方式から、index.htmlの投稿フォーム（現在地からの方面選択）と同じ、
 //        駅マスタの並び順だけを見て即座に組み立てる方式に変更。方向選択がすぐ出るようになった
@@ -116,6 +125,34 @@ async function ttFetchDiagramSheet(id, unban, listRowLastUpdated) {
 
 function ttDiagramRowMatchesRoute(row, routeVal) {
   return String(row["路線"] || "").split(",").map(s => s.trim()).includes(routeVal);
+}
+
+// ダイヤ一覧の「適用開始日」列を見て、ダイヤ改正前の古い運用登録を除外する。
+// 同じ会社・路線の中で、今日時点で有効（適用開始日 <= 今日）な行のうち、一番新しい
+// 適用開始日を「現行の改正」とみなし、その日付の行だけを残す（＝別の運番は複数残る）。
+// 適用開始日が入っていない行は後方互換のため常に残す（今まで通りの挙動）
+function ttDateOnlyKey(d) {
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+function ttFilterLatestRevision(matches) {
+  const undated = matches.filter(d => !String(d["適用開始日"] || "").trim());
+  const dated = matches.filter(d => String(d["適用開始日"] || "").trim());
+  if (!dated.length) return matches;
+
+  const today = new Date();
+  const parsed = dated
+    .map(d => ({ row: d, date: new Date(String(d["適用開始日"]).trim()) }))
+    .filter(x => !isNaN(x.date) && x.date <= today);
+  if (!parsed.length) return undated;
+
+  const latestKey = parsed.reduce((max, x) => {
+    const k = ttDateOnlyKey(x.date);
+    return !max || x.date > max.date ? { key: k, date: x.date } : max;
+  }, null).key;
+
+  const current = parsed.filter(x => ttDateOnlyKey(x.date) === latestKey).map(x => x.row);
+  return [...current, ...undated];
 }
 
 /* ---------- 平日／土日祝の判定（scripts.jsと同じキャッシュを共有） ---------- */
@@ -281,9 +318,10 @@ async function ttCollectStationEntries(stationName, routeVal) {
   const orderList = ttRouteStationOrder(routeVal);
 
   const list = await ttGetDiagramList();
-  const matches = list.filter(d => d["会社"] === companyVal && ttDiagramRowMatchesRoute(d, routeVal));
+  const rawMatches = list.filter(d => d["会社"] === companyVal && ttDiagramRowMatchesRoute(d, routeVal));
+  const matches = ttFilterLatestRevision(rawMatches);
 
-  // entries[sign] = [{ hour, minute, bound, dayType, isExtra, source }]
+  // entries[sign] = [{ hour, minute, bound, dayType, isExtra, source, unban, trainNumber, stops }]
   const entries = { 1: [], "-1": [] };
 
   // ダイヤと乗車記録で同じ時刻（分単位）が重複したら、ダイヤ側を優先して片方だけ残す
@@ -325,13 +363,27 @@ async function ttCollectStationEntries(stationName, routeVal) {
         const types = String(row["種別"] || "").split("/").map(s => s.trim()).filter(Boolean);
         const type = types[0] || "";
 
-        pushEntry(sign, { hour: Number(hm[1]), minute: Number(hm[2]), bound, type, dayType, isExtra, source: "diagram" });
+        // クリックした時に各駅の発車時刻を出せるよう、この列車（同じ列車番号のグループ）の
+        // 停車駅・発車時刻を丸ごと持たせておく
+        const stops = group
+          .map(r2 => ({ station: r2["駅名"], time: String(r2["発車時刻"] || "").trim() }))
+          .filter(s => s.station && /^\d{1,2}:\d{2}$/.test(s.time));
+
+        pushEntry(sign, {
+          hour: Number(hm[1]), minute: Number(hm[2]), bound, type, dayType, isExtra, source: "diagram",
+          unban: d["運番"] || "", trainNumber: row["列車番号"] || "", stops
+        });
       });
     });
   }
 
-  // ここから乗車記録（全ユーザー分）も、ダイヤに無い時刻を補う形で混ぜる
+  // ここから乗車記録（全ユーザー分）も、ダイヤに無い時刻を補う形で混ぜる。
+  // scripts.js（loadAndShowHistoryPopup）と同じ「route シートの『ダイヤ改正日』より前の
+  // 記録は除外する」既存の仕組みをそのまま使う（新規の列は追加しない）
   const rawOrder = ttRouteRawOrder(routeVal);
+  const revisionRaw = routeRow ? routeRow["ダイヤ改正日"] : "";
+  const revisionDate = revisionRaw ? new Date(revisionRaw) : null;
+  const hasValidRevisionDate = revisionDate && !isNaN(revisionDate);
   const [allRides, holidaySet] = await Promise.all([ttGetAllRides(), ttGetHolidaySet()]);
   allRides.forEach(r => {
     if (r["路線"] !== routeVal || r["乗車駅"] !== stationName) return;
@@ -340,6 +392,7 @@ async function ttCollectStationEntries(stationName, routeVal) {
     const timeRaw = String(r["時刻"] || "").trim();
     const d = new Date(timeRaw.replace(" ", "T"));
     if (isNaN(d)) return;
+    if (hasValidRevisionDate && d < revisionDate) return; // ダイヤ改正日より前の記録は除外（scripts.jsと同じ判定）
 
     const bound = String(r["行先"] || "").split("/")[0].trim();
     const sign = ttResolveRideDirectionSign(routeVal, orderList, rawOrder, stationName, bound);
@@ -418,11 +471,19 @@ function ttRenderDaytypeTable(entries, marks, typeMarks, cssClass, label) {
     const mins = byHour[h].slice().sort((a, b) => a.minute - b.minute);
     const minsHTML = mins.map(e => {
       const mark = e.bound ? (marks[e.bound] || "") : "";
-      const cls = "tt-min" + (e.isExtra ? " extra" : "");
       const sup = mark ? `<sup>${mark}</sup>` : "";
       const typeMark = typeMarks && e.type ? (typeMarks[e.type] || "") : "";
       const typeTag = typeMark ? `<span class="tt-type-tag">${escapeHtmlTT(typeMark)}</span>` : "";
-      return `<span class="${cls}">${typeTag}${String(e.minute).padStart(2, "0")}${sup}</span>`;
+
+      // ダイヤから追加されたものに限り、クリックで各駅の発車時刻・運番・列車番号を見れるようにする
+      let cls = "tt-min" + (e.isExtra ? " extra" : "");
+      let clickAttr = "";
+      if (e.source === "diagram") {
+        cls += " clickable";
+        const idx = ttTrainDetailRegistry.push(e) - 1;
+        clickAttr = ` data-tt-idx="${idx}" onclick="ttShowTrainDetail(${idx})"`;
+      }
+      return `<span class="${cls}"${clickAttr}>${typeTag}${String(e.minute).padStart(2, "0")}${sup}</span>`;
     }).join("");
     rowsHTML += `<tr><td class="tt-hour">${h}</td><td class="tt-minutes">${minsHTML}</td></tr>`;
   });
@@ -451,12 +512,40 @@ function escapeHtmlTT(s) {
   return String(s || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+// ダイヤ由来のマスに割り振ったクリック用の番号→エントリの対応表（描画のたびにリセットする）
+let ttTrainDetailRegistry = [];
+
+function ttShowTrainDetail(idx) {
+  const e = ttTrainDetailRegistry[idx];
+  if (!e || !e.stops || !e.stops.length) return;
+
+  const rowsHTML = e.stops.map(s =>
+    `<tr><td>${escapeHtmlTT(s.station)}</td><td>${escapeHtmlTT(s.time)}</td></tr>`
+  ).join("");
+
+  const title = [e.unban ? `運番${escapeHtmlTT(e.unban)}` : "", e.trainNumber ? `列車番号${escapeHtmlTT(e.trainNumber)}` : ""]
+    .filter(Boolean).join("　");
+
+  document.getElementById("ttTrainDetailTitle").textContent = title || "列車詳細";
+  document.getElementById("ttTrainDetailBody").innerHTML = `
+    <table class="tt-detail-table">
+      <tr><th>駅名</th><th>発車時刻</th></tr>
+      ${rowsHTML}
+    </table>
+  `;
+  document.getElementById("ttTrainDetailOverlay").classList.add("show");
+}
+function ttCloseTrainDetail() {
+  document.getElementById("ttTrainDetailOverlay").classList.remove("show");
+}
+
 async function ttRenderTimetable(stationName, routeVal, sign) {
   const statusEl = document.getElementById("ttStatus");
   const resultEl = document.getElementById("ttResult");
   resultEl.innerHTML = "";
   statusEl.classList.remove("error");
   statusEl.textContent = "読み込み中...";
+  ttTrainDetailRegistry = [];
 
   try {
     const allEntries = await ttCollectStationEntries(stationName, routeVal);
