@@ -1,5 +1,7 @@
 // timetable.js
-// version: 1.5.0
+// version: 1.5.1
+// 1.5.1: 種別・行先はどの駅の行でも同じ値になりがちで冗長なので、各駅の行からは外して
+//        タイトル下のサブタイトル（種別・行先）だけに戻した（表自体は駅名・発車時刻のみ）
 // 1.5.0: 列車詳細モーダルに種別・行先の列を追加。また、終点駅（行先）が運用シート上で
 //        発車時刻の入っていない行になっていて表示されないケースがあったため、停車駅の
 //        絞り込みを「時刻がある行だけ」から「駅名がある行は全部」に変更し、それでも
@@ -535,7 +537,7 @@ function ttShowTrainDetail(idx) {
   if (!e || !e.stops || !e.stops.length) return;
 
   const rowsHTML = e.stops.map(s =>
-    `<tr><td>${escapeHtmlTT(s.station)}</td><td>${escapeHtmlTT(s.time)}</td><td>${escapeHtmlTT(s.type)}</td><td>${escapeHtmlTT(s.bound ? s.bound + "行き" : "")}</td></tr>`
+    `<tr><td>${escapeHtmlTT(s.station)}</td><td>${escapeHtmlTT(s.time)}</td></tr>`
   ).join("");
 
   const title = [e.unban ? `運番${escapeHtmlTT(e.unban)}` : "", e.trainNumber ? `列車番号${escapeHtmlTT(e.trainNumber)}` : ""]
@@ -545,7 +547,7 @@ function ttShowTrainDetail(idx) {
   document.getElementById("ttTrainDetailTitle").innerHTML = (title || "列車詳細") + (subtitle ? `<span class="sub">${escapeHtmlTT(subtitle)}</span>` : "");
   document.getElementById("ttTrainDetailBody").innerHTML = `
     <table class="tt-detail-table">
-      <tr><th>駅名</th><th>発車時刻</th><th>種別</th><th>行先</th></tr>
+      <tr><th>駅名</th><th>発車時刻</th></tr>
       ${rowsHTML}
     </table>
   `;
