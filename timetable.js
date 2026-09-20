@@ -1,5 +1,11 @@
 // timetable.js
-// version: 1.5.1
+// version: 1.5.2
+// 1.5.2: ダイヤ改正前除外（ttFilterLatestRevision）が、路線全体で一番新しい適用開始日を
+//        1つだけ選び、それ以外の運番を丸ごと除外してしまうバグを修正。同じ路線に運番の
+//        違う複数の列車（特急・普通など）が別々の時期に登録されている場合、片方の適用
+//        開始日が新しいだけでもう片方が巻き添えで消えてしまっていた（湖西線・北陸本線の
+//        駅で時刻表に出てこない不具合の原因）。「ID＋運番」ごとに独立して最新版だけを
+//        残す方式に変更した
 // 1.5.1: 種別・行先はどの駅の行でも同じ値になりがちで冗長なので、各駅の行からは外して
 //        タイトル下のサブタイトル（種別・行先）だけに戻した（表自体は駅名・発車時刻のみ）
 // 1.5.0: 列車詳細モーダルに種別・行先の列を追加。また、終点駅（行先）が運用シート上で
@@ -134,31 +140,28 @@ function ttDiagramRowMatchesRoute(row, routeVal) {
 }
 
 // ダイヤ一覧の「適用開始日」列を見て、ダイヤ改正前の古い運用登録を除外する。
-// 同じ会社・路線の中で、今日時点で有効（適用開始日 <= 今日）な行のうち、一番新しい
-// 適用開始日を「現行の改正」とみなし、その日付の行だけを残す（＝別の運番は複数残る）。
-// 適用開始日が入っていない行は後方互換のため常に残す（今まで通りの挙動）
-function ttDateOnlyKey(d) {
-  const pad = n => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
+// 同じ「ID＋運番」（＝同じ列車の登録）の中で、今日時点で有効（適用開始日 <= 今日）な
+// 一番新しい適用開始日の行だけを残す。路線全体で1つの日付に絞るわけではないので、
+// 同じ路線に運番の違う複数の列車（例: 特急と普通）がそれぞれ別の時期に登録されていても、
+// お互いに巻き込まれて消えたりしない。適用開始日が無い行・未来日しか無い運番は
+// 後方互換のため常に残す（今まで通りの挙動）
 function ttFilterLatestRevision(matches) {
-  const undated = matches.filter(d => !String(d["適用開始日"] || "").trim());
-  const dated = matches.filter(d => String(d["適用開始日"] || "").trim());
-  if (!dated.length) return matches;
-
   const today = new Date();
-  const parsed = dated
-    .map(d => ({ row: d, date: new Date(String(d["適用開始日"]).trim()) }))
-    .filter(x => !isNaN(x.date) && x.date <= today);
-  if (!parsed.length) return undated;
+  const groups = {}; // key: "ID_運番" -> 選ばれた行（今のところ一番新しい適用開始日）
+  const passthrough = []; // 適用開始日が無い、または有効な日付が1つも無い行
 
-  const latestKey = parsed.reduce((max, x) => {
-    const k = ttDateOnlyKey(x.date);
-    return !max || x.date > max.date ? { key: k, date: x.date } : max;
-  }, null).key;
+  matches.forEach(d => {
+    const key = `${d["ID"] || ""}_${d["運番"] || ""}`;
+    const raw = String(d["適用開始日"] || "").trim();
+    if (!raw) { passthrough.push(d); return; }
 
-  const current = parsed.filter(x => ttDateOnlyKey(x.date) === latestKey).map(x => x.row);
-  return [...current, ...undated];
+    const date = new Date(raw);
+    if (isNaN(date) || date > today) return; // 不正な日付・まだ来ていない未来の改正は対象外
+
+    if (!groups[key] || date > groups[key].date) groups[key] = { row: d, date };
+  });
+
+  return [...Object.values(groups).map(g => g.row), ...passthrough];
 }
 
 /* ---------- 平日／土日祝の判定（scripts.jsと同じキャッシュを共有） ---------- */
