@@ -1,5 +1,8 @@
 // timetable.js
-// version: 1.1.0
+// version: 1.2.0
+// 1.2.0: 種別（普通／急行／快速急行など）が2種類以上ある路線・方向だけ、時刻の左に
+//        小さく種別マークを表示するように対応（1種類しか無い路線では今まで通り非表示）。
+//        一番多い種別を無印、それ以外を短縮マークにして凡例も表示する（行先マークと同じ方式）
 // 1.1.0: 「ダイヤ」登録分だけだとデータが少なすぎるため、全ユーザーの乗車記録（実際に
 //        記録された乗車時刻）もあわせて時刻表に混ぜるように対応。ダイヤと乗車記録で
 //        同じ時刻（分単位）が重複した場合はダイヤ側を優先し、乗車記録側は捨てて重複表示
@@ -315,8 +318,10 @@ async function ttCollectStationEntries(stationName, routeVal) {
 
         const bounds = String(row["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
         const bound = bounds[0] || "";
+        const types = String(row["種別"] || "").split("/").map(s => s.trim()).filter(Boolean);
+        const type = types[0] || "";
 
-        pushEntry(sign, { hour: Number(hm[1]), minute: Number(hm[2]), bound, dayType, isExtra, source: "diagram" });
+        pushEntry(sign, { hour: Number(hm[1]), minute: Number(hm[2]), bound, type, dayType, isExtra, source: "diagram" });
       });
     });
   }
@@ -336,10 +341,11 @@ async function ttCollectStationEntries(stationName, routeVal) {
     const sign = ttResolveRideDirectionSign(routeVal, orderList, rawOrder, stationName, bound);
     if (sign === null) return;
 
+    const type = String(r["種別"] || "").split("/")[0].trim();
     const dayType = ttIsHolidayType(d, holidaySet) ? "holiday" : "weekday";
     const isExtra = ttIsFlaggedExtra(r["臨時"]);
 
-    pushEntry(sign, { hour: d.getHours(), minute: d.getMinutes(), bound, dayType, isExtra, source: "ride" });
+    pushEntry(sign, { hour: d.getHours(), minute: d.getMinutes(), bound, type, dayType, isExtra, source: "ride" });
   });
 
   return entries;
@@ -363,8 +369,29 @@ function ttAssignMarks(entries) {
   return marks;
 }
 
+// 種別が2種類以上ある路線だけ、種別マークを表示する（1種類しか無ければ null を返し、非表示にする）
+function ttAssignTypeMarks(entries) {
+  const counts = {};
+  entries.forEach(e => { if (e.type) counts[e.type] = (counts[e.type] || 0) + 1; });
+  const keys = Object.keys(counts);
+  if (keys.length <= 1) return null;
+
+  const sorted = keys.sort((a, b) => counts[b] - counts[a]);
+  const marks = {};
+  const used = new Set([""]);
+  sorted.forEach((t, idx) => {
+    if (idx === 0) { marks[t] = ""; return; } // 一番多い種別（だいたい普通）は無印
+    let n = 1, m = t.slice(0, n);
+    while (used.has(m) && n < t.length) { n++; m = t.slice(0, n); }
+    if (used.has(m)) m = t;
+    used.add(m);
+    marks[t] = m;
+  });
+  return marks;
+}
+
 /* ---------- 時刻表描画 ---------- */
-function ttRenderDaytypeTable(entries, marks, cssClass, label) {
+function ttRenderDaytypeTable(entries, marks, typeMarks, cssClass, label) {
   if (!entries.length) {
     return `<div class="tt-daytype-header ${cssClass}">${label}</div><div class="empty-msg">この方向・区分のダイヤ登録がありません</div>`;
   }
@@ -389,7 +416,9 @@ function ttRenderDaytypeTable(entries, marks, cssClass, label) {
       const mark = e.bound ? (marks[e.bound] || "") : "";
       const cls = "tt-min" + (e.isExtra ? " extra" : "");
       const sup = mark ? `<sup>${mark}</sup>` : "";
-      return `<span class="${cls}">${String(e.minute).padStart(2, "0")}${sup}</span>`;
+      const typeMark = typeMarks && e.type ? (typeMarks[e.type] || "") : "";
+      const typeTag = typeMark ? `<span class="tt-type-tag">${escapeHtmlTT(typeMark)}</span>` : "";
+      return `<span class="${cls}">${typeTag}${String(e.minute).padStart(2, "0")}${sup}</span>`;
     }).join("");
     rowsHTML += `<tr><td class="tt-hour">${h}</td><td class="tt-minutes">${minsHTML}</td></tr>`;
   });
@@ -401,7 +430,17 @@ function ttRenderDaytypeTable(entries, marks, cssClass, label) {
   legendItems.forEach(([b, m]) => legendParts.push(`<span class="mark">${escapeHtmlTT(m)}</span>: ${escapeHtmlTT(b)}行き`));
   const legendHTML = legendParts.length ? `<div class="tt-legend">${legendParts.join("　")}</div>` : "";
 
-  return `<div class="tt-daytype-header ${cssClass}">${label}</div><table class="tt-table">${rowsHTML}</table>${legendHTML}`;
+  let typeLegendHTML = "";
+  if (typeMarks) {
+    const primaryType = Object.keys(typeMarks).find(t => !typeMarks[t]);
+    const typeLegendItems = Object.entries(typeMarks).filter(([, m]) => m);
+    const parts = [];
+    if (primaryType) parts.push(`無印: ${escapeHtmlTT(primaryType)}`);
+    typeLegendItems.forEach(([t, m]) => parts.push(`<span class="tt-type-tag">${escapeHtmlTT(m)}</span>: ${escapeHtmlTT(t)}`));
+    if (parts.length) typeLegendHTML = `<div class="tt-legend">${parts.join("　")}</div>`;
+  }
+
+  return `<div class="tt-daytype-header ${cssClass}">${label}</div><table class="tt-table">${rowsHTML}</table>${typeLegendHTML}${legendHTML}`;
 }
 
 function escapeHtmlTT(s) {
@@ -425,6 +464,7 @@ async function ttRenderTimetable(stationName, routeVal, sign) {
     }
 
     const marks = ttAssignMarks(entries);
+    const typeMarks = ttAssignTypeMarks(entries);
     const weekday = entries.filter(e => e.dayType === "weekday" || e.dayType === "both");
     const holiday = entries.filter(e => e.dayType === "holiday" || e.dayType === "both");
 
@@ -440,8 +480,8 @@ async function ttRenderTimetable(stationName, routeVal, sign) {
     resultEl.innerHTML = `
       <div class="tt-block">
         <div class="tt-block-title">${escapeHtmlTT(stationName)}（${escapeHtmlTT(routeVal)}）<span class="sub">${escapeHtmlTT(dirLabel)}</span></div>
-        ${ttRenderDaytypeTable(weekday, marks, "weekday", "平日 Weekdays")}
-        ${ttRenderDaytypeTable(holiday, marks, "holiday", "土曜・休日 Saturdays/Sundays/Holidays")}
+        ${ttRenderDaytypeTable(weekday, marks, typeMarks, "weekday", "平日 Weekdays")}
+        ${ttRenderDaytypeTable(holiday, marks, typeMarks, "holiday", "土曜・休日 Saturdays/Sundays/Holidays")}
       </div>
     `;
   } catch (e) {
