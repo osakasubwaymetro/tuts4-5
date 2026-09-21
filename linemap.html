@@ -7,7 +7,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.9.2 -->
+<!-- version: 1.9.3 -->
+<!-- 1.9.3: 並走経由の「乗車扱い」が、並走路線の「直接乗った区間」までしか見ておらず、
+           その並走路線自身がさらに別路線との並走経由で乗車扱いになった分は伝播していな
+           かったバグを修正（例: 4系統で南富山～エスタ前を直接乗った場合、1系統はその
+           区間まるごと並走経由で乗車扱いになるはずだが、1系統と並走している2系統には
+           そこから先の乗車扱いが伝わっていなかった）。全路線の乗車扱い区間をまとめて、
+           変化が無くなるまで繰り返し伝播させる方式に変更した -->
 <!-- 1.9.2: 並走情報を「その路線自身の並走列」だけでなく、並走先の路線がさらに別路線と
            並走している場合も辿って推移的に求めるように修正。例えば6系統が3系統全体と
            並走している場合、3系統自身が富山駅～丸の内で2系統と、中町～電鉄富山駅・
@@ -877,26 +883,57 @@ function computeParallelInfo(routeName) {
   });
   return { stationsOnRoute: direct.stationsOnRoute, activeParallelByIndex, startedAtIndex };
 }
-// 並走してる区間は、片方の路線で乗車済みならもう片方も乗車扱いにした「実質の乗車区間」を返す
-function getEffectiveRiddenSet(routeName, segmentsByRoute) {
-  const riddenSegments = new Set(segmentsByRoute[routeName] || []);
-  const { stationsOnRoute, activeParallelByIndex } = computeParallelInfo(routeName);
+// 並走してる区間は、片方の路線で乗車済みならもう片方も乗車扱いにした「実質の乗車区間」を返す。
+// この「乗車扱い」自体も、さらに別路線と並走していれば連鎖的に伝播させる（例: 4系統で
+// 南富山～エスタ前を直接乗った場合、1系統はその区間まるごと並走経由で乗車扱いになり、
+// 1系統が南富山～富山駅で2系統とも並走しているなら、2系統もその範囲は実際に乗っていなくても
+// 乗車扱いになる）。全路線をまとめて、変化が無くなるまで繰り返し伝播させる固定点計算にする
+let _effectiveRiddenCacheFor = null;
+let _effectiveRiddenCache = null;
+function computeAllEffectiveRiddenSets(segmentsByRoute) {
+  const routeNames = [...new Set(allstationData.map(r => r["路線"]))];
+  const routeInfo = {};
+  const effective = {};
+  routeNames.forEach(rt => {
+    routeInfo[rt] = computeParallelInfo(rt);
+    effective[rt] = new Set(segmentsByRoute[rt] || []);
+  });
 
   function parallelSegmentRidden(parallelRoute, stationA, stationB) {
-    const segs = segmentsByRoute[parallelRoute];
-    if (!segs || !segs.size) return false;
-    const pStations = allstationData.filter(r => r["路線"] === parallelRoute && !isViaEntry(r["駅名"])).map(r => r["駅名"]);
-    const a = pStations.indexOf(stationA), b = pStations.indexOf(stationB);
+    const eff = effective[parallelRoute];
+    if (!eff || !eff.size) return false;
+    const info = routeInfo[parallelRoute];
+    if (!info) return false;
+    const a = info.stationsOnRoute.indexOf(stationA), b = info.stationsOnRoute.indexOf(stationB);
     if (a === -1 || b === -1) return false;
-    return segs.has(Math.min(a, b));
+    return eff.has(Math.min(a, b));
   }
-  for (let i = 0; i < stationsOnRoute.length - 1; i++) {
-    if (riddenSegments.has(i)) continue;
-    const stA = stationsOnRoute[i], stB = stationsOnRoute[i + 1];
-    const parallelHere = (activeParallelByIndex[i] || []).filter(rt => (activeParallelByIndex[i + 1] || []).includes(rt));
-    if (parallelHere.some(rt => parallelSegmentRidden(rt, stA, stB))) riddenSegments.add(i);
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    routeNames.forEach(routeName => {
+      const { stationsOnRoute, activeParallelByIndex } = routeInfo[routeName];
+      const riddenSegments = effective[routeName];
+      for (let i = 0; i < stationsOnRoute.length - 1; i++) {
+        if (riddenSegments.has(i)) continue;
+        const stA = stationsOnRoute[i], stB = stationsOnRoute[i + 1];
+        const parallelHere = (activeParallelByIndex[i] || []).filter(rt => (activeParallelByIndex[i + 1] || []).includes(rt));
+        if (parallelHere.some(rt => parallelSegmentRidden(rt, stA, stB))) {
+          riddenSegments.add(i);
+          changed = true;
+        }
+      }
+    });
   }
-  return riddenSegments;
+  return effective;
+}
+function getEffectiveRiddenSet(routeName, segmentsByRoute) {
+  if (_effectiveRiddenCacheFor !== segmentsByRoute) {
+    _effectiveRiddenCache = computeAllEffectiveRiddenSets(segmentsByRoute);
+    _effectiveRiddenCacheFor = segmentsByRoute;
+  }
+  return _effectiveRiddenCache[routeName] || new Set();
 }
 
 function routeTotalSegments(routeName) {
