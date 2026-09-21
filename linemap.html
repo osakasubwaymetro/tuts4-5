@@ -7,7 +7,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.9.1 -->
+<!-- version: 1.9.2 -->
+<!-- 1.9.2: 並走情報を「その路線自身の並走列」だけでなく、並走先の路線がさらに別路線と
+           並走している場合も辿って推移的に求めるように修正。例えば6系統が3系統全体と
+           並走している場合、3系統自身が富山駅～丸の内で2系統と、中町～電鉄富山駅・
+           エスタ前で1系統と並走しているなら、6系統もその区間ではそれぞれ2系統・1系統
+           とも並走扱いになる（今までは6系統からは3系統としか繋がりが分からず、地図の
+           並走ライン表示にも乗車率の相互乗車扱いにも反映されていなかった） -->
 <!-- 1.9.1: 並走区間の「片方乗車済みならもう片方も乗車扱い」ロジックが、地図表示にしか
            反映されておらず、会社・路線ピッカーの乗車率には反映されていなかったバグを修正。
            共通関数化して両方に適用されるように -->
@@ -357,6 +363,7 @@ fetchCachedMasterData("country", BASE + "country", data => { allCountryData = da
 fetchCachedMasterData("route", BASE + "route", data => { allrouteData = data; rebuildAllSelects(); });
 fetchCachedMasterData("station", BASE + "station", data => {
   allstationData = data;
+  for (const k in _parallelDirectInfoCache) delete _parallelDirectInfoCache[k]; // 並走情報の直接分キャッシュも破棄
   if (document.getElementById("mapRoute").value) renderMap();
 });
 
@@ -817,8 +824,10 @@ function parseParallelCell(raw) {
   });
   return { start, end };
 }
-// その路線の並走区間情報（駅ごとにアクティブな並走路線・その駅で開始したか）を計算する
-function computeParallelInfo(routeName) {
+// その路線自身の「並走」列だけを見て、駅ごとにアクティブな並走路線を求める（直接分のみ）
+const _parallelDirectInfoCache = {};
+function computeParallelInfoDirect(routeName) {
+  if (_parallelDirectInfoCache[routeName]) return _parallelDirectInfoCache[routeName];
   const routeRows = allstationData.filter(r => r["路線"] === routeName && !isViaEntry(r["駅名"]));
   const activeParallelByIndex = [];
   const startedAtIndex = [];
@@ -826,11 +835,47 @@ function computeParallelInfo(routeName) {
   routeRows.forEach((r, i) => {
     const { start, end } = parseParallelCell(r["並走"]);
     start.forEach(s => activeParallel.add(s));
-    activeParallelByIndex[i] = [...activeParallel];
+    activeParallelByIndex[i] = new Set(activeParallel);
     startedAtIndex[i] = start;
     end.forEach(s => activeParallel.delete(s));
   });
-  return { stationsOnRoute: routeRows.map(r => r["駅名"]), activeParallelByIndex, startedAtIndex };
+  const info = { stationsOnRoute: routeRows.map(r => r["駅名"]), activeParallelByIndex, startedAtIndex };
+  _parallelDirectInfoCache[routeName] = info;
+  return info;
+}
+// 駅名で、その路線の「直接」並走情報から、その駅（同名で最初に一致する箇所）でアクティブな
+// 並走路線の集合を返す
+function directActiveParallelAtStation(routeName, stationName) {
+  const info = computeParallelInfoDirect(routeName);
+  const idx = info.stationsOnRoute.indexOf(stationName);
+  if (idx === -1) return new Set();
+  return info.activeParallelByIndex[idx] || new Set();
+}
+// 「A路線がB路線と並走」「同じ駅でB路線はC路線とも並走」なら、A路線もその駅では実質
+// C路線とも並走している（例: 6系統が3系統と並走、3系統はその区間で1系統や2系統とも
+// 並走している場合、6系統も1系統・2系統と並走扱いにする）。駅名を手がかりに、並走先の
+// 並走情報を再帰的に辿って推移的に閉包を求める
+function transitiveParallelAtStation(routeName, stationName, visited) {
+  visited = visited || new Set([routeName]);
+  const result = new Set();
+  directActiveParallelAtStation(routeName, stationName).forEach(rt => {
+    if (visited.has(rt)) return;
+    result.add(rt);
+    visited.add(rt);
+    transitiveParallelAtStation(rt, stationName, visited).forEach(n => result.add(n));
+  });
+  return result;
+}
+// その路線の並走区間情報（駅ごとにアクティブな並走路線・その駅で新たに始まったか）を、
+// 並走先がさらに他路線と並走しているケースも含めて（推移的に）計算する
+function computeParallelInfo(routeName) {
+  const direct = computeParallelInfoDirect(routeName);
+  const activeParallelByIndex = direct.stationsOnRoute.map(stName => [...transitiveParallelAtStation(routeName, stName)]);
+  const startedAtIndex = activeParallelByIndex.map((set, i) => {
+    const prev = i > 0 ? activeParallelByIndex[i - 1] : [];
+    return set.filter(rt => !prev.includes(rt));
+  });
+  return { stationsOnRoute: direct.stationsOnRoute, activeParallelByIndex, startedAtIndex };
 }
 // 並走してる区間は、片方の路線で乗車済みならもう片方も乗車扱いにした「実質の乗車区間」を返す
 function getEffectiveRiddenSet(routeName, segmentsByRoute) {
