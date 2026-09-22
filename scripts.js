@@ -1,4 +1,21 @@
-// version: 1.32.4
+// version: 1.32.6
+// 1.32.6: 最寄り駅検索の路線判定を強化。①路線名の一致（表記ゆれ吸収）だけでなく、
+//         HeartRails側の隣駅（前後どちらか片方向だけでもOK）がマスタ側の並び順と
+//         一致すれば、路線名が全然違っても物理的に同じ路線だと確信ありで判定できる
+//         ようにした（getMasterNeighborStationsで駅マスタ上の前後の実駅を求め、
+//         HeartRailsのprev/nextと照合）。②駅名の表記ゆれ対応を、小さい仮名⇔大きい
+//         仮名だけでなく、新設のstationaliasシート（正式名称・通称）による別表記
+//         （例:「難波」⇔「なんば」）にも対応（normalizeStationNameVariants /
+//         isStationNameMatch）。★運営側の対応: スプレッドシートにstationaliasという
+//         名前のシートを新規作成し、A列に「正式名称」、B列に「通称」の見出しを付けて、
+//         マスタ側と別表記になっている駅の組を1行ずつ登録してください（同じ正式名称に
+//         複数の通称を登録してもOK。1行目は見出し行）
+// 1.32.5: 最寄り駅検索（findNearbyStationsFromPosition）で、同じ駅名が「路線名[区間]」の
+//         ように区間ごとに複数行登録されている場合（例: 上越妙高駅の
+//         「北陸新幹線[東京-上越妙高]」「北陸新幹線[上越妙高-敦賀]」）、HeartRails側の
+//         区間なしの路線名にマッチする自分側の行をfindで最初の1件しか拾っておらず、
+//         片方の区間しか候補に出てこなかったバグを修正。マッチする行を全部拾って
+//         候補に出すように変更した（1.28.9でlinealias側に入れたのと同種の修正）
 // 1.32.4: ヘッダーの「降車駅未回答」から回答しても赤ボタンが消えない不具合の修正の一環。
 //         submitDescentValue内のローカルキャッシュ照合も、show.htmlのtimeKeyMatchと
 //         同じ方式（文字列一致→ダメならDateとして比較）に統一して、時刻の表記ゆれ
@@ -75,6 +92,7 @@ let allnumberData = [];
 let allRemarkData = [];
 let lineAliasData = []; // 路線名の正式名称⇄通称対応表（linealiasシート）
 let linePrefixData = []; // 路線名の接頭辞（会社名部分）対応表（lineprefixシート）。例: 大阪→大阪メトロ
+let stationAliasData = []; // 駅名の正式名称⇄通称対応表（stationaliasシート）。例: 難波⇄なんば
 document.getElementById("username").value = localStorage.getItem("username");
 
 // マスタデータ用の共通キャッシュ読み込み関数。
@@ -715,6 +733,16 @@ fetchCachedMasterData("lineprefix", "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6
     .filter(r => r.officialPrefix && r.aliasPrefix);
 });
 
+// 駅名の正式名称⇄通称の対応表（stationaliasシート：正式名称・通称）。
+// 例: マスタ側は「難波」だがHeartRails側は「なんば」で返ってくる、のような
+// 漢字⇔かな等の表記ゆれ（KANA_SIZE_VARIANTSでは吸収できない別物の表記）に対応する。
+// linealiasと同じ形式（1つの正式名称に複数の通称を登録してもOK）
+fetchCachedMasterData("stationalias", "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/stationalias", data => {
+  stationAliasData = data
+    .map(row => ({ official: row["正式名称"] || "", alias: row["通称"] || "" }))
+    .filter(r => r.official && r.alias);
+});
+
 // 1つの路線名から、あり得る正規化候補を複数作る（接頭辞を置き換えた版・置き換えない版の両方）。
 // どちらか一方だけを正解と決め打ちすると、置き換えが逆に邪魔をするケース
 // （例:「大阪環状線」を「大阪メトロ環状線」にしてしまい、本来の「JR大阪環状線」と
@@ -780,6 +808,45 @@ function normalizeKanaSize(name) {
   return s;
 }
 
+// 駅名から、あり得る表記候補を複数作る（stationaliasシートの正式名称⇄通称の置き換え＋
+// 小さい仮名⇔大きい仮名の吸収）。normalizeLineNameVariantsの駅名版。
+// 例:「難波」→「なんば」のような、KANA_SIZE_VARIANTSでは吸収できない別物の表記ゆれに対応
+function normalizeStationNameVariants(name) {
+  const base = normalizeKanaSize(name);
+  const variants = new Set([base]);
+  stationAliasData.forEach(({ official, alias }) => {
+    const oNorm = normalizeKanaSize(official), aNorm = normalizeKanaSize(alias);
+    if (base === oNorm) variants.add(aNorm);
+    if (base === aNorm) variants.add(oNorm);
+  });
+  return [...variants];
+}
+// 駅名同士が（表記ゆれ込みで）同じ駅を指しているとみなせるか
+function isStationNameMatch(a, b) {
+  if (!a || !b) return false;
+  const av = normalizeStationNameVariants(a);
+  const bv = normalizeStationNameVariants(b);
+  return av.some(x => bv.includes(x));
+}
+
+// 駅マスタ上で、ある路線・駅の前後にある「実駅」（via_ではない駅）の名前を返す。
+// HeartRailsが返してくる隣駅情報と照合して、路線名の表記が一致しなくても
+// 物理的に同じ場所（同じ路線）を指していると確認できるようにするために使う
+function getMasterNeighborStations(routeVal, stationName) {
+  const rows = (allstationData || []).filter(r => r["路線"] === routeVal);
+  const idx = rows.findIndex(r => r["駅名"] === stationName);
+  if (idx === -1) return { prev: null, next: null };
+  let prev = null;
+  for (let i = idx - 1; i >= 0; i--) {
+    if (!isViaEntry(rows[i]["駅名"])) { prev = rows[i]["駅名"]; break; }
+  }
+  let next = null;
+  for (let i = idx + 1; i < rows.length; i++) {
+    if (!isViaEntry(rows[i]["駅名"])) { next = rows[i]["駅名"]; break; }
+  }
+  return { prev, next };
+}
+
 async function findNearbyStationsFromPosition(lat, lon) {
   const resultBox = document.getElementById("geoStationResult");
   openModalLoading("近くの駅を選択", "📍 近くの駅を確認中...");
@@ -790,31 +857,53 @@ async function findNearbyStationsFromPosition(lat, lon) {
     const stations = (data.response && data.response.station) || [];
 
     // HeartRailsは同じ駅名を「物理的な線路」単位で複数回返すことがあるため、
-    // まず駅名でグルーピングしてから処理する（未マッチの候補が駅名ごとに重複表示されるのを防ぐ）
+    // まず駅名でグルーピングしてから処理する（未マッチの候補が駅名ごとに重複表示されるのを防ぐ）。
+    // 隣駅（prev/next）はその物理路線1本ごとに別の値なので、路線名とセットで保持しておく
     const byName = {};
     stations.forEach(st => {
-      if (!byName[st.name]) byName[st.name] = { distance: st.distance, apiLines: [] };
-      byName[st.name].apiLines.push(st.line);
+      if (!byName[st.name]) byName[st.name] = { distance: st.distance, entries: [] };
+      byName[st.name].entries.push({ line: st.line, prev: st.prev || "", next: st.next || "" });
     });
 
     const matches = [];
     Object.entries(byName).forEach(([name, info]) => {
-      const stationRows = (allstationData || []).filter(row => normalizeKanaSize(row["駅名"]) === normalizeKanaSize(name));
+      // 駅名の一致は、小さい仮名⇔大きい仮名だけでなく、stationaliasシートに登録した
+      // 別表記（例: 難波⇔なんば）も吸収する
+      const stationRows = (allstationData || []).filter(row => isStationNameMatch(row["駅名"], name));
       if (!stationRows.length) {
         // 駅自体が未登録でも、候補には出す（選ぶとテキスト手入力モードになる）。
         // HeartRails側の実際の路線名を使って、路線ごとに分けて表示する
-        const uniqueApiLines = [...new Set(info.apiLines)];
+        const uniqueApiLines = [...new Set(info.entries.map(e => e.line))];
         uniqueApiLines.forEach(apiLine => {
           matches.push({ name, line: apiLine, unregistered: true, confident: false, distance: info.distance });
         });
         return;
       }
 
-      // 自分の路線データのうち、HeartRailsのどれかの路線名と一致したものを確信ありとする
+      // 自分の路線データのうち、確信ありと判定できたものをmatchedRoutesに集める。
+      // 判定は2段構え：
+      // ①路線名がHeartRails側と一致（表記ゆれ・部分一致を吸収）。
+      //   同じ駅名で「路線名[区間]」のように区間ごとに分けて複数行登録されている場合
+      //   （例: 上越妙高駅の「北陸新幹線[東京-上越妙高]」と「北陸新幹線[上越妙高-敦賀]」）、
+      //   HeartRails側は区間なしの1つの路線名（例:「北陸新幹線」）しか返してこないので、
+      //   findで最初の1行だけを拾うと片方の区間しか候補に出なかった。マッチする行を
+      //   全部拾うように変更した
+      // ②路線名では一致しなくても、その駅の前後どちらか片方向だけでも隣駅の駅名が
+      //   自分のマスタ側の並び順と一致すれば、物理的に同じ場所（同じ路線）を指している
+      //   と確実に判定できるので、それも確信ありとして拾う（路線名の別名登録が漏れている
+      //   ケースや、路線名の書き方が全然違うケースでも取りこぼさないようにするため）
       const matchedRoutes = new Set();
-      info.apiLines.forEach(apiLine => {
-        const hitRow = stationRows.find(row => isLineMatch(row["路線"], apiLine));
-        if (hitRow) matchedRoutes.add(hitRow["路線"]);
+      info.entries.forEach(apiEntry => {
+        stationRows.filter(row => isLineMatch(row["路線"], apiEntry.line)).forEach(row => matchedRoutes.add(row["路線"]));
+      });
+      info.entries.forEach(apiEntry => {
+        stationRows.forEach(row => {
+          if (matchedRoutes.has(row["路線"])) return;
+          const { prev: mPrev, next: mNext } = getMasterNeighborStations(row["路線"], row["駅名"]);
+          const prevHit = apiEntry.prev && mPrev && isStationNameMatch(mPrev, apiEntry.prev);
+          const nextHit = apiEntry.next && mNext && isStationNameMatch(mNext, apiEntry.next);
+          if (prevHit || nextHit) matchedRoutes.add(row["路線"]);
+        });
       });
       const localName = stationRows[0]["駅名"]; // 自分側のマスタでの表記（プルダウンの値と一致させるため）
       matchedRoutes.forEach(route => {
@@ -824,7 +913,7 @@ async function findNearbyStationsFromPosition(lat, lon) {
       // 一致しなかった自分の路線候補は、確信ありの候補が1つも無い駅の時だけ出す
       // （既に確信ありの候補があるなら、モデル化してない別路線のノイズは無視してOK）
       if (matchedRoutes.size === 0) {
-        const repApiLine = info.apiLines[0];
+        const repApiLine = info.entries[0].line;
         stationRows.forEach(row => {
           const m = { name: row["駅名"], line: row["路線"], apiLine: repApiLine, confident: false, distance: info.distance };
           matches.push(m);
