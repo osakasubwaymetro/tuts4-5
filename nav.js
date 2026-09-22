@@ -2,7 +2,16 @@
  * nav.js — 共通ヘッダー管理ファイル
  * 新しいページを追加するときは NAV_LINKS だけ編集してください
  *
- * version: 1.6.3
+ * version: 1.6.4
+ * 1.6.4: ヘッダーから降車記録に回答した直後でも、新規乗車記録を投稿すると
+ *        答えたはずの降車記録をまた聞かれてしまう不具合を修正。
+ *        原因は、投稿直後に強制実行されるnavMaybeRefreshRideDataの
+ *        降車データ再取得（サーバーから取得して丸ごと上書き）が、
+ *        GAS/スプレッドシート側への書き込みがまだ間に合っていないタイミングで
+ *        先に返ってくると、ローカルに楽観的に反映済みだった「回答済み」の記録が
+ *        上書きで消えてしまい、_navVerifyDescentFlagsが未回答と誤判定して
+ *        pending_descentを作り直していたこと。サーバー取得分とローカルの
+ *        既存キャッシュをマージするように変更（上書きではなく追加）して解消
  * 1.6.3: メニューに「時刻表」（timetable.html）を追加
  * 1.6.2: ヘッダーの「降車駅未回答」から回答しても赤ボタンが消えない不具合を修正。
  *        原因は、スプレッドシート側の時刻（"yyyy-MM-dd HH:mm"、スペース区切り）と
@@ -237,7 +246,21 @@ function navMaybeRefreshRideData(force) {
       const mine = all
         .filter(t => String(t["ユーザー名"]) === String(uname))
         .map(t => ({ ...t, "元の乗車時刻": _navStripRideTimePrefix(t["元の乗車時刻"]) }));
-      localStorage.setItem("tuts4_transfers_cache_" + uname, JSON.stringify(mine));
+      // サーバーから取れた分をそのまま上書きするのではなく、ローカルにだけ先に
+      // 反映済み（submitDescentValueが投稿直後に楽観的に書き込んだもの）の分と
+      // マージする。GAS/スプレッドシート側への書き込みが遅れていて、まだ
+      // サーバー側に反映されていないタイミングでこのfetchが先に返ってくると、
+      // 「もう答えたはずの降車記録」がローカルキャッシュから消えてしまい、
+      // 次の投稿時に_navVerifyDescentFlagsが「未回答」と誤判定して
+      // pending_descentを作り直してしまう（＝答えたのにまた聞かれる）ことがあった
+      let existing = [];
+      try { existing = JSON.parse(localStorage.getItem("tuts4_transfers_cache_" + uname) || "[]"); } catch (e) { /* ignore */ }
+      const merged = [...mine];
+      existing.forEach(e => {
+        const dup = merged.some(m => String(m["ユーザー名"]) === String(e["ユーザー名"]) && _navTimeKeyMatch(m["元の乗車時刻"], e["元の乗車時刻"]));
+        if (!dup) merged.push(e);
+      });
+      localStorage.setItem("tuts4_transfers_cache_" + uname, JSON.stringify(merged));
       if (typeof refreshNavDescentButton === "function") refreshNavDescentButton();
     })
     .catch(() => { /* 失敗時は次回の定期チェックに任せる */ });
