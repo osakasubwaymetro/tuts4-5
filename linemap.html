@@ -7,7 +7,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.9.3 -->
+<!-- version: 1.9.4 -->
+<!-- 1.9.4: 1.9.3で乗車率が軒並み0%になる不具合を修正。原因は「並走」列がスプレッドシート上
+           では宣言してる側の路線にしか書かれていない片方向データなこと（例: 2系統の行には
+           「start_1系統」と書くが、1系統側の行には何も書かない）。1.9.3の伝播ロジックは
+           「自分の並走列に書いてある相手」しか見ておらず、1系統のように並走列が空の
+           （＝他の路線から一方的に指されているだけの）路線は、どこからも乗車扱いを
+           もらえずに常に0%になっていた。全路線ぶんの並走関係を1回だけ集計して、
+           宣言されてる側にも逆方向の紐付けを埋め込んだ「双方向」の並走情報を作るように
+           修正（getBidiParallelInfoAll）。あわせて、路線ごとにallstationDataを毎回
+           filterし直していた部分を、路線名→駅行の対応表を1回だけ作って使い回す方式に
+           変更し（getStationRowsByRoute）、路線数が多い場合の重さも解消した -->
 <!-- 1.9.3: 並走経由の「乗車扱い」が、並走路線の「直接乗った区間」までしか見ておらず、
            その並走路線自身がさらに別路線との並走経由で乗車扱いになった分は伝播していな
            かったバグを修正（例: 4系統で南富山～エスタ前を直接乗った場合、1系統はその
@@ -370,6 +380,9 @@ fetchCachedMasterData("route", BASE + "route", data => { allrouteData = data; re
 fetchCachedMasterData("station", BASE + "station", data => {
   allstationData = data;
   for (const k in _parallelDirectInfoCache) delete _parallelDirectInfoCache[k]; // 並走情報の直接分キャッシュも破棄
+  _stationRowsByRouteCache = null; // 路線→駅行キャッシュも破棄
+  _bidiDirectInfoCache = null; // 双方向の並走情報キャッシュも破棄
+  _effectiveRiddenCacheFor = null; _effectiveRiddenCache = null; // 乗車扱いキャッシュも破棄
   if (document.getElementById("mapRoute").value) renderMap();
 });
 
@@ -830,11 +843,27 @@ function parseParallelCell(raw) {
   });
   return { start, end };
 }
-// その路線自身の「並走」列だけを見て、駅ごとにアクティブな並走路線を求める（直接分のみ）
+// 路線名→その路線の駅行（via_除く、順序通り）の対応表を1回だけ作って使い回す
+// （allstationData.filterを路線の数だけ毎回繰り返すと、路線数が多いときにO(路線数×全行数)
+// になってしまい重くなるため）
+let _stationRowsByRouteCache = null;
+function getStationRowsByRoute(routeName) {
+  if (!_stationRowsByRouteCache) {
+    _stationRowsByRouteCache = {};
+    allstationData.forEach(r => {
+      if (isViaEntry(r["駅名"])) return;
+      const rt = r["路線"];
+      if (!_stationRowsByRouteCache[rt]) _stationRowsByRouteCache[rt] = [];
+      _stationRowsByRouteCache[rt].push(r);
+    });
+  }
+  return _stationRowsByRouteCache[routeName] || [];
+}
+// その路線自身の「並走」列だけを見て、駅ごとにアクティブな並走路線を求める（直接分のみ、片方向）
 const _parallelDirectInfoCache = {};
 function computeParallelInfoDirect(routeName) {
   if (_parallelDirectInfoCache[routeName]) return _parallelDirectInfoCache[routeName];
-  const routeRows = allstationData.filter(r => r["路線"] === routeName && !isViaEntry(r["駅名"]));
+  const routeRows = getStationRowsByRoute(routeName);
   const activeParallelByIndex = [];
   const startedAtIndex = [];
   let activeParallel = new Set();
@@ -849,10 +878,52 @@ function computeParallelInfoDirect(routeName) {
   _parallelDirectInfoCache[routeName] = info;
   return info;
 }
-// 駅名で、その路線の「直接」並走情報から、その駅（同名で最初に一致する箇所）でアクティブな
-// 並走路線の集合を返す
+// 「並走」列は宣言してる側の路線にしか書かれていない片方向の情報（例:
+// 2系統の行に「start_1系統」と書いてあっても、1系統側の行には何も書かれていない）。
+// でも実際には同じ物理区間なので、乗車扱いの伝播にも地図表示にも「宣言されてる側」からも
+// 双方向で見えている必要がある。全路線ぶんまとめて1回だけ、逆方向の紐付けも埋め込んだ
+// 「双方向」の直接並走情報を作る（stationデータが変わらない限りキャッシュを使い回せるので、
+// 乗車率を聞かれるたびに毎回全路線を舐め直す必要は無い）
+let _bidiDirectInfoCache = null;
+function getBidiParallelInfoAll() {
+  if (_bidiDirectInfoCache) return _bidiDirectInfoCache;
+  getStationRowsByRoute(""); // _stationRowsByRouteCacheを確実に構築させておく（戻り値は使わない）
+  const routeNames = Object.keys(_stationRowsByRouteCache);
+  const oneWay = {};
+  routeNames.forEach(rt => { oneWay[rt] = computeParallelInfoDirect(rt); });
+
+  const extra = {}; // extra[route][index] = Set（逆方向で追加する並走路線）
+  routeNames.forEach(rt => { extra[rt] = oneWay[rt].stationsOnRoute.map(() => new Set()); });
+  routeNames.forEach(rt => {
+    const info = oneWay[rt];
+    info.stationsOnRoute.forEach((stName, i) => {
+      info.activeParallelByIndex[i].forEach(partner => {
+        const pInfo = oneWay[partner];
+        if (!pInfo) return;
+        const pIdx = pInfo.stationsOnRoute.indexOf(stName);
+        if (pIdx === -1) return;
+        extra[partner][pIdx].add(rt);
+      });
+    });
+  });
+
+  const result = {};
+  routeNames.forEach(rt => {
+    const info = oneWay[rt];
+    const activeParallelByIndex = info.activeParallelByIndex.map((set, i) => new Set([...set, ...extra[rt][i]]));
+    result[rt] = { stationsOnRoute: info.stationsOnRoute, activeParallelByIndex };
+  });
+  _bidiDirectInfoCache = result;
+  return result;
+}
+function getBidiDirectInfo(routeName) {
+  const all = getBidiParallelInfoAll();
+  return all[routeName] || { stationsOnRoute: [], activeParallelByIndex: [] };
+}
+// 駅名で、その路線の「直接」並走情報（双方向）から、その駅（同名で最初に一致する箇所）で
+// アクティブな並走路線の集合を返す
 function directActiveParallelAtStation(routeName, stationName) {
-  const info = computeParallelInfoDirect(routeName);
+  const info = getBidiDirectInfo(routeName);
   const idx = info.stationsOnRoute.indexOf(stationName);
   if (idx === -1) return new Set();
   return info.activeParallelByIndex[idx] || new Set();
@@ -875,7 +946,7 @@ function transitiveParallelAtStation(routeName, stationName, visited) {
 // その路線の並走区間情報（駅ごとにアクティブな並走路線・その駅で新たに始まったか）を、
 // 並走先がさらに他路線と並走しているケースも含めて（推移的に）計算する
 function computeParallelInfo(routeName) {
-  const direct = computeParallelInfoDirect(routeName);
+  const direct = getBidiDirectInfo(routeName);
   const activeParallelByIndex = direct.stationsOnRoute.map(stName => [...transitiveParallelAtStation(routeName, stName)]);
   const startedAtIndex = activeParallelByIndex.map((set, i) => {
     const prev = i > 0 ? activeParallelByIndex[i - 1] : [];
@@ -883,15 +954,29 @@ function computeParallelInfo(routeName) {
   });
   return { stationsOnRoute: direct.stationsOnRoute, activeParallelByIndex, startedAtIndex };
 }
-// 並走してる区間は、片方の路線で乗車済みならもう片方も乗車扱いにした「実質の乗車区間」を返す。
-// この「乗車扱い」自体も、さらに別路線と並走していれば連鎖的に伝播させる（例: 4系統で
-// 南富山～エスタ前を直接乗った場合、1系統はその区間まるごと並走経由で乗車扱いになり、
-// 1系統が南富山～富山駅で2系統とも並走しているなら、2系統もその範囲は実際に乗っていなくても
-// 乗車扱いになる）。全路線をまとめて、変化が無くなるまで繰り返し伝播させる固定点計算にする
-let _effectiveRiddenCacheFor = null;
-let _effectiveRiddenCache = null;
-function computeAllEffectiveRiddenSets(segmentsByRoute) {
-  const routeNames = [...new Set(allstationData.map(r => r["路線"]))];
+// 並走で繋がってる路線だけをBFSで集める（全国ぜんぶの路線を毎回まとめて計算すると重すぎる
+// ため、実際に並走関係で繋がってる範囲だけに計算を絞る。並走が無い普通の路線なら自分1つだけ）
+function collectConnectedRouteNames(startRoute) {
+  const visited = new Set([startRoute]);
+  const queue = [startRoute];
+  while (queue.length) {
+    const rt = queue.shift();
+    const direct = getBidiDirectInfo(rt);
+    direct.activeParallelByIndex.forEach(set => {
+      set.forEach(p => {
+        if (!visited.has(p)) { visited.add(p); queue.push(p); }
+      });
+    });
+  }
+  return [...visited];
+}
+// 並走で繋がった路線グループ内で、片方の路線で乗車済みならもう片方も乗車扱いにした
+// 「実質の乗車区間」をまとめて求める。この「乗車扱い」自体も、さらに別路線と並走していれば
+// 連鎖的に伝播させる（例: 4系統で南富山～エスタ前を直接乗った場合、1系統はその区間まるごと
+// 並走経由で乗車扱いになり、1系統が南富山～富山駅で2系統とも並走しているなら、2系統も
+// その範囲は実際に乗っていなくても乗車扱いになる）。グループ内全路線をまとめて、
+// 変化が無くなるまで繰り返し伝播させる固定点計算にする
+function computeEffectiveRiddenForCluster(routeNames, segmentsByRoute) {
   const routeInfo = {};
   const effective = {};
   routeNames.forEach(rt => {
@@ -928,12 +1013,28 @@ function computeAllEffectiveRiddenSets(segmentsByRoute) {
   }
   return effective;
 }
+// segmentsByRoute（オブジェクトの参照）ごとにキャッシュし、路線ごとに必要になった時点で
+// その路線が属する並走グループだけを計算する（グループ内の他路線分もついでにキャッシュされる）。
+// 万一この並走伝播の計算自体でエラーが起きても、乗車率が丸ごと0%になって見えなくなることが
+// 無いよう、直接乗った区間（segmentsByRouteそのもの）にフォールバックする
+let _effectiveRiddenCacheFor = null;
+let _effectiveRiddenCache = null;
 function getEffectiveRiddenSet(routeName, segmentsByRoute) {
-  if (_effectiveRiddenCacheFor !== segmentsByRoute) {
-    _effectiveRiddenCache = computeAllEffectiveRiddenSets(segmentsByRoute);
-    _effectiveRiddenCacheFor = segmentsByRoute;
+  try {
+    if (_effectiveRiddenCacheFor !== segmentsByRoute) {
+      _effectiveRiddenCache = {};
+      _effectiveRiddenCacheFor = segmentsByRoute;
+    }
+    if (!_effectiveRiddenCache[routeName]) {
+      const cluster = collectConnectedRouteNames(routeName);
+      const computed = computeEffectiveRiddenForCluster(cluster, segmentsByRoute);
+      Object.assign(_effectiveRiddenCache, computed);
+    }
+    return _effectiveRiddenCache[routeName] || new Set(segmentsByRoute[routeName] || []);
+  } catch (e) {
+    console.error("並走の乗車扱い伝播でエラーが発生したため、直接乗った区間のみで表示します:", routeName, e);
+    return new Set(segmentsByRoute[routeName] || []);
   }
-  return _effectiveRiddenCache[routeName] || new Set();
 }
 
 function routeTotalSegments(routeName) {
