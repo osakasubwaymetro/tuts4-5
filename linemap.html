@@ -7,17 +7,26 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.9.5 -->
-<!-- 1.9.5: 1.9.2～1.9.4で進めていた「並走の推移的・双方向伝播」の実装が、小規模なテストでは
-           正しく動くことを確認できていたにもかかわらず、実データでは富山地鉄以外の無関係な
-           路線（北陸新幹線、大阪メトロ谷町線など）まで含めて軒並り0%になる問題が起き、
-           原因を実データ無しでは特定できなかったため、いったんcomputeParallelInfo /
-           getEffectiveRiddenSetを1.9.1時点の実装（各路線が「自分の並走列に書いてある
-           相手」の直接乗った区間だけを見る、片方向・非再帰の素朴な方式）まで巻き戻した。
-           「6系統のような複数路線にまたがる並走のひとまとめ登録」「4系統の乗車が1系統・
-           2系統にも伝播する」といった拡張は、いったんこのバージョンには含まれていない。
-           これらの改善は、実際の並走列のデータ（該当路線のサンプル数行）かブラウザの
-           コンソールエラーを見ながら、壊さずに再度対応する -->
+<!-- version: 1.9.6 -->
+<!-- 1.9.6: 「並走の並走」（1.9.2～1.9.4相当の双方向・推移的な伝播）を、安全策を何重にも
+           入れた上で復活。1.9.4で実データにて富山地鉄以外の無関係な路線まで0%になった
+           原因はコンソールエラー等が得られず特定できなかったため、原因そのものを潰すの
+           ではなく「たとえ拡張ロジックのどこかに未知の不具合があっても、0%側に事故らない」
+           形に構造を変えた:
+           ①1.9.1相当の片方向・非再帰の計算（getBaselineRiddenSet）を「安全ライン」として
+             常に別計算しておき、拡張版（双方向・推移的な伝播）の結果がこの安全ラインを
+             1区間でも下回っていたら、安全ラインの方を採用する（本来、拡張版は安全ラインの
+             結果を包含する“上位互換”のはずなので、下回ることがあれば実データ起因の
+             想定外の不具合が起きているサインとみなす）
+           ②双方向並走情報の構築（getBidiParallelInfoAll）自体をtry/catchで囲み、失敗したら
+             片方向のみにフォールバックする
+           ③乗車扱いの伝播計算全体もtry/catchで囲み、例外が起きても安全ラインを返す
+           ④固定点ループ・BFSの両方に上限回数の安全弁を追加し、万一の暴走ループも防ぐ
+           ⑤路線ごとにallstationDataを毎回filterし直していた部分を、路線名→駅行の対応表を
+             1回だけ作って使い回す方式に変更し、路線数が多い場合の重さも解消
+           これで「並走の並走」が効きつつ、仮にまた実データ特有の問題が起きても、以前のように
+           無関係な路線まで巻き込んで0%になることは無いはず（発生時は安全ライン側の数字に
+           留まり、コンソールにwarn/errorが出るようにした） -->
 <!-- 1.9.3: 並走経由の「乗車扱い」が、並走路線の「直接乗った区間」までしか見ておらず、
            その並走路線自身がさらに別路線との並走経由で乗車扱いになった分は伝播していな
            かったバグを修正（例: 4系統で南富山～エスタ前を直接乗った場合、1系統はその
@@ -379,6 +388,9 @@ fetchCachedMasterData("country", BASE + "country", data => { allCountryData = da
 fetchCachedMasterData("route", BASE + "route", data => { allrouteData = data; rebuildAllSelects(); });
 fetchCachedMasterData("station", BASE + "station", data => {
   allstationData = data;
+  _stationRowsByRouteCache = null; // 路線→駅行キャッシュも破棄
+  _bidiDirectInfoCache = null; // 双方向の並走情報キャッシュも破棄
+  _effectiveRiddenCacheFor = null; _effectiveRiddenCache = null; // 乗車扱いキャッシュも破棄
   if (document.getElementById("mapRoute").value) renderMap();
 });
 
@@ -839,9 +851,24 @@ function parseParallelCell(raw) {
   });
   return { start, end };
 }
-// その路線の並走区間情報（駅ごとにアクティブな並走路線・その駅で開始したか）を計算する
-function computeParallelInfo(routeName) {
-  const routeRows = allstationData.filter(r => r["路線"] === routeName && !isViaEntry(r["駅名"]));
+// ---------- 基本形（1.9.1相当・片方向のみ）：常にここまでは保証する「安全ライン」として残す ----------
+// 路線名→その路線の駅行（via_除く、順序通り）の対応表を1回だけ作って使い回す
+let _stationRowsByRouteCache = null;
+function getStationRowsByRoute(routeName) {
+  if (!_stationRowsByRouteCache) {
+    _stationRowsByRouteCache = {};
+    allstationData.forEach(r => {
+      if (isViaEntry(r["駅名"])) return;
+      const rt = r["路線"];
+      if (!_stationRowsByRouteCache[rt]) _stationRowsByRouteCache[rt] = [];
+      _stationRowsByRouteCache[rt].push(r);
+    });
+  }
+  return _stationRowsByRouteCache[routeName] || [];
+}
+// その路線自身の「並走」列だけを見て、駅ごとにアクティブな並走路線を求める（直接分のみ、片方向）
+function computeParallelInfoDirect(routeName) {
+  const routeRows = getStationRowsByRoute(routeName);
   const activeParallelByIndex = [];
   const startedAtIndex = [];
   let activeParallel = new Set();
@@ -855,14 +882,16 @@ function computeParallelInfo(routeName) {
   return { stationsOnRoute: routeRows.map(r => r["駅名"]), activeParallelByIndex, startedAtIndex };
 }
 // 並走してる区間は、片方の路線で乗車済みならもう片方も乗車扱いにした「実質の乗車区間」を返す
-function getEffectiveRiddenSet(routeName, segmentsByRoute) {
+// （片方向・非再帰の基本形。これはどんな時でも壊れない安全ラインとして、下の拡張版の
+// フォールバック先にも使う）
+function getBaselineRiddenSet(routeName, segmentsByRoute) {
   const riddenSegments = new Set(segmentsByRoute[routeName] || []);
-  const { stationsOnRoute, activeParallelByIndex } = computeParallelInfo(routeName);
+  const { stationsOnRoute, activeParallelByIndex } = computeParallelInfoDirect(routeName);
 
   function parallelSegmentRidden(parallelRoute, stationA, stationB) {
     const segs = segmentsByRoute[parallelRoute];
     if (!segs || !segs.size) return false;
-    const pStations = allstationData.filter(r => r["路線"] === parallelRoute && !isViaEntry(r["駅名"])).map(r => r["駅名"]);
+    const pStations = getStationRowsByRoute(parallelRoute).map(r => r["駅名"]);
     const a = pStations.indexOf(stationA), b = pStations.indexOf(stationB);
     if (a === -1 || b === -1) return false;
     return segs.has(Math.min(a, b));
@@ -874,6 +903,168 @@ function getEffectiveRiddenSet(routeName, segmentsByRoute) {
     if (parallelHere.some(rt => parallelSegmentRidden(rt, stA, stB))) riddenSegments.add(i);
   }
   return riddenSegments;
+}
+
+// ---------- 拡張形（並走の並走＝双方向・推移的に伝播）：失敗したら必ず上の安全ラインに落ちる ----------
+// 「並走」列は宣言してる側の路線にしか書かれていない片方向データ（例: 2系統の行に
+// 「start_1系統」と書いてあっても、1系統側の行には何も書かれていない）。実際は同じ物理区間
+// なので、宣言されてる側からも見えるよう、全路線ぶんまとめて1回だけ逆方向の紐付けも
+// 埋め込んだ「双方向」の直接並走情報を作る。万一この構築自体に失敗しても、片方向のみの
+// computeParallelInfoDirectにフォールバックする（＝並走の並走は効かないが、0%にはならない）
+let _bidiDirectInfoCache = null;
+function getBidiParallelInfoAll() {
+  if (_bidiDirectInfoCache) return _bidiDirectInfoCache;
+  try {
+    getStationRowsByRoute(""); // _stationRowsByRouteCacheを確実に構築させておく
+    const routeNames = Object.keys(_stationRowsByRouteCache);
+    const oneWay = {};
+    routeNames.forEach(rt => { oneWay[rt] = computeParallelInfoDirect(rt); });
+
+    const extra = {}; // extra[route][index] = Set（逆方向で追加する並走路線）
+    routeNames.forEach(rt => { extra[rt] = oneWay[rt].stationsOnRoute.map(() => new Set()); });
+    routeNames.forEach(rt => {
+      const info = oneWay[rt];
+      info.stationsOnRoute.forEach((stName, i) => {
+        info.activeParallelByIndex[i].forEach(partner => {
+          const pInfo = oneWay[partner];
+          if (!pInfo) return;
+          const pIdx = pInfo.stationsOnRoute.indexOf(stName);
+          if (pIdx === -1) return;
+          extra[partner][pIdx].add(rt);
+        });
+      });
+    });
+
+    const result = {};
+    routeNames.forEach(rt => {
+      const info = oneWay[rt];
+      const activeParallelByIndex = info.activeParallelByIndex.map((set, i) => new Set([...set, ...extra[rt][i]]));
+      result[rt] = { stationsOnRoute: info.stationsOnRoute, activeParallelByIndex };
+    });
+    _bidiDirectInfoCache = result;
+  } catch (e) {
+    console.error("双方向の並走情報の構築に失敗しました（並走の並走は今回効きません）:", e);
+    _bidiDirectInfoCache = {};
+  }
+  return _bidiDirectInfoCache;
+}
+// 双方向の直接並走情報を返す。構築が失敗している場合は片方向のものにフォールバックする
+function getBidiDirectInfo(routeName) {
+  const all = getBidiParallelInfoAll();
+  return all[routeName] || computeParallelInfoDirect(routeName);
+}
+function directActiveParallelAtStation(routeName, stationName) {
+  const info = getBidiDirectInfo(routeName);
+  const idx = info.stationsOnRoute.indexOf(stationName);
+  if (idx === -1) return new Set();
+  return info.activeParallelByIndex[idx] || new Set();
+}
+// 「A路線がB路線と並走」「同じ駅でB路線はC路線とも並走」なら、A路線もその駅では実質
+// C路線とも並走している。駅名を手がかりに、並走情報を再帰的に辿って推移的に閉包を求める
+function transitiveParallelAtStation(routeName, stationName, visited) {
+  visited = visited || new Set([routeName]);
+  const result = new Set();
+  directActiveParallelAtStation(routeName, stationName).forEach(rt => {
+    if (visited.has(rt)) return;
+    result.add(rt);
+    visited.add(rt);
+    transitiveParallelAtStation(rt, stationName, visited).forEach(n => result.add(n));
+  });
+  return result;
+}
+function computeParallelInfo(routeName) {
+  const direct = getBidiDirectInfo(routeName);
+  const activeParallelByIndex = direct.stationsOnRoute.map(stName => [...transitiveParallelAtStation(routeName, stName)]);
+  const startedAtIndex = activeParallelByIndex.map((set, i) => {
+    const prev = i > 0 ? activeParallelByIndex[i - 1] : [];
+    return set.filter(rt => !prev.includes(rt));
+  });
+  return { stationsOnRoute: direct.stationsOnRoute, activeParallelByIndex, startedAtIndex };
+}
+// 並走で繋がってる路線だけをBFSで集める（無関係な路線まで毎回まとめて計算すると重いため、
+// 実際に並走関係で繋がってる範囲だけに計算を絞る。並走が無い普通の路線なら自分1つだけ）
+function collectConnectedRouteNames(startRoute) {
+  const visited = new Set([startRoute]);
+  const queue = [startRoute];
+  let guard = 0;
+  while (queue.length && guard++ < 5000) { // 万一のループ暴走防止の安全弁
+    const rt = queue.shift();
+    const direct = getBidiDirectInfo(rt);
+    direct.activeParallelByIndex.forEach(set => {
+      set.forEach(p => { if (!visited.has(p)) { visited.add(p); queue.push(p); } });
+    });
+  }
+  return [...visited];
+}
+// 並走で繋がった路線グループ内で、片方の路線で乗車済みならもう片方も乗車扱いにした
+// 「実質の乗車区間」をまとめて求める。この「乗車扱い」自体も、さらに別路線と並走していれば
+// 連鎖的に伝播させる。グループ内全路線をまとめて、変化が無くなるまで繰り返し伝播させる
+function computeEffectiveRiddenForCluster(routeNames, segmentsByRoute) {
+  const routeInfo = {};
+  const effective = {};
+  routeNames.forEach(rt => {
+    routeInfo[rt] = computeParallelInfo(rt);
+    effective[rt] = new Set(segmentsByRoute[rt] || []);
+  });
+
+  function parallelSegmentRidden(parallelRoute, stationA, stationB) {
+    const eff = effective[parallelRoute];
+    if (!eff || !eff.size) return false;
+    const info = routeInfo[parallelRoute];
+    if (!info) return false;
+    const a = info.stationsOnRoute.indexOf(stationA), b = info.stationsOnRoute.indexOf(stationB);
+    if (a === -1 || b === -1) return false;
+    return eff.has(Math.min(a, b));
+  }
+
+  let changed = true, guard = 0;
+  while (changed && guard++ < 1000) { // 万一のループ暴走防止の安全弁
+    changed = false;
+    routeNames.forEach(routeName => {
+      const { stationsOnRoute, activeParallelByIndex } = routeInfo[routeName];
+      const riddenSegments = effective[routeName];
+      for (let i = 0; i < stationsOnRoute.length - 1; i++) {
+        if (riddenSegments.has(i)) continue;
+        const stA = stationsOnRoute[i], stB = stationsOnRoute[i + 1];
+        const parallelHere = (activeParallelByIndex[i] || []).filter(rt => (activeParallelByIndex[i + 1] || []).includes(rt));
+        if (parallelHere.some(rt => parallelSegmentRidden(rt, stA, stB))) {
+          riddenSegments.add(i);
+          changed = true;
+        }
+      }
+    });
+  }
+  return effective;
+}
+// segmentsByRoute（オブジェクトの参照）ごとにキャッシュし、路線ごとに必要になった時点で
+// その路線が属する並走グループだけを計算する。拡張版の結果が、片方向だけの安全ライン
+// （getBaselineRiddenSet）より少なくなることは理論上無いはずだが、実データ起因の想定外の
+// 不具合で万一そうなった場合や、拡張版の計算自体が例外を投げた場合は、必ず安全ラインの方を
+// 使う（乗車率が実際より低く＝0%寄りに見える不具合を、二重に防ぐ）
+let _effectiveRiddenCacheFor = null;
+let _effectiveRiddenCache = null;
+function getEffectiveRiddenSet(routeName, segmentsByRoute) {
+  const baseline = getBaselineRiddenSet(routeName, segmentsByRoute);
+  try {
+    if (_effectiveRiddenCacheFor !== segmentsByRoute) {
+      _effectiveRiddenCache = {};
+      _effectiveRiddenCacheFor = segmentsByRoute;
+    }
+    if (!_effectiveRiddenCache[routeName]) {
+      const cluster = collectConnectedRouteNames(routeName);
+      const computed = computeEffectiveRiddenForCluster(cluster, segmentsByRoute);
+      Object.assign(_effectiveRiddenCache, computed);
+    }
+    const extended = _effectiveRiddenCache[routeName];
+    if (!extended || extended.size < baseline.size) {
+      if (extended) console.warn("並走の並走の計算結果が安全ラインより少なかったため、安全ライン側を使います:", routeName);
+      return baseline;
+    }
+    return extended;
+  } catch (e) {
+    console.error("並走の並走の計算でエラーが発生したため、安全ライン（直接乗った区間＋片方向の並走）のみで表示します:", routeName, e);
+    return baseline;
+  }
 }
 
 function routeTotalSegments(routeName) {
