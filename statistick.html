@@ -8,7 +8,11 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>統計情報 | tuts4 — フル版</title>
-<!-- version: 1.9.3 -->
+<!-- version: 1.10.0 -->
+<!-- 1.10.0: 「AIに質問する」カードを追加。自分の乗車・降車記録をもとに、質問を自然文で
+           投げるとAIが分析して答える機能。新規のGAS（ai_assistant_gas.gs、要デプロイ）
+           経由でClaude APIを呼び出す。データはAI_URL経由でその都度渡すだけで、
+           GAS側には保存しない -->
 <!-- 1.9.3: レア駅判定を、乗車データに紐づいた分だけでなく myTransfers（降車駅シート）を
            直接走査して、旅終了True/False問わず全ての降車駅を拾うように整理。
            直通運転の境界駅（via_チェーンの途中駅）は引き続き除外 -->
@@ -162,6 +166,17 @@
 
   <div class="wrap">
 
+    <!-- AIに質問する -->
+    <div class="card" id="aiAssistantCard">
+      <h3>🤖 AIに質問する</h3>
+      <p class="small">あなたの乗車・降車記録をもとに、AIが分析して答えます（例：「今年新幹線何回乗った？」「一番多い時間帯は？」）</p>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <input type="text" id="aiQuestionInput" placeholder="質問を入力…" style="flex:1; padding:10px 12px; border:1px solid #ddd; border-radius:8px; font-size:14px;">
+        <button type="button" id="aiAskBtn" style="background:#004C97; color:#fff; border:none; border-radius:8px; padding:10px 16px; font-size:14px; white-space:nowrap;">聞く</button>
+      </div>
+      <div id="aiAnswerArea" style="margin-top:12px;"></div>
+    </div>
+
     <!-- 概要 -->
     <div class="card" id="overview">
       <div class="stats-grid">
@@ -302,6 +317,8 @@
 /* あなたの GAS の公開 URL をここに入れてください（全データを JSON で返すもの） */
 const GAS_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
 const TRANSFERS_URL = "https://script.google.com/macros/s/AKfycbwOzhHMk2WRtcUHvSMfnrimIQxUk-_dZN_43I-m8fpMNVxomE7emhevGGyC3UnLR3ejBw/exec";
+/* AI分析アシスタント用のGAS URL（ai_assistant_gas.gs をデプロイして、発行されたURLに置き換えてください） */
+const AI_URL = "★ここにai_assistant_gas.gsをデプロイしたURLを貼ってください★";
 const RIDE_TIME_PREFIX = "乗車_";
 function stripRideTimePrefix(v) {
   return typeof v === "string" && v.indexOf(RIDE_TIME_PREFIX) === 0 ? v.slice(RIDE_TIME_PREFIX.length) : v;
@@ -379,6 +396,11 @@ function companyForRoute(routeName) {
 
 /* ログイン済みのユーザー（localStorage のキーを使ってください） */
 const MY_NAME = localStorage.getItem("username");
+
+/* AIに質問する機能用：直近に描画した自分の乗車・降車データを保持しておく
+   （毎回サーバーに取りに行かず、統計表示で既に取得済みのものをそのまま使う） */
+let _aiRidesData = [];
+let _aiTransfersData = [];
 
 
 
@@ -466,7 +488,10 @@ async function buildStats() {
   if (cached) {
     try {
       const rawMine = JSON.parse(cached);
-      await renderStats(rawMine.map(normalizeRow), await fetchMyTransfers(true));
+      const cachedTransfers = await fetchMyTransfers(true);
+      _aiRidesData = rawMine.map(normalizeRow);
+      _aiTransfersData = cachedTransfers;
+      await renderStats(_aiRidesData, cachedTransfers);
     } catch (e) {
       localStorage.removeItem(CACHE_KEY);
     }
@@ -486,6 +511,8 @@ async function buildStats() {
   }
 
   const myTransfers = await fetchMyTransfers(false);
+  _aiRidesData = mine;
+  _aiTransfersData = myTransfers;
   await renderStats(mine, myTransfers);
 }
 
@@ -894,6 +921,69 @@ async function renderStats(mine, myTransfers) {
 
   console.log("統計生成完了");
 }
+
+/* ==========================
+   AIに質問する
+   ========================== */
+let _aiAsking = false;
+
+async function askAI() {
+  if (_aiAsking) return;
+
+  const input = document.getElementById("aiQuestionInput");
+  const answerArea = document.getElementById("aiAnswerArea");
+  const btn = document.getElementById("aiAskBtn");
+  const question = (input.value || "").trim();
+
+  if (!question) { input.focus(); return; }
+
+  if (!AI_URL || AI_URL.indexOf("★") !== -1) {
+    answerArea.innerHTML = '<p class="small" style="color:#c0392b;">AI機能用のGAS URLがまだ設定されていません（AI_URLを確認してください）。</p>';
+    return;
+  }
+
+  if (!_aiRidesData.length) {
+    answerArea.innerHTML = '<p class="small">まだデータの読み込み中です。少し待ってからもう一度お試しください。</p>';
+    return;
+  }
+
+  _aiAsking = true;
+  btn.disabled = true;
+  btn.textContent = "考え中…";
+  answerArea.innerHTML = '<p class="small">🤖 分析中…</p>';
+
+  try {
+    const res = await fetch(AI_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" }, // GAS側でCORSプリフライトを避けるため
+      body: JSON.stringify({
+        question,
+        username: MY_NAME,
+        rides: _aiRidesData.map(r => r.raw),
+        transfers: _aiTransfersData
+      })
+    });
+    const data = await res.json();
+
+    if (!data || data.result !== "success") {
+      throw new Error((data && data.message) || "AIからの応答が取得できませんでした");
+    }
+
+    answerArea.innerHTML = `<div style="background:#F0F6FF; border-radius:8px; padding:12px 14px; font-size:14px; line-height:1.6; white-space:pre-wrap;">${(data.answer || "").replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]))}</div>`;
+  } catch (e) {
+    console.error("AI質問エラー:", e);
+    answerArea.innerHTML = `<p class="small" style="color:#c0392b;">エラーが発生しました: ${e.message}</p>`;
+  } finally {
+    _aiAsking = false;
+    btn.disabled = false;
+    btn.textContent = "聞く";
+  }
+}
+
+document.getElementById("aiAskBtn")?.addEventListener("click", askAI);
+document.getElementById("aiQuestionInput")?.addEventListener("keydown", e => {
+  if (e.key === "Enter") askAI();
+});
 
 /* start */
 buildStats().catch(err=>{
