@@ -8,10 +8,13 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>統計情報 | tuts4 — フル版</title>
-<!-- version: 1.10.0 -->
+<!-- version: 1.11.0 -->
+<!-- 1.11.0: 「AIに質問する」をチャット形式に変更。質問と回答が吹き出しで積み上がっていき、
+           続けて聞くと会話の流れ（履歴）を踏まえてAIが答えられるように。
+           会話をリセットするボタンも追加 -->
 <!-- 1.10.0: 「AIに質問する」カードを追加。自分の乗車・降車記録をもとに、質問を自然文で
            投げるとAIが分析して答える機能。新規のGAS（ai_assistant_gas.gs、要デプロイ）
-           経由でClaude APIを呼び出す。データはAI_URL経由でその都度渡すだけで、
+           経由でAI APIを呼び出す。データはAI_URL経由でその都度渡すだけで、
            GAS側には保存しない -->
 <!-- 1.9.3: レア駅判定を、乗車データに紐づいた分だけでなく myTransfers（降車駅シート）を
            直接走査して、旅終了True/False問わず全ての降車駅を拾うように整理。
@@ -168,13 +171,18 @@
 
     <!-- AIに質問する -->
     <div class="card" id="aiAssistantCard">
-      <h3>🤖 AIに質問する</h3>
-      <p class="small">あなたの乗車・降車記録をもとに、AIが分析して答えます（例：「今年新幹線何回乗った？」「一番多い時間帯は？」）</p>
-      <div style="display:flex; gap:8px; margin-top:8px;">
-        <input type="text" id="aiQuestionInput" placeholder="質問を入力…" style="flex:1; padding:10px 12px; border:1px solid #ddd; border-radius:8px; font-size:14px;">
-        <button type="button" id="aiAskBtn" style="background:#004C97; color:#fff; border:none; border-radius:8px; padding:10px 16px; font-size:14px; white-space:nowrap;">聞く</button>
+      <div style="display:flex; justify-content:space-between; align-items:baseline;">
+        <h3 style="margin:0;">🤖 AIに質問する</h3>
+        <button type="button" id="aiResetBtn" style="background:none; border:none; color:#999; font-size:12px; text-decoration:underline; padding:0;">会話をリセット</button>
       </div>
-      <div id="aiAnswerArea" style="margin-top:12px;"></div>
+      <p class="small">あなたの乗車・降車記録をもとに、AIが分析して答えます（例：「今年新幹線何回乗った？」「一番多い時間帯は？」）。続けて聞くと会話の流れも踏まえて答えます</p>
+
+      <div id="aiChatLog" style="display:flex; flex-direction:column; gap:8px; max-height:360px; overflow-y:auto; padding:4px 2px; margin-top:8px;"></div>
+
+      <div style="display:flex; gap:8px; margin-top:10px;">
+        <input type="text" id="aiQuestionInput" placeholder="質問を入力…" style="flex:1; padding:10px 12px; border:1px solid #ddd; border-radius:8px; font-size:14px;">
+        <button type="button" id="aiAskBtn" style="background:#004C97; color:#fff; border:none; border-radius:8px; padding:10px 16px; font-size:14px; white-space:nowrap;">送信</button>
+      </div>
     </div>
 
     <!-- 概要 -->
@@ -923,34 +931,63 @@ async function renderStats(mine, myTransfers) {
 }
 
 /* ==========================
-   AIに質問する
+   AIに質問する（チャット形式）
    ========================== */
 let _aiAsking = false;
+// 表示用・API送信用の会話履歴。データ本体(rides/transfers)はここには含めず、
+// 質問と回答のテキストだけを積んでいく（データは毎回のリクエストでGAS側に
+// 送り直す＝GASはステートレスなので、質問の文脈だけをここで保持する）
+let _aiChatHistory = []; // [{ role: "user" | "model", text }]
+
+function appendChatBubble(role, text, opts) {
+  const log = document.getElementById("aiChatLog");
+  const isUser = role === "user";
+  const bubble = document.createElement("div");
+  bubble.style.cssText = `
+    align-self:${isUser ? "flex-end" : "flex-start"};
+    max-width:85%;
+    background:${isUser ? "#004C97" : "#F0F6FF"};
+    color:${isUser ? "#fff" : "#222"};
+    border-radius:12px;
+    padding:9px 13px;
+    font-size:14px;
+    line-height:1.6;
+    white-space:pre-wrap;
+  `;
+  if (opts && opts.pending) bubble.dataset.pending = "1";
+  if (opts && opts.error) { bubble.style.background = "#FDECEA"; bubble.style.color = "#c0392b"; }
+  bubble.textContent = text; // textContentで入れるのでエスケープ不要（XSS対策）
+  log.appendChild(bubble);
+  log.scrollTop = log.scrollHeight;
+  return bubble;
+}
 
 async function askAI() {
   if (_aiAsking) return;
 
   const input = document.getElementById("aiQuestionInput");
-  const answerArea = document.getElementById("aiAnswerArea");
   const btn = document.getElementById("aiAskBtn");
   const question = (input.value || "").trim();
 
   if (!question) { input.focus(); return; }
 
   if (!AI_URL || AI_URL.indexOf("★") !== -1) {
-    answerArea.innerHTML = '<p class="small" style="color:#c0392b;">AI機能用のGAS URLがまだ設定されていません（AI_URLを確認してください）。</p>';
+    appendChatBubble("model", "AI機能用のGAS URLがまだ設定されていません（AI_URLを確認してください）。", { error: true });
     return;
   }
 
   if (!_aiRidesData.length) {
-    answerArea.innerHTML = '<p class="small">まだデータの読み込み中です。少し待ってからもう一度お試しください。</p>';
+    appendChatBubble("model", "まだデータの読み込み中です。少し待ってからもう一度お試しください。", { error: true });
     return;
   }
 
+  appendChatBubble("user", question);
+  input.value = "";
+
   _aiAsking = true;
   btn.disabled = true;
-  btn.textContent = "考え中…";
-  answerArea.innerHTML = '<p class="small">🤖 分析中…</p>';
+  btn.textContent = "…";
+  const pendingBubble = appendChatBubble("model", "🤖 分析中…", { pending: true });
 
   try {
     const res = await fetch(AI_URL, {
@@ -958,6 +995,7 @@ async function askAI() {
       headers: { "Content-Type": "text/plain;charset=utf-8" }, // GAS側でCORSプリフライトを避けるため
       body: JSON.stringify({
         question,
+        history: _aiChatHistory, // これまでの質問・回答（データ本体は含まない）
         username: MY_NAME,
         rides: _aiRidesData.map(r => r.raw),
         transfers: _aiTransfersData
@@ -969,21 +1007,33 @@ async function askAI() {
       throw new Error((data && data.message) || "AIからの応答が取得できませんでした");
     }
 
-    answerArea.innerHTML = `<div style="background:#F0F6FF; border-radius:8px; padding:12px 14px; font-size:14px; line-height:1.6; white-space:pre-wrap;">${(data.answer || "").replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]))}</div>`;
+    pendingBubble.textContent = data.answer || "（空の回答が返ってきました）";
+    _aiChatHistory.push({ role: "user", text: question });
+    _aiChatHistory.push({ role: "model", text: data.answer || "" });
   } catch (e) {
     console.error("AI質問エラー:", e);
-    answerArea.innerHTML = `<p class="small" style="color:#c0392b;">エラーが発生しました: ${e.message}</p>`;
+    pendingBubble.textContent = `エラーが発生しました: ${e.message}`;
+    pendingBubble.style.background = "#FDECEA";
+    pendingBubble.style.color = "#c0392b";
   } finally {
+    delete pendingBubble.dataset.pending;
     _aiAsking = false;
     btn.disabled = false;
-    btn.textContent = "聞く";
+    btn.textContent = "送信";
+    document.getElementById("aiChatLog").scrollTop = document.getElementById("aiChatLog").scrollHeight;
   }
+}
+
+function resetAIChat() {
+  _aiChatHistory = [];
+  document.getElementById("aiChatLog").innerHTML = "";
 }
 
 document.getElementById("aiAskBtn")?.addEventListener("click", askAI);
 document.getElementById("aiQuestionInput")?.addEventListener("keydown", e => {
   if (e.key === "Enter") askAI();
 });
+document.getElementById("aiResetBtn")?.addEventListener("click", resetAIChat);
 
 /* start */
 buildStats().catch(err=>{
