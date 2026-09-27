@@ -1,4 +1,9 @@
-// version: 1.32.6
+// version: 1.32.7
+// 1.32.7: 過去の乗車記録の候補が「全然出ない・明らかに少ない」ことがある不具合を修正。
+//         投稿直後にキャッシュを強制クリアする仕組み上、直後の再取得がGASの不安定さで
+//         失敗すると、その空っぽの結果がページを開いている間ずっと固定キャッシュされて
+//         しまっていたのが原因。①取得失敗時に自動で数回リトライ ②それでも失敗したら
+//         「失敗した」という状態を引きずらず、次に呼ばれた時にまた取得し直すように変更
 // 1.32.6: 最寄り駅検索の路線判定を強化。①路線名の一致（表記ゆれ吸収）だけでなく、
 //         HeartRails側の隣駅（前後どちらか片方向だけでもOK）がマスタ側の並び順と
 //         一致すれば、路線名が全然違っても物理的に同じ路線だと確信ありで判定できる
@@ -1250,19 +1255,41 @@ async function getRideHistoryCached() {
     const CACHE_KEY = "tuts4_community_ride_cache";
     const cached = localStorage.getItem(CACHE_KEY);
     if (cached) {
-      try { return JSON.parse(cached); } catch (e) { localStorage.removeItem(CACHE_KEY); }
+      try {
+        const parsed = JSON.parse(cached);
+        // 空配列がそのままキャッシュされてしまっていた場合（過去の取得失敗の残骸）は
+        // 使わず、下の取得処理に進んで取り直す
+        if (Array.isArray(parsed) && parsed.length) return parsed;
+      } catch (e) { /* 壊れてたら取り直す */ }
+      localStorage.removeItem(CACHE_KEY);
     }
 
     const RIDES_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
-    try {
-      const res = await fetch(RIDES_URL);
-      const all = await res.json();
-      localStorage.setItem(CACHE_KEY, JSON.stringify(all));
-      return all;
-    } catch (e) {
-      console.error("乗車履歴の取得に失敗:", e);
-      return [];
+
+    // GASが不安定で失敗することがあるため、少し間隔を空けて数回までリトライする
+    const MAX_ATTEMPTS = 3;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const res = await fetch(RIDES_URL);
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const all = await res.json();
+        if (!Array.isArray(all)) throw new Error("不正なレスポンス形式");
+
+        localStorage.setItem(CACHE_KEY, JSON.stringify(all));
+        return all;
+      } catch (e) {
+        console.error(`乗車履歴の取得に失敗（${attempt}/${MAX_ATTEMPTS}回目）:`, e);
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise(r => setTimeout(r, 800 * attempt));
+        }
+      }
     }
+
+    // 全部失敗した場合：この失敗結果を「ずっと使えるキャッシュ」として固定してしまうと、
+    // 同じページを開いている間ずっと過去の乗車記録の候補が出なくなってしまうため、
+    // _rideHistoryPromise 自体をリセットして、次に呼ばれた時にまた最初から取得を試みるようにする
+    _rideHistoryPromise = null;
+    return [];
   })();
 
   return _rideHistoryPromise;
