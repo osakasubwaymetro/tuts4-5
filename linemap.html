@@ -7,7 +7,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.9.6 -->
+<!-- version: 1.9.7 -->
+<!-- 1.9.7: via_の隣接駅（分岐駅）判定が、前後の駅が両方とも直通先の路線にも実在するケース
+           （例: 阪神本線⇔阪神なんば線の「大物」「尼崎」のように、2駅とも両方の路線に
+           載っている場合）で、正しい分岐駅を選べず常に後方向（この例では大物）に決め打ち
+           されてしまっていたのを修正。直通先の路線側にある「戻り方向」のvia_
+           （こちらの路線を指しているvia_）の隣接駅を見て判定するように変更 -->
 <!-- 1.9.6: 「並走の並走」（1.9.2～1.9.4相当の双方向・推移的な伝播）を、安全策を何重にも
            入れた上で復活。1.9.4で実データにて富山地鉄以外の無関係な路線まで0%になった
            原因はコンソールエラー等が得られず特定できなかったため、原因そのものを潰すの
@@ -1184,6 +1189,22 @@ function renderMap() {
     return;
   }
 
+  // via_の直通先路線側に、こちらの路線(routeVal)を指すvia_があれば、その隣接駅を見る。
+  // （前後どちらか一方だけが実在する、単純に判定できるケースのみ使う。ambiguousな
+  //  ケースを再帰的に解決しようとすると無限ループの危険があるため、深追いはしない）
+  function findReverseViaNeighbor(targetRoute, sourceRoute) {
+    const targetRows = allstationData.filter(r => r["路線"] === targetRoute).map(r => r["駅名"]);
+    for (let i = 0; i < targetRows.length; i++) {
+      if (!isViaEntry(targetRows[i]) || viaTargetRoute(targetRows[i]) !== sourceRoute) continue;
+      let b = null, f = null;
+      for (let j = i - 1; j >= 0; j--) { if (!isViaEntry(targetRows[j])) { b = targetRows[j]; break; } }
+      for (let j = i + 1; j < targetRows.length; j++) { if (!isViaEntry(targetRows[j])) { f = targetRows[j]; break; } }
+      if (b && !f) return b;
+      if (f && !b) return f;
+    }
+    return null;
+  }
+
   // via_ → 隣接する実駅（拠点駅）でグループ化。路線の端にあるか（=直線continuation）、
   // 途中にあるか（=曲線の枝分かれ）も記録する。1つの駅に複数の直通先があってもOK
   //
@@ -1201,9 +1222,22 @@ function renderMap() {
     let neighbor = null, neighborIdx = -1;
     if (backward && forward) {
       const targetStations = allstationData.filter(r => r["路線"] === targetRoute).map(r => r["駅名"]);
-      if (targetStations.includes(backward) && !targetStations.includes(forward)) { neighbor = backward; neighborIdx = backwardIdx; }
-      else if (targetStations.includes(forward) && !targetStations.includes(backward)) { neighbor = forward; neighborIdx = forwardIdx; }
-      else { neighbor = backward; neighborIdx = backwardIdx; } // どちらも該当/非該当なら従来通り後方向を優先
+      const backwardOnTarget = targetStations.includes(backward);
+      const forwardOnTarget = targetStations.includes(forward);
+      if (backwardOnTarget && !forwardOnTarget) { neighbor = backward; neighborIdx = backwardIdx; }
+      else if (forwardOnTarget && !backwardOnTarget) { neighbor = forward; neighborIdx = forwardIdx; }
+      else if (backwardOnTarget && forwardOnTarget) {
+        // 前後どちらも直通先の路線に実在する（＝一部の駅を共用している）場合は、
+        // 直通先の路線側にある「戻り方向」のvia_（routeValを指しているvia_）の隣接駅を見て、
+        // どちらが本当の分岐駅かを判定する（例: 阪神本線⇔阪神なんば線の尼崎・大物のように、
+        // 2駅が両方の路線に載っているケースでも、実際の分岐駅を正しく選べるように）
+        const reverseNeighbor = findReverseViaNeighbor(targetRoute, routeVal);
+        if (reverseNeighbor === backward) { neighbor = backward; neighborIdx = backwardIdx; }
+        else if (reverseNeighbor === forward) { neighbor = forward; neighborIdx = forwardIdx; }
+        else { neighbor = backward; neighborIdx = backwardIdx; } // 判定できなければ従来通り後方向を優先
+      } else {
+        neighbor = backward; neighborIdx = backwardIdx; // どちらも非該当なら従来通り後方向を優先
+      }
     } else if (backward) {
       neighbor = backward; neighborIdx = backwardIdx;
     } else if (forward) {

@@ -1,6 +1,9 @@
 <!DOCTYPE html>
 <html lang="ja">
-<!-- version: 1.4.3 -->
+<!-- version: 1.4.4 -->
+<!-- 1.4.4: 「ダイヤキャッシュを今すぐ更新」ボタンを運営専用セクションから出して、
+           全ユーザーが使えるように変更（自分の端末のキャッシュしか触らない機能なので、
+           運営限定にする理由が無かったため） -->
 <!-- 1.4.3: 「ダイヤキャッシュを今すぐ更新」ボタンが自分の端末のキャッシュしか
            消せない点を明記。ダイヤ一覧の「最終更新」列による自動反映の説明を追加 -->
 <!-- 1.4.0: ショートカットに任意の時刻（HH:MM）を設定できるように対応 -->
@@ -302,17 +305,20 @@
   <h2>📋 登録済みショートカット</h2>
   <div class="shortcut-list" id="shortcutList"></div>
 
+  <!-- キャッシュクリアは自分の端末にしか影響しないので、全ユーザーが使えるようにしている -->
+  <h2>🧹 キャッシュ</h2>
+  <button type="button" class="btn-secondary" onclick="clearDiagramCache()">🔄 ダイヤキャッシュを今すぐ更新（自分の端末のみ）</button>
+  <p class="small" style="color:#999;">
+    ダイヤ一覧の「最終更新」列に日付を入れておけば、全ユーザーの端末で自動的に
+    キャッシュが更新されます（このボタンはあくまで自分の端末を今すぐ更新したい時用）
+  </p>
+
   <div id="adminSettingsSection" style="display:none;">
     <h2>🛠 運営設定</h2>
     <label class="toggle-row">
       <input type="checkbox" id="max10ModeToggle" onchange="localStorage.setItem('tuts4_max10_mode', this.checked ? 'TRUE' : '')">
       <span>候補一覧を「5分前〜1時間後」の窓を無視して、近い順に最大10件表示するモード</span>
     </label>
-    <button type="button" class="btn-secondary" onclick="clearDiagramCache()">🔄 ダイヤキャッシュを今すぐ更新（自分の端末のみ）</button>
-    <p class="small" style="color:#999;">
-      ダイヤ一覧の「最終更新」列に日付を入れておけば、全ユーザーの端末で自動的に
-      キャッシュが更新されます（このボタンはあくまで自分の端末を今すぐ更新したい時用）
-    </p>
   </div>
 </main>
 

@@ -8,7 +8,11 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>統計情報 | tuts4 — フル版</title>
-<!-- version: 1.11.0 -->
+<!-- version: 1.11.1 -->
+<!-- 1.11.1: AIチャットの吹き出しエリアに固定していた高さ制限（内側スクロール）を撤廃。
+           小さい枠の中で自動スクロールしていたせいで、長い回答の途中が見切れて
+           「文字が切れている」ように見えてしまっていたのを解消。ページ全体でスクロールし、
+           新しい吹き出しが出たら画面内に自動で入るように変更 -->
 <!-- 1.11.0: 「AIに質問する」をチャット形式に変更。質問と回答が吹き出しで積み上がっていき、
            続けて聞くと会話の流れ（履歴）を踏まえてAIが答えられるように。
            会話をリセットするボタンも追加 -->
@@ -177,7 +181,7 @@
       </div>
       <p class="small">あなたの乗車・降車記録をもとに、AIが分析して答えます（例：「今年新幹線何回乗った？」「一番多い時間帯は？」）。続けて聞くと会話の流れも踏まえて答えます</p>
 
-      <div id="aiChatLog" style="display:flex; flex-direction:column; gap:8px; max-height:360px; overflow-y:auto; padding:4px 2px; margin-top:8px;"></div>
+      <div id="aiChatLog" style="display:flex; flex-direction:column; gap:8px; padding:4px 2px; margin-top:8px;"></div>
 
       <div style="display:flex; gap:8px; margin-top:10px;">
         <input type="text" id="aiQuestionInput" placeholder="質問を入力…" style="flex:1; padding:10px 12px; border:1px solid #ddd; border-radius:8px; font-size:14px;">
@@ -958,7 +962,9 @@ function appendChatBubble(role, text, opts) {
   if (opts && opts.error) { bubble.style.background = "#FDECEA"; bubble.style.color = "#c0392b"; }
   bubble.textContent = text; // textContentで入れるのでエスケープ不要（XSS対策）
   log.appendChild(bubble);
-  log.scrollTop = log.scrollHeight;
+  // ログ自体には高さ制限を付けていない（ページ全体でスクロールする）ので、
+  // 新しい吹き出しが画面内に見えるようにスクロールする
+  bubble.scrollIntoView({ behavior: "smooth", block: "end" });
   return bubble;
 }
 
@@ -1020,7 +1026,7 @@ async function askAI() {
     _aiAsking = false;
     btn.disabled = false;
     btn.textContent = "送信";
-    document.getElementById("aiChatLog").scrollTop = document.getElementById("aiChatLog").scrollHeight;
+    pendingBubble.scrollIntoView({ behavior: "smooth", block: "end" });
   }
 }
 
