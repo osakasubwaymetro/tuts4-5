@@ -1,4 +1,27 @@
-// version: 1.32.7
+// version: 1.32.10
+// 1.32.10: 投稿の送信自体を、成否が分かる形（mode:"no-cors"のfire-and-forgetをやめ、
+//          Content-Type: text/plain で応答を読み取れる送信に変更。postToTransfersGASなどと
+//          同じパターン）に変更。これにより「GASの書き込みが完了したかどうか」を実際に
+//          確認できるようになったので、候補キャッシュの無効化（＝候補の再取得タイミング）は
+//          固定時間で見切り発車するのではなく、送信の成功が確認できた時だけ行うように変更。
+//          送信に失敗した場合は候補キャッシュに触らない（既存の自動リトライ＋1.32.9の
+//          TTLで整合する）。1.32.8/1.32.9の対策は「いつ起きたか分からない書き込み遅延」への
+//          時間稼ぎだったが、今回で根本原因（送信結果を確認せず時間だけで判断していたこと）
+//          そのものに対応した
+// 1.32.9: 「2日前に乗った記録が今日になっても過去の乗車記録の候補に出てこない」等、投稿から
+//         時間が経っていて明らかにGAS側の書き込みは終わっているはずなのに候補に出ない不具合を
+//         修正。原因は候補提案用キャッシュ（tuts4_community_ride_cache）に有効期限が無く、
+//         この端末で自分が投稿した時にしかクリアされない仕組みだったこと。一度でも不完全な
+//         状態（投稿漏れがある状態）のデータがキャッシュされると、次にこの端末で投稿するまで
+//         何日でもそのまま残り続けてしまっていた。キャッシュに取得時刻を持たせ、5分経ったら
+//         自動的に取り直すように変更（1.32.8の3秒待ちは新たに変なキャッシュが作られるのを
+//         防ぐだけで、既に古くなったキャッシュ自体を直すものではなかったため、あわせて対応）
+// 1.32.8: 投稿した直後すぐ「もう一度同じ駅で乗る」等をすると、その投稿自体が過去の乗車記録の
+//         候補に出てこないことがある不具合を修正。投稿の実送信はmode:"no-cors"の
+//         fire-and-forgetで、成否を待たず固定1秒後にキャッシュをクリアしていたため、
+//         GAS側の書き込みがその1秒より遅れると、まだ反映されてない状態のデータを
+//         取得・キャッシュしてしまっていたのが原因。投稿直後の再取得は、投稿から
+//         一定時間（3秒）経つまで少し待ってから行うように変更
 // 1.32.7: 過去の乗車記録の候補が「全然出ない・明らかに少ない」ことがある不具合を修正。
 //         投稿直後にキャッシュを強制クリアする仕組み上、直後の再取得がGASの不安定さで
 //         失敗すると、その空っぽの結果がページを開いている間ずっと固定キャッシュされて
@@ -581,9 +604,7 @@ function upload() {
   // ▼ここにGASのデプロイURLを入れる
   const scriptURL = "https://script.google.com/macros/s/AKfycbzuhYRx9gyb5J1a-6ZuxmcCepIU1hIMnuBo58wh5CTYMWE785YAnuJY4ckm_13-ZHc7/exec";
 
-  // GASの応答が遅いことがあるので、まずローカルに一時保存してから
-  // 画面上は1秒だけ「送信中」にして先に進める。実際の送信は裏で行い、
-  // 成功したらローカルから消す（失敗時は残しておいて、あとで自動リトライする）
+  // まずローカルに一時保存してから送信する（失敗時は残しておいて、あとで自動リトライする）
   const entryId = Date.now() + "_" + Math.random().toString(36).slice(2);
   const queue = getPendingPosts();
   queue.push({ id: entryId, payload });
@@ -591,32 +612,42 @@ function upload() {
 
   showLoadingPopup();
 
-  fetch(scriptURL, {
-    method: "POST",
-    mode: "no-cors",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  })
-    .then(() => {
-      setPendingPosts(getPendingPosts().filter(e => e.id !== entryId));
-    })
-    .catch(err => {
+  // 以前はmode:"no-cors"のfire-and-forget送信＋固定1秒後に候補キャッシュをクリアしていたが、
+  // 「送信できたか」を確認せずに時間だけで見切り発車していたため、GASの書き込みが1秒より
+  // 遅れると、まだ反映されていない状態のデータをキャッシュしてしまう不具合があった。
+  // 応答を読み取れる形（Content-Type: text/plain、他のGAS通信と同じパターン）で送信し、
+  // 実際に成功が確認できたタイミングでだけ候補キャッシュを無効化するように変更した
+  (async () => {
+    let confirmed = false;
+    try {
+      const res = await fetch(scriptURL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        confirmed = true;
+        setPendingPosts(getPendingPosts().filter(e => e.id !== entryId));
+      } else {
+        console.error("投稿送信エラー（あとで自動的に再送します）: HTTP " + res.status);
+      }
+    } catch (err) {
       console.error("送信エラー（あとで自動的に再送します）:", err);
-    });
+    }
 
-  setTimeout(async () => {
     logAction("post", `投稿: ${routeValue} / ${modelValue} ${numberValue} / ${stationValue} → ${boundValue}`);
     handleTripBookkeeping(routeValue, boundValue, timeValue, stationValue, sujitypeValue);
     hideLoadingPopup();
     showStampPopup(modelValue, numberValue);
-    resetForm();
-  }, 1000);
+    resetForm(confirmed);
+  })();
 }
 
 // 投稿完了後、次の入力に備えてフォームを全クリアする
-function resetForm() {
+// confirmed: GASへの送信が実際に成功したと確認できた場合のみtrue。
+// 送信に失敗した（＝実際にはまだ反映されていない）場合は候補キャッシュを触らない
+// （キューに残って自動リトライされるのと、キャッシュのTTL切れでいずれ整合する）
+function resetForm(confirmed) {
   ["area", "type", "country", "route", "model", "number"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = "";
@@ -644,9 +675,14 @@ function resetForm() {
   const resultBox = document.getElementById("geoStationResult");
   if (resultBox) resultBox.innerHTML = "";
 
-  // 直近の投稿を反映できるよう、乗車履歴キャッシュ（候補提案用）は無効化しておく
-  localStorage.removeItem("tuts4_community_ride_cache");
-  _rideHistoryPromise = null;
+  // 直近の投稿を反映できるよう、乗車履歴キャッシュ（候補提案用）は無効化しておく。
+  // 送信の成功が確認できた時だけ行う（confirmedがfalseの時は、実際にはまだGAS側に
+  // 反映されていない可能性が高いので、ここではキャッシュに触らない）
+  if (confirmed) {
+    localStorage.removeItem("tuts4_community_ride_cache");
+    _rideHistoryPromise = null;
+    _lastPostAt = Date.now(); // 直後の再取得はgetRideHistoryCached側で念のため少し待ってから行う
+  }
 
   // 入力内容の下書きも消す（クリアボタン／投稿完了のどちらでもここを通る）
   localStorage.removeItem("tuts4_form_draft");
@@ -1248,6 +1284,24 @@ function openModalLoading(title, message) {
     「投稿履歴」「統計」は引き続き自分の分だけ表示・保存する） */
 let _rideHistoryPromise = null;
 
+// 投稿の実送信は mode:"no-cors" のfire-and-forgetで、成否を待たず固定1秒後に
+// resetForm()（＝候補キャッシュのクリア）を呼んでいる。GAS側の書き込みがその1秒より
+// 遅れることがあり、投稿直後すぐ「もう一度乗る」等でこの関数が呼ばれると、まだ
+// スプレッドシートに反映されていない状態のデータを取得・キャッシュしてしまい、
+// 「明らかに投稿したはずの記録が候補に出ない」ことがあった。
+// 対策として、投稿直後の再取得だけは少し間を空けてから実際に取得しにいく
+let _lastPostAt = 0;
+const POST_SETTLE_MS = 3000; // 投稿からこの時間が経つまでは、再取得を少し待つ
+
+// このキャッシュには有効期限が無く、自分がこの端末で投稿した時だけクリアされる仕組みだった。
+// そのため、何らかの理由で一度でも「不完全な状態（投稿漏れがある状態）」のデータが
+// キャッシュされてしまうと、次に自分がこの端末で投稿するまで何日でもそのまま
+// 残り続けてしまい、「2日前に乗った記録が今日になっても候補に出てこない」といった
+// 不具合の原因になっていた（1.32.8の3秒待ちは新たに変な状態がキャッシュされるのを
+// 防ぐだけで、既に古くなってしまったキャッシュ自体を直すものではなかった）。
+// 対策として、キャッシュに取得時刻を持たせ、一定時間が経ったら自動的に取り直すようにする
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5分経ったらキャッシュを自動的に取り直す
+
 async function getRideHistoryCached() {
   if (_rideHistoryPromise) return _rideHistoryPromise;
 
@@ -1257,11 +1311,22 @@ async function getRideHistoryCached() {
     if (cached) {
       try {
         const parsed = JSON.parse(cached);
-        // 空配列がそのままキャッシュされてしまっていた場合（過去の取得失敗の残骸）は
-        // 使わず、下の取得処理に進んで取り直す
-        if (Array.isArray(parsed) && parsed.length) return parsed;
+        // 新形式（{data, cachedAt}）：有効期限内ならそのまま使う
+        if (parsed && Array.isArray(parsed.data) && parsed.data.length && typeof parsed.cachedAt === "number") {
+          if (Date.now() - parsed.cachedAt < CACHE_TTL_MS) return parsed.data;
+        } else if (Array.isArray(parsed) && parsed.length) {
+          // 旧形式（配列そのまま）の残骸：有効期限の概念が無いので、念のため一度だけ
+          // そのまま使わず取り直す（stale寄りに倒す）
+        }
       } catch (e) { /* 壊れてたら取り直す */ }
       localStorage.removeItem(CACHE_KEY);
+    }
+
+    // 直近の投稿からまだ日が浅い（＝GAS側の書き込みがまだ終わってない可能性がある）
+    // 場合は、その分だけ待ってから取得しにいく
+    const sincePost = Date.now() - _lastPostAt;
+    if (_lastPostAt && sincePost < POST_SETTLE_MS) {
+      await new Promise(r => setTimeout(r, POST_SETTLE_MS - sincePost));
     }
 
     const RIDES_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
@@ -1275,7 +1340,7 @@ async function getRideHistoryCached() {
         const all = await res.json();
         if (!Array.isArray(all)) throw new Error("不正なレスポンス形式");
 
-        localStorage.setItem(CACHE_KEY, JSON.stringify(all));
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ data: all, cachedAt: Date.now() }));
         return all;
       } catch (e) {
         console.error(`乗車履歴の取得に失敗（${attempt}/${MAX_ATTEMPTS}回目）:`, e);
