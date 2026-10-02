@@ -1,4 +1,17 @@
-// version: 1.33.0
+// version: 1.33.1
+// 1.33.1: 【本命】「過去の乗車記録から選ぶ」の候補が、ダイヤ（運用シート）由来のものしか
+//         出てこなくなる不具合を修正。原因は2つの処理の組み合わせだった。
+//         ①候補の重複除去が「種別＋行先」だけをキーにしていて時刻を見ていなかったため、
+//         同じ種別・行先で時刻違いの過去記録が複数あっても、現在時刻に一番近い1件しか
+//         残らなかった。②さらにダイヤ側の候補とマージする際、発車時刻（分単位）が
+//         一致する過去の乗車記録はダイヤ側に差し替えて消す処理があり、①で生き残った
+//         唯一の候補がダイヤの発車時刻と一致すると、それも消されてしまっていた。
+//         結果、過去の乗車記録ベースの候補が実質0件になり、ダイヤ由来の候補しか
+//         表示されなくなっていた（1.32.8〜1.33.0のキャッシュ鮮度対策は見当違いで、
+//         本当の原因はキャッシュではなくこの絞り込みロジック側にあった）。
+//         ①は重複除去のキーに時刻（分単位）も含めるように変更し、時刻違いの記録は
+//         別候補として残るようにした。②はダイヤ側とのマージ条件に行先の一致も
+//         追加し、「本当に同じ列車」の時だけ差し替えるように厳格化した
 // 1.33.0: 過去の乗車記録候補のキャッシュ方式を、show.html（過去の乗車記録一覧）と同じ
 //         「キャッシュがあれば即表示→裏で必ず最新を取り直して、届いたら描き直す」方式に
 //         作り直した。今までは「TTL（5分）が切れるまでキャッシュを使い回す」方式で、
@@ -1778,7 +1791,12 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
       .sort((a, b) => (a._diff - b._diff) || (b.time - a.time))
       .slice(0, 10);
 
-    // 種別・行先の組み合わせで重複除去（ショートカットを優先して先に登録）
+    // 種別・行先・時刻の組み合わせで重複除去（ショートカットを優先して先に登録）。
+    // 以前は時刻を見ずに「種別＋行先」だけで1件に絞っていたため、同じ種別・行先でも
+    // 時刻違いの記録が複数あるとその中の1件（現在時刻に一番近いもの）しか残らず、
+    // さらにそれが下のダイヤ側マージで同じ発車時刻のダイヤ候補に差し替えられてしまうと、
+    // 過去の乗車記録ベースの候補が実質0件になり「ダイヤ由来の候補しか出ない」ことがあった。
+    // 時刻（分単位）もキーに含め、時刻違いはちゃんと別候補として残すように変更
     const seen = new Set();
     const candidates = [];
 
@@ -1810,12 +1828,14 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
       });
 
     pool.forEach(c => {
-      const key = c.type + "|" + c.bound;
+      const key = c.type + "|" + c.bound + "|" + formatHM(c.time);
       if (!seen.has(key)) { seen.add(key); candidates.push(c); }
     });
 
     // ダイヤデータ（運用シート）から、今の時間帯に近い発車時刻を候補として混ぜる。
-    // 同じ発車時刻（同じ列車）の乗車記録が既にあれば、そちらは消して運番の方を優先する
+    // 「本当に同じ列車」（発車時刻・行先が両方一致）の乗車記録が既にあれば、そちらは消して
+    // 運番が分かるダイヤ側を優先する（行先まで見ずに時刻だけで判定すると、たまたま同じ分に
+    // 発車する別方面の記録まで巻き込んで消してしまうことがあったため、行先一致も条件に追加）
     const diagramRaw = await getDiagramCandidates(routeVal, boardingStation, todayIsWeekendType);
     if (myToken !== _historyPopupToken) return;
     diagramRaw
@@ -1826,7 +1846,8 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
       .forEach(c => {
         const cHM = formatHM(c.time);
         for (let i = candidates.length - 1; i >= 0; i--) {
-          if (!candidates[i].isDiagram && !candidates[i].isShortcut && formatHM(candidates[i].time) === cHM) {
+          if (!candidates[i].isDiagram && !candidates[i].isShortcut &&
+              formatHM(candidates[i].time) === cHM && candidates[i].bound === c.bound) {
             candidates.splice(i, 1);
           }
         }
