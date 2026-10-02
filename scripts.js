@@ -1,4 +1,16 @@
-// version: 1.32.12
+// version: 1.33.0
+// 1.33.0: 過去の乗車記録候補のキャッシュ方式を、show.html（過去の乗車記録一覧）と同じ
+//         「キャッシュがあれば即表示→裏で必ず最新を取り直して、届いたら描き直す」方式に
+//         作り直した。今までは「TTL（5分）が切れるまでキャッシュを使い回す」方式で、
+//         取りに行くかどうかを時間で判断していたため、TTLの考え方自体やその前の
+//         1.32.8〜1.32.11のpost-settle待ち等、場当たり的な対策を積み重ねる形になって
+//         しまっていた。これをやめて、候補ポップアップを開くたびに必ず最新をGASへ
+//         取りに行くように変更（show.htmlが毎回GAS_URLへ取りに行っているのと同じ考え方）。
+//         ポップアップを開いた瞬間はキャッシュがあればそれで即座に候補を出し、その裏で
+//         必ず最新を取得して、内容が変わっていれば候補を描き直す。投稿時もキャッシュを
+//         消さずそのまま残すように変更（消すと取り直しが終わるまで「確認中...」しか
+//         出せなくなるため）。post-settle待ち（投稿から3秒は再取得を待つ）はそのまま
+//         残してあるので、投稿直後の書き込み未反映対策自体は引き続き効く
 // 1.32.12: 最寄り駅から選んだ後の「方面を選択」ボタンの表示を、終着駅名だけ（例:「大日 方面」）
 //          から、乗車駅から見てその方向にある次の実駅＋終着駅（例:「谷町六丁目・大日 方面」）に
 //          変更。乗車駅から見てどっちへ進むかが名前だけで分かりやすいように、via_直通マーカーは
@@ -684,10 +696,11 @@ function resetForm() {
   const resultBox = document.getElementById("geoStationResult");
   if (resultBox) resultBox.innerHTML = "";
 
-  // 直近の投稿を反映できるよう、乗車履歴キャッシュ（候補提案用）は無効化しておく
-  localStorage.removeItem("tuts4_community_ride_cache");
-  _rideHistoryPromise = null;
-  _lastPostAt = Date.now(); // 直後の再取得はgetRideHistoryCached側で少し待ってから行う（1.32.8）
+  // 乗車履歴キャッシュ（候補提案用）は消さずそのまま残す。候補ポップアップを開くたびに
+  // getRideHistoryCached()が必ず最新を取りに行くので、消さなくても次に開いた時には
+  // ちゃんと最新になる（消してしまうと、取り直しが終わるまでの間「確認中...」しか
+  // 出せなくなってしまう）。_lastPostAtだけ記録し、直後の再取得は少し待ってから行う
+  _lastPostAt = Date.now();
 
   // 入力内容の下書きも消す（クリアボタン／投稿完了のどちらでもここを通る）
   localStorage.removeItem("tuts4_form_draft");
@@ -1307,45 +1320,43 @@ function openModalLoading(title, message) {
    （ユーザー名は一切表示せず、種別・行先・時刻の傾向を見るだけのため。
     「投稿履歴」「統計」は引き続き自分の分だけ表示・保存する） */
 let _rideHistoryPromise = null;
+const RIDE_HISTORY_CACHE_KEY = "tuts4_community_ride_cache";
 
 // 投稿の実送信は mode:"no-cors" のfire-and-forgetで、成否を待たず固定1秒後に
-// resetForm()（＝候補キャッシュのクリア）を呼んでいる。GAS側の書き込みがその1秒より
+// resetForm()（＝投稿時刻の記録）を呼んでいる。GAS側の書き込みがその1秒より
 // 遅れることがあり、投稿直後すぐ「もう一度乗る」等でこの関数が呼ばれると、まだ
-// スプレッドシートに反映されていない状態のデータを取得・キャッシュしてしまい、
-// 「明らかに投稿したはずの記録が候補に出ない」ことがあった。
-// 対策として、投稿直後の再取得だけは少し間を空けてから実際に取得しにいく
+// スプレッドシートに反映されていない状態のデータを取得してしまうことがあるため、
+// 投稿直後の再取得だけは少し間を空けてから実際に取得しにいく
 let _lastPostAt = 0;
 const POST_SETTLE_MS = 3000; // 投稿からこの時間が経つまでは、再取得を少し待つ
 
-// このキャッシュには有効期限が無く、自分がこの端末で投稿した時だけクリアされる仕組みだった。
-// そのため、何らかの理由で一度でも「不完全な状態（投稿漏れがある状態）」のデータが
-// キャッシュされてしまうと、次に自分がこの端末で投稿するまで何日でもそのまま
-// 残り続けてしまい、「2日前に乗った記録が今日になっても候補に出てこない」といった
-// 不具合の原因になっていた（1.32.8の3秒待ちは新たに変な状態がキャッシュされるのを
-// 防ぐだけで、既に古くなってしまったキャッシュ自体を直すものではなかった）。
-// 対策として、キャッシュに取得時刻を持たせ、一定時間が経ったら自動的に取り直すようにする
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5分経ったらキャッシュを自動的に取り直す
+// show.html（過去の乗車記録一覧）と同じ考え方：キャッシュに有効期限を設けて「取りに行くか
+// どうか迷う」のはやめ、候補ポップアップを開くたびに必ず最新をGASへ取りに行くようにした。
+// キャッシュは「通信が終わるまでの間、とりあえず前回分を即表示しておく」ためだけに使う
+// （peekCachedRideHistory）。これなら、どんな理由であれ一度古いデータが混ざっても、
+// 次にポップアップを開いた瞬間に必ず最新へ更新される
 
+// 直前に取得できていたデータを、通信を待たずに同期的に返す（無ければnull）。
+// 候補ポップアップを開いた瞬間、まずこれで即表示してから裏で最新を取りに行くのに使う
+function peekCachedRideHistory() {
+  const cached = localStorage.getItem(RIDE_HISTORY_CACHE_KEY);
+  if (!cached) return null;
+  try {
+    const parsed = JSON.parse(cached);
+    if (parsed && Array.isArray(parsed.data) && parsed.data.length) return parsed.data;
+    if (Array.isArray(parsed) && parsed.length) return parsed; // 旧形式の残骸
+  } catch (e) { /* 壊れてたら無視 */ }
+  return null;
+}
+
+// 呼ばれるたびに必ずGASから最新の乗車記録を取りに行く（キャッシュのTTLで古いまま
+// 使い回してしまうことが無いようにするため）。同時に複数箇所から呼ばれても二重に
+// 通信しないよう、取得中は同じPromiseを使い回し、完了したら次の呼び出しでまた
+// 最新を取りに行けるようにリセットする
 async function getRideHistoryCached() {
   if (_rideHistoryPromise) return _rideHistoryPromise;
 
   _rideHistoryPromise = (async () => {
-    const CACHE_KEY = "tuts4_community_ride_cache";
-    const cached = localStorage.getItem(CACHE_KEY);
-    if (cached) {
-      try {
-        const parsed = JSON.parse(cached);
-        // 新形式（{data, cachedAt}）：有効期限内ならそのまま使う
-        if (parsed && Array.isArray(parsed.data) && parsed.data.length && typeof parsed.cachedAt === "number") {
-          if (Date.now() - parsed.cachedAt < CACHE_TTL_MS) return parsed.data;
-        } else if (Array.isArray(parsed) && parsed.length) {
-          // 旧形式（配列そのまま）の残骸：有効期限の概念が無いので、念のため一度だけ
-          // そのまま使わず取り直す（stale寄りに倒す）
-        }
-      } catch (e) { /* 壊れてたら取り直す */ }
-      localStorage.removeItem(CACHE_KEY);
-    }
-
     // 直近の投稿からまだ日が浅い（＝GAS側の書き込みがまだ終わってない可能性がある）
     // 場合は、その分だけ待ってから取得しにいく
     const sincePost = Date.now() - _lastPostAt;
@@ -1364,7 +1375,7 @@ async function getRideHistoryCached() {
         const all = await res.json();
         if (!Array.isArray(all)) throw new Error("不正なレスポンス形式");
 
-        localStorage.setItem(CACHE_KEY, JSON.stringify({ data: all, cachedAt: Date.now() }));
+        localStorage.setItem(RIDE_HISTORY_CACHE_KEY, JSON.stringify({ data: all, cachedAt: Date.now() }));
         return all;
       } catch (e) {
         console.error(`乗車履歴の取得に失敗（${attempt}/${MAX_ATTEMPTS}回目）:`, e);
@@ -1374,14 +1385,18 @@ async function getRideHistoryCached() {
       }
     }
 
-    // 全部失敗した場合：この失敗結果を「ずっと使えるキャッシュ」として固定してしまうと、
-    // 同じページを開いている間ずっと過去の乗車記録の候補が出なくなってしまうため、
-    // _rideHistoryPromise 自体をリセットして、次に呼ばれた時にまた最初から取得を試みるようにする
-    _rideHistoryPromise = null;
-    return [];
+    // 全部失敗した場合：古いキャッシュが残っていればそれにフォールバックする
+    // （無ければ空配列。候補が一時的に出なくても、次に開いた時また取り直しにいく）
+    console.error("乗車履歴の取得に失敗したため、前回のキャッシュにフォールバックします");
+    return peekCachedRideHistory() || [];
   })();
 
-  return _rideHistoryPromise;
+  try {
+    return await _rideHistoryPromise;
+  } finally {
+    // 完了したらリセットし、次に呼ばれた時はまた最新を取りに行くようにする
+    _rideHistoryPromise = null;
+  }
 }
 
 // ページを開いた時点で先読みを開始しておく（乗車駅を選ぶ頃には取得済みにしておくため）
@@ -1594,10 +1609,16 @@ async function getDiagramCandidates(routeVal, boardingStation, todayIsWeekendTyp
   return results;
 }
 
+// show.htmlの「キャッシュがあれば即表示→裏で必ず最新を取り直して、変わってたら更新」と
+// 同じ考え方。候補ポップアップを開くたびに必ずgetRideHistoryCached()で最新を取りに行き、
+// 届いたタイミングでもう一度候補を描き直す。ポップアップが閉じられたり、別の駅・方面で
+// 開き直されたりした後の古い結果で上書きしないよう、呼び出しごとにトークンで判定する
+let _historyPopupToken = 0;
+
 async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
+  const myToken = ++_historyPopupToken;
   setModalTitle("過去の乗車記録から選ぶ");
   const list = document.getElementById("historyModalList");
-  list.innerHTML = '<p class="modal-loading">過去の乗車記録を確認中...</p>';
   document.getElementById("historyModalOverlay").classList.add("show");
 
   const stationsOnRoute = (allstationData || []).filter(r => r["路線"] === routeVal);
@@ -1691,7 +1712,6 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
   const revisionDate = revisionRaw ? new Date(revisionRaw) : null;
   const hasValidRevisionDate = revisionDate && !isNaN(revisionDate);
 
-  const rides = await getRideHistoryCached();
   const holidaySet = await getHolidaySet();
   const todayIsWeekendType = isWeekendType(getEffectiveNow(), holidaySet);
 
@@ -1700,125 +1720,146 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
   function isFlaggedExtra(v) {
     return ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
   }
-  const raw = [];
-  rides
-    .filter(r => r["路線"] === routeVal && r["乗車駅"] === boardingStation && !isFlaggedExtra(r["臨時"]))
-    .forEach(r => {
-      const bounds = String(r["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
-      const types = String(r["種別"] || "").split("/").map(s => s.trim());
-      const parsedTime = new Date(r["時刻"] || r["発車時刻"] || "");
-      const time = isNaN(parsedTime) ? null : parsedTime;
 
-      // ダイヤ改正日より前の記録は、今のダイヤと違う可能性があるので除外
-      if (hasValidRevisionDate && time && time < revisionDate) return;
+  // ridesの配列を受け取って候補を組み立て、描画する。即時表示（キャッシュ）と
+  // 裏取得後の最新データ、どちらが来た時もこれを呼ぶ。ポップアップが別の駅・方面に
+  // 切り替わっていたら（myTokenが古くなっていたら）何もしない
+  async function buildAndRender(rides) {
+    if (myToken !== _historyPopupToken) return;
 
-      bounds.forEach((b, i) => {
-        const t = types[i] || types[0] || "";
-        const bIndex = indexOf(b);
+    const raw = [];
+    rides
+      .filter(r => r["路線"] === routeVal && r["乗車駅"] === boardingStation && !isFlaggedExtra(r["臨時"]))
+      .forEach(r => {
+        const bounds = String(r["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
+        const types = String(r["種別"] || "").split("/").map(s => s.trim());
+        const parsedTime = new Date(r["時刻"] || r["発車時刻"] || "");
+        const time = isNaN(parsedTime) ? null : parsedTime;
 
-        // 行先が方面判定できる（駅リストにある）場合のみ方向でも絞り込む。
-        // 直通先（このルート上には無い駅）は、対応するvia_を探して方向を判定する。
-        // それも判定できない場合はとりあえず候補に含める
-        if (computeMatchesDirection(bIndex, b)) {
-          raw.push({ type: t, bound: b, time, isWeekendType: time ? isWeekendType(time, holidaySet) : null });
+        // ダイヤ改正日より前の記録は、今のダイヤと違う可能性があるので除外
+        if (hasValidRevisionDate && time && time < revisionDate) return;
+
+        bounds.forEach((b, i) => {
+          const t = types[i] || types[0] || "";
+          const bIndex = indexOf(b);
+
+          // 行先が方面判定できる（駅リストにある）場合のみ方向でも絞り込む。
+          // 直通先（このルート上には無い駅）は、対応するvia_を探して方向を判定する。
+          // それも判定できない場合はとりあえず候補に含める
+          if (computeMatchesDirection(bIndex, b)) {
+            raw.push({ type: t, bound: b, time, isWeekendType: time ? isWeekendType(time, holidaySet) : null });
+          }
+        });
+      });
+
+    // 新しい順に並べ、現在時刻から+30分以内のものを優先。無ければ直近10件にフォールバック
+    raw.sort((a, b) => {
+      if (!a.time) return 1;
+      if (!b.time) return -1;
+      return b.time - a.time;
+    });
+
+    // 平日ダイヤ・土休日ダイヤは別物なので、今日と同じ「曜日タイプ」の記録があればそちらを優先する
+    // （無ければ曜日タイプを問わず全部を対象にフォールバック）
+    const sameDayType = raw.filter(c => c.isWeekendType === todayIsWeekendType);
+    const dayTypePool = sameDayType.length ? sameDayType : raw;
+
+    // 「5分前〜1時間後」の窓の中にある記録だけを対象にし、近い順に並べる。
+    // 窓の中に10件以上あれば近い方から10件、10件未満ならその窓の中の分だけ全部出す。
+    // 運営設定で「max10件表示モード」がONなら、この窓の制限を無視して近い順に最大10件出す
+    const max10Mode = localStorage.getItem("tuts4_max10_mode") === "TRUE";
+    const nowMin = timeOfDayMinutes(getEffectiveNow());
+    const refMin = (nowMin - 5 + 1440) % 1440;
+    const WINDOW_MINUTES = 65; // 5分前 〜 1時間後 ＝ 合計65分の窓
+    const pool = dayTypePool
+      .filter(c => c.time)
+      .map(c => ({ ...c, _diff: (timeOfDayMinutes(c.time) - refMin + 1440) % 1440 }))
+      .filter(c => max10Mode || c._diff <= WINDOW_MINUTES)
+      .sort((a, b) => (a._diff - b._diff) || (b.time - a.time))
+      .slice(0, 10);
+
+    // 種別・行先の組み合わせで重複除去（ショートカットを優先して先に登録）
+    const seen = new Set();
+    const candidates = [];
+
+    // 事前登録しておいたショートカット。時刻を設定していれば、その時間帯に近い時だけ候補に混ぜる
+    // （設定していなければ今まで通り常に候補に混ぜる）
+    function shortcutTimeDiffMinutes(hhmm) {
+      const parts = String(hhmm || "").split(":").map(Number);
+      if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) return Infinity;
+      const t = parts[0] * 60 + parts[1];
+      const diff = Math.abs(t - nowMin);
+      return Math.min(diff, 1440 - diff);
+    }
+
+    let savedShortcuts = [];
+    try { savedShortcuts = JSON.parse(localStorage.getItem("tuts4_shortcuts") || "[]"); } catch (e) { /* ignore */ }
+    savedShortcuts
+      .filter(s => s.route === routeVal && s.station === boardingStation && s.bound)
+      .filter(s => computeMatchesDirection(indexOf(s.bound), s.bound))
+      .filter(s => !s.time || shortcutTimeDiffMinutes(s.time) <= 90) // 時刻設定ありは前後90分以内だけ
+      .forEach(s => {
+        const key = s.sujitype + "|" + s.bound;
+        if (!seen.has(key)) {
+          seen.add(key);
+          candidates.push({
+            type: s.sujitype || "", bound: s.bound, time: null,
+            isShortcut: true, shortcutName: s.name, shortcutTime: s.time || ""
+          });
         }
       });
+
+    pool.forEach(c => {
+      const key = c.type + "|" + c.bound;
+      if (!seen.has(key)) { seen.add(key); candidates.push(c); }
     });
 
-  // 新しい順に並べ、現在時刻から+30分以内のものを優先。無ければ直近10件にフォールバック
-  raw.sort((a, b) => {
-    if (!a.time) return 1;
-    if (!b.time) return -1;
-    return b.time - a.time;
-  });
-
-  // 平日ダイヤ・土休日ダイヤは別物なので、今日と同じ「曜日タイプ」の記録があればそちらを優先する
-  // （無ければ曜日タイプを問わず全部を対象にフォールバック）
-  const sameDayType = raw.filter(c => c.isWeekendType === todayIsWeekendType);
-  const dayTypePool = sameDayType.length ? sameDayType : raw;
-
-  // 「5分前〜1時間後」の窓の中にある記録だけを対象にし、近い順に並べる。
-  // 窓の中に10件以上あれば近い方から10件、10件未満ならその窓の中の分だけ全部出す。
-  // 運営設定で「max10件表示モード」がONなら、この窓の制限を無視して近い順に最大10件出す
-  const max10Mode = localStorage.getItem("tuts4_max10_mode") === "TRUE";
-  const nowMin = timeOfDayMinutes(getEffectiveNow());
-  const refMin = (nowMin - 5 + 1440) % 1440;
-  const WINDOW_MINUTES = 65; // 5分前 〜 1時間後 ＝ 合計65分の窓
-  const pool = dayTypePool
-    .filter(c => c.time)
-    .map(c => ({ ...c, _diff: (timeOfDayMinutes(c.time) - refMin + 1440) % 1440 }))
-    .filter(c => max10Mode || c._diff <= WINDOW_MINUTES)
-    .sort((a, b) => (a._diff - b._diff) || (b.time - a.time))
-    .slice(0, 10);
-
-  // 種別・行先の組み合わせで重複除去（ショートカットを優先して先に登録）
-  const seen = new Set();
-  const candidates = [];
-
-  // 事前登録しておいたショートカット。時刻を設定していれば、その時間帯に近い時だけ候補に混ぜる
-  // （設定していなければ今まで通り常に候補に混ぜる）
-  function shortcutTimeDiffMinutes(hhmm) {
-    const parts = String(hhmm || "").split(":").map(Number);
-    if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) return Infinity;
-    const t = parts[0] * 60 + parts[1];
-    const diff = Math.abs(t - nowMin);
-    return Math.min(diff, 1440 - diff);
-  }
-
-  let savedShortcuts = [];
-  try { savedShortcuts = JSON.parse(localStorage.getItem("tuts4_shortcuts") || "[]"); } catch (e) { /* ignore */ }
-  savedShortcuts
-    .filter(s => s.route === routeVal && s.station === boardingStation && s.bound)
-    .filter(s => computeMatchesDirection(indexOf(s.bound), s.bound))
-    .filter(s => !s.time || shortcutTimeDiffMinutes(s.time) <= 90) // 時刻設定ありは前後90分以内だけ
-    .forEach(s => {
-      const key = s.sujitype + "|" + s.bound;
-      if (!seen.has(key)) {
-        seen.add(key);
-        candidates.push({
-          type: s.sujitype || "", bound: s.bound, time: null,
-          isShortcut: true, shortcutName: s.name, shortcutTime: s.time || ""
-        });
-      }
-    });
-
-  pool.forEach(c => {
-    const key = c.type + "|" + c.bound;
-    if (!seen.has(key)) { seen.add(key); candidates.push(c); }
-  });
-
-  // ダイヤデータ（運用シート）から、今の時間帯に近い発車時刻を候補として混ぜる。
-  // 同じ発車時刻（同じ列車）の乗車記録が既にあれば、そちらは消して運番の方を優先する
-  const diagramRaw = await getDiagramCandidates(routeVal, boardingStation, todayIsWeekendType);
-  diagramRaw
-    .map(c => ({ ...c, _diff: (timeOfDayMinutes(c.time) - refMin + 1440) % 1440 }))
-    .filter(c => max10Mode || c._diff <= WINDOW_MINUTES)
-    .sort((a, b) => a._diff - b._diff)
-    .slice(0, 10)
-    .forEach(c => {
-      const cHM = formatHM(c.time);
-      for (let i = candidates.length - 1; i >= 0; i--) {
-        if (!candidates[i].isDiagram && !candidates[i].isShortcut && formatHM(candidates[i].time) === cHM) {
-          candidates.splice(i, 1);
+    // ダイヤデータ（運用シート）から、今の時間帯に近い発車時刻を候補として混ぜる。
+    // 同じ発車時刻（同じ列車）の乗車記録が既にあれば、そちらは消して運番の方を優先する
+    const diagramRaw = await getDiagramCandidates(routeVal, boardingStation, todayIsWeekendType);
+    if (myToken !== _historyPopupToken) return;
+    diagramRaw
+      .map(c => ({ ...c, _diff: (timeOfDayMinutes(c.time) - refMin + 1440) % 1440 }))
+      .filter(c => max10Mode || c._diff <= WINDOW_MINUTES)
+      .sort((a, b) => a._diff - b._diff)
+      .slice(0, 10)
+      .forEach(c => {
+        const cHM = formatHM(c.time);
+        for (let i = candidates.length - 1; i >= 0; i--) {
+          if (!candidates[i].isDiagram && !candidates[i].isShortcut && formatHM(candidates[i].time) === cHM) {
+            candidates.splice(i, 1);
+          }
         }
+        candidates.push(c);
+      });
+
+    // 時刻が分かるものは全部まとめて時刻順に。時刻未設定のショートカットだけ先頭に残す
+    function sortableMinutes(c) {
+      if (c.time) return timeOfDayMinutes(c.time);
+      if (c.isShortcut && c.shortcutTime) {
+        const [h, m] = c.shortcutTime.split(":").map(Number);
+        if (!isNaN(h) && !isNaN(m)) return h * 60 + m;
       }
-      candidates.push(c);
-    });
-
-  // 時刻が分かるものは全部まとめて時刻順に。時刻未設定のショートカットだけ先頭に残す
-  function sortableMinutes(c) {
-    if (c.time) return timeOfDayMinutes(c.time);
-    if (c.isShortcut && c.shortcutTime) {
-      const [h, m] = c.shortcutTime.split(":").map(Number);
-      if (!isNaN(h) && !isNaN(m)) return h * 60 + m;
+      return null;
     }
-    return null;
-  }
-  const noTimeCands = candidates.filter(c => sortableMinutes(c) === null);
-  const timedCands = candidates.filter(c => sortableMinutes(c) !== null).sort((a, b) => sortableMinutes(a) - sortableMinutes(b));
-  const sortedCandidates = [...noTimeCands, ...timedCands];
+    const noTimeCands = candidates.filter(c => sortableMinutes(c) === null);
+    const timedCands = candidates.filter(c => sortableMinutes(c) !== null).sort((a, b) => sortableMinutes(a) - sortableMinutes(b));
+    const sortedCandidates = [...noTimeCands, ...timedCands];
 
-  renderHistoryPopupList(sortedCandidates, routeVal, boardingStation, dirVal);
+    renderHistoryPopupList(sortedCandidates, routeVal, boardingStation, dirVal);
+  }
+
+  // show.htmlと同じ「キャッシュがあれば即表示→裏で必ず最新を取り直す」方式。
+  // キャッシュが無い（この端末で一度もまだ取得できていない）時だけ「確認中」を表示して待つ
+  const instant = peekCachedRideHistory();
+  if (instant) {
+    await buildAndRender(instant);
+  } else {
+    list.innerHTML = '<p class="modal-loading">過去の乗車記録を確認中...</p>';
+  }
+
+  const fresh = await getRideHistoryCached();
+  await buildAndRender(fresh);
 }
 
 function renderHistoryPopupList(candidates, routeVal, boardingStation, dirVal) {
