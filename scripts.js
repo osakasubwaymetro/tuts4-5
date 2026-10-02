@@ -1,4 +1,14 @@
-// version: 1.32.10
+// version: 1.32.11
+// 1.32.11: 【重要】1.32.10で投稿の送信方式をmode:"no-cors"から「応答を読み取れる送信」に
+//          変更したところ、rides_gas側がその方式に対応しておらずCORSで応答が読めず常に
+//          失敗扱いになってしまい、過去の乗車記録ベースの候補がほとんど出なくなる
+//          （ダイヤ由来の候補しか出ない）重大な不具合を起こしてしまっていた。投稿の実送信を
+//          元のmode:"no-cors"のfire-and-forgetに戻し、候補キャッシュの無効化も投稿直後に
+//          無条件で行う元の形に戻した（1.32.8のpost-settle待ち、1.32.9のTTLはそのまま有効
+//          なので、書き込み遅延への対策自体は引き続き効く）。送信結果を確認してから
+//          キャッシュを更新するという1.32.10の方向性自体は妥当だが、実装にrides_gas側との
+//          整合確認が足りなかった。再挑戦する場合はGAS側のレスポンス仕様を先に確認してから
+//          にする
 // 1.32.10: 投稿の送信自体を、成否が分かる形（mode:"no-cors"のfire-and-forgetをやめ、
 //          Content-Type: text/plain で応答を読み取れる送信に変更。postToTransfersGASなどと
 //          同じパターン）に変更。これにより「GASの書き込みが完了したかどうか」を実際に
@@ -612,42 +622,36 @@ function upload() {
 
   showLoadingPopup();
 
-  // 以前はmode:"no-cors"のfire-and-forget送信＋固定1秒後に候補キャッシュをクリアしていたが、
-  // 「送信できたか」を確認せずに時間だけで見切り発車していたため、GASの書き込みが1秒より
-  // 遅れると、まだ反映されていない状態のデータをキャッシュしてしまう不具合があった。
-  // 応答を読み取れる形（Content-Type: text/plain、他のGAS通信と同じパターン）で送信し、
-  // 実際に成功が確認できたタイミングでだけ候補キャッシュを無効化するように変更した
-  (async () => {
-    let confirmed = false;
-    try {
-      const res = await fetch(scriptURL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify(payload),
-      });
-      if (res.ok) {
-        confirmed = true;
-        setPendingPosts(getPendingPosts().filter(e => e.id !== entryId));
-      } else {
-        console.error("投稿送信エラー（あとで自動的に再送します）: HTTP " + res.status);
-      }
-    } catch (err) {
+  // 1.32.10で「応答を読み取れる送信（Content-Type: text/plain）」に変更したが、
+  // rides_gas側がこの方式のレスポンスに対応しておらず、CORSで応答が読めず常に失敗扱いに
+  // なってしまい、結果的に過去の乗車記録ベースの候補がほぼ出なくなる重大な不具合を
+  // 起こしてしまった。投稿の実送信は、元のmode:"no-cors"のfire-and-forgetに戻す
+  fetch(scriptURL, {
+    method: "POST",
+    mode: "no-cors",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  })
+    .then(() => {
+      setPendingPosts(getPendingPosts().filter(e => e.id !== entryId));
+    })
+    .catch(err => {
       console.error("送信エラー（あとで自動的に再送します）:", err);
-    }
+    });
 
+  setTimeout(async () => {
     logAction("post", `投稿: ${routeValue} / ${modelValue} ${numberValue} / ${stationValue} → ${boundValue}`);
     handleTripBookkeeping(routeValue, boundValue, timeValue, stationValue, sujitypeValue);
     hideLoadingPopup();
     showStampPopup(modelValue, numberValue);
-    resetForm(confirmed);
-  })();
+    resetForm();
+  }, 1000);
 }
 
 // 投稿完了後、次の入力に備えてフォームを全クリアする
-// confirmed: GASへの送信が実際に成功したと確認できた場合のみtrue。
-// 送信に失敗した（＝実際にはまだ反映されていない）場合は候補キャッシュを触らない
-// （キューに残って自動リトライされるのと、キャッシュのTTL切れでいずれ整合する）
-function resetForm(confirmed) {
+function resetForm() {
   ["area", "type", "country", "route", "model", "number"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = "";
@@ -675,14 +679,10 @@ function resetForm(confirmed) {
   const resultBox = document.getElementById("geoStationResult");
   if (resultBox) resultBox.innerHTML = "";
 
-  // 直近の投稿を反映できるよう、乗車履歴キャッシュ（候補提案用）は無効化しておく。
-  // 送信の成功が確認できた時だけ行う（confirmedがfalseの時は、実際にはまだGAS側に
-  // 反映されていない可能性が高いので、ここではキャッシュに触らない）
-  if (confirmed) {
-    localStorage.removeItem("tuts4_community_ride_cache");
-    _rideHistoryPromise = null;
-    _lastPostAt = Date.now(); // 直後の再取得はgetRideHistoryCached側で念のため少し待ってから行う
-  }
+  // 直近の投稿を反映できるよう、乗車履歴キャッシュ（候補提案用）は無効化しておく
+  localStorage.removeItem("tuts4_community_ride_cache");
+  _rideHistoryPromise = null;
+  _lastPostAt = Date.now(); // 直後の再取得はgetRideHistoryCached側で少し待ってから行う（1.32.8）
 
   // 入力内容の下書きも消す（クリアボタン／投稿完了のどちらでもここを通る）
   localStorage.removeItem("tuts4_form_draft");
