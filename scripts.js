@@ -1,4 +1,9 @@
-// version: 1.32.11
+// version: 1.32.12
+// 1.32.12: 最寄り駅から選んだ後の「方面を選択」ボタンの表示を、終着駅名だけ（例:「大日 方面」）
+//          から、乗車駅から見てその方向にある次の実駅＋終着駅（例:「谷町六丁目・大日 方面」）に
+//          変更。乗車駅から見てどっちへ進むかが名前だけで分かりやすいように、via_直通マーカーは
+//          飛ばして直近の実駅を調べて添えるようにした（環状線の内回り／外回り選択は元から
+//          同じ考え方で隣駅を添えていたので、それと揃えた形）
 // 1.32.11: 【重要】1.32.10で投稿の送信方式をmode:"no-cors"から「応答を読み取れる送信」に
 //          変更したところ、rides_gas側がその方式に対応しておらずCORSで応答が読めず常に
 //          失敗扱いになってしまい、過去の乗車記録ベースの候補がほとんど出なくなる
@@ -1219,15 +1224,31 @@ function startStationPopupFlow() {
   const resolvedFirst = resolveTerminus(first, 0);
   const resolvedLast = resolveTerminus(last, stationsOnRoute.length - 1);
 
-  // 乗車駅自体が終着駅なら、その駅への「方面」は存在しない（折り返せないので除外）
-  const termini = [resolvedFirst, resolvedLast].filter(name => name !== boardingStation);
-  if (!termini.length) return;
+  // 方面ボタンに「次の駅・終着駅 方面」と出せるよう、乗車駅から見てその方向にある
+  // 直近の実駅（via_直通マーカーは飛ばす）も合わせて調べておく
+  const boardingRawIdx = stationNames.indexOf(boardingStation);
+  function nextStationToward(step) {
+    if (boardingRawIdx === -1) return null;
+    for (let i = boardingRawIdx + step; i >= 0 && i < stationNames.length; i += step) {
+      if (!isViaEntry(stationNames[i])) return stationNames[i];
+    }
+    return null;
+  }
+  const backwardNext = nextStationToward(-1);
+  const forwardNext = nextStationToward(1);
 
-  if (termini.length === 1) {
+  // 乗車駅自体が終着駅なら、その駅への「方面」は存在しない（折り返せないので除外）
+  const directions = [
+    { terminus: resolvedFirst, next: backwardNext },
+    { terminus: resolvedLast, next: forwardNext },
+  ].filter(d => d.terminus !== boardingStation);
+  if (!directions.length) return;
+
+  if (directions.length === 1) {
     // 方面が一意に決まる（終着駅から乗る）場合は、方面選択を飛ばして直接履歴を表示
-    loadAndShowHistoryPopup(routeVal, boardingStation, termini[0]);
+    loadAndShowHistoryPopup(routeVal, boardingStation, directions[0].terminus);
   } else {
-    showDirectionChoicePopup(routeVal, boardingStation, termini);
+    showDirectionChoicePopup(routeVal, boardingStation, directions);
   }
 }
 
@@ -1249,16 +1270,19 @@ function showCircularDirectionPopup(routeVal, boardingStation) {
   document.getElementById("historyModalOverlay").classList.add("show");
 }
 
-function showDirectionChoicePopup(routeVal, boardingStation, termini) {
+// directions: [{ terminus, next }, ...]（nextは乗車駅から見てその方向にある次の実駅。
+// 無い/終着駅と同じ場合は終着駅名だけを表示する）
+function showDirectionChoicePopup(routeVal, boardingStation, directions) {
   setModalTitle("方面を選択");
   const list = document.getElementById("historyModalList");
   list.innerHTML = "";
 
-  termini.forEach(name => {
+  directions.forEach(({ terminus, next }) => {
     const item = document.createElement("button");
     item.type = "button";
-    item.textContent = `${name} 方面`;
-    item.onclick = () => loadAndShowHistoryPopup(routeVal, boardingStation, name);
+    const label = (next && next !== terminus) ? `${next}・${terminus}` : terminus;
+    item.textContent = `${label} 方面`;
+    item.onclick = () => loadAndShowHistoryPopup(routeVal, boardingStation, terminus);
     list.appendChild(item);
   });
 
