@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>候補デバッグツール</title>
+<!-- version: 1.0.0 -->
+<!-- 1.0.0: 新規作成。「過去の乗車記録から選ぶ」候補が絞り込まれていく様子をステップごとに
+            可視化するデバッグ専用ページ。scripts.js v1.33.1時点のロジックを、本番と同じ
+            データソース（opensheet / RIDES_URL / ダイヤシート / 祝日API）を使って再現している。
+            本番のscripts.js側のロジックを直接読み込まず、ここに同じ内容を複製しているため、
+            scripts.jsの絞り込みロジック（loadAndShowHistoryPopup内）を変更した時は、
+            このファイルの同名処理も忘れず一緒に直すこと -->
+<style>
+  :root {
+    --bg: #f4f3ef; --fg: #262420; --muted: #827b6c; --card: #ffffff;
+    --border: #ddd6c7; --accent: #b5542a; --ok: #2f7a4f; --ok-bg: #e7f3ea;
+    --ng: #b23b2e; --ng-bg: #fbeae6; --head: #efe9db;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1c1a16; --fg: #ece6d9; --muted: #a39a85; --card: #262320;
+      --border: #3c362c; --accent: #e0885c; --ok: #7bc496; --ok-bg: #1f3327;
+      --ng: #e0796a; --ng-bg: #3a2420; --head: #2d2820; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1c1a16; --fg: #ece6d9; --muted: #a39a85; --card: #262320;
+    --border: #3c362c; --accent: #e0885c; --ok: #7bc496; --ok-bg: #1f3327;
+    --ng: #e0796a; --ng-bg: #3a2420; --head: #2d2820; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+    margin: 0; padding: 18px; padding-bottom: 60px;
+    font-size: 14px;
+  }
+  h1 { font-size: 1.15rem; margin: 0 0 4px; }
+  p.lead { color: var(--muted); margin: 0 0 18px; font-size: .85rem; }
+
+  .panel {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 16px; margin-bottom: 16px;
+  }
+  .panel h2 { font-size: .95rem; margin: 0 0 10px; }
+
+  .form-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 10px;
+  }
+  label { display: block; font-size: .78rem; color: var(--muted); margin-bottom: 3px; }
+  select, input[type=datetime-local] {
+    width: 100%; padding: 7px 8px; border-radius: 7px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--fg); font-size: .85rem;
+  }
+  button#runBtn {
+    margin-top: 12px; padding: 9px 18px; border: none; border-radius: 8px;
+    background: var(--accent); color: #fff; font-size: .9rem; cursor: pointer;
+  }
+  button#runBtn:disabled { opacity: .5; cursor: default; }
+  #statusMsg { font-size: .8rem; color: var(--muted); margin-top: 8px; min-height: 1.2em; }
+
+  .stage {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    margin-bottom: 14px; overflow: hidden;
+  }
+  .stage-head {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 14px; background: var(--head); cursor: pointer; gap: 10px;
+  }
+  .stage-head .title { font-weight: 600; font-size: .88rem; }
+  .stage-head .counts { font-size: .78rem; color: var(--muted); white-space: nowrap; }
+  .stage-note { padding: 8px 14px 0; font-size: .78rem; color: var(--muted); }
+  .stage-body { padding: 6px 14px 12px; overflow-x: auto; }
+  .stage.collapsed .stage-body, .stage.collapsed .stage-note { display: none; }
+
+  table { border-collapse: collapse; width: 100%; font-size: .78rem; min-width: 480px; }
+  th, td { padding: 4px 8px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; }
+  tr.dropped { opacity: .55; }
+  tr.dropped td.main { text-decoration: line-through; }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: .72rem; }
+  .badge.ok { background: var(--ok-bg); color: var(--ok); }
+  .badge.ng { background: var(--ng-bg); color: var(--ng); }
+  .reason { color: var(--muted); font-size: .72rem; }
+  .more-row td { color: var(--muted); font-style: italic; }
+
+  .final-list { display: flex; flex-direction: column; gap: 6px; }
+  .final-item {
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: .82rem;
+  }
+  .final-item .src { font-size: .7rem; color: var(--muted); white-space: nowrap; }
+  .empty-msg { color: var(--muted); padding: 10px 0; font-size: .82rem; }
+</style>
+</head>
+<body>
+
+<h1>候補デバッグツール</h1>
+<p class="lead">「過去の乗車記録から選ぶ」の候補が、どのステップで・なぜ絞り込まれたかを一覧で確認できます（scripts.js v1.33.1相当のロジック）</p>
+
+<div class="panel">
+  <h2>条件を選んで実行</h2>
+  <div class="form-grid">
+    <div>
+      <label>会社</label>
+      <select id="companySel"><option value="">読み込み中...</option></select>
+    </div>
+    <div>
+      <label>路線</label>
+      <select id="routeSel"><option value="">会社を選んでください</option></select>
+    </div>
+    <div>
+      <label>乗車駅</label>
+      <select id="stationSel"><option value="">路線を選んでください</option></select>
+    </div>
+    <div>
+      <label>方面</label>
+      <select id="dirSel"><option value="">乗車駅を選んでください</option></select>
+    </div>
+    <div>
+      <label>基準時刻（空なら現在時刻）</label>
+      <input type="datetime-local" id="nowOverride">
+    </div>
+  </div>
+  <button id="runBtn" disabled>この条件で絞り込みを実行</button>
+  <div id="statusMsg"></div>
+</div>
+
+<div id="stages"></div>
+
+<script>
+/* ===================== マスタデータ読み込み ===================== */
+const SHEET_BASE = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s";
+const RIDES_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
+const DIAGRAM_SHEET_ID = "1JzY1wIGbj2Z83ItsMnMrz1xQ-cviEv50P0mOHiyi70A";
+
+let allrouteData = [];
+let allstationData = [];
+let ridesData = [];
+let holidaySet = new Set();
+
+async function fetchJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("HTTP " + res.status + " : " + url);
+  return res.json();
+}
+
+function setStatus(msg) { document.getElementById("statusMsg").textContent = msg; }
+
+async function loadMasterData() {
+  setStatus("マスタデータ（路線・駅・乗車記録）を読み込み中...");
+  const [route, station, rides] = await Promise.all([
+    fetchJson(`${SHEET_BASE}/route`),
+    fetchJson(`${SHEET_BASE}/station`),
+    fetchJson(RIDES_URL),
+  ]);
+  allrouteData = Array.isArray(route) ? route : [];
+  allstationData = Array.isArray(station) ? station : [];
+  ridesData = Array.isArray(rides) ? rides : [];
+
+  try {
+    const hRes = await fetch("https://holidays-jp.github.io/api/v1/date.json");
+    const hData = await hRes.json();
+    holidaySet = new Set(Object.keys(hData));
+  } catch (e) { holidaySet = new Set(); }
+
+  buildCompanyOptions();
+  setStatus(`読み込み完了（乗車記録 ${ridesData.length} 件 / 路線 ${new Set(allrouteData.map(r=>r["路線"])).size} 件）`);
+}
+
+function buildCompanyOptions() {
+  const companies = [...new Set(allrouteData.map(r => r["会社"]).filter(Boolean))].sort();
+  const sel = document.getElementById("companySel");
+  sel.innerHTML = '<option value="">選択してください</option>' + companies.map(c => `<option value="${c}">${c}</option>`).join("");
+}
+
+document.getElementById("companySel").addEventListener("change", () => {
+  const companyVal = document.getElementById("companySel").value;
+  const routes = [...new Set(allrouteData.filter(r => r["会社"] === companyVal).map(r => r["路線"]))].filter(Boolean);
+  const sel = document.getElementById("routeSel");
+  sel.innerHTML = '<option value="">選択してください</option>' + routes.map(r => `<option value="${r}">${r}</option>`).join("");
+  document.getElementById("stationSel").innerHTML = '<option value="">路線を選んでください</option>';
+  document.getElementById("dirSel").innerHTML = '<option value="">乗車駅を選んでください</option>';
+  document.getElementById("runBtn").disabled = true;
+});
+
+document.getElementById("routeSel").addEventListener("change", () => {
+  const routeVal = document.getElementById("routeSel").value;
+  const stations = allstationData.filter(r => r["路線"] === routeVal).map(r => r["駅名"]).filter(n => !isViaEntry(n));
+  const sel = document.getElementById("stationSel");
+  sel.innerHTML = '<option value="">選択してください</option>' + stations.map(s => `<option value="${s}">${s}</option>`).join("");
+  document.getElementById("dirSel").innerHTML = '<option value="">乗車駅を選んでください</option>';
+  document.getElementById("runBtn").disabled = true;
+});
+
+document.getElementById("stationSel").addEventListener("change", buildDirectionOptions);
+
+function buildDirectionOptions() {
+  const routeVal = document.getElementById("routeSel").value;
+  const boardingStation = document.getElementById("stationSel").value;
+  const sel = document.getElementById("dirSel");
+  document.getElementById("runBtn").disabled = true;
+  if (!routeVal || !boardingStation) { sel.innerHTML = '<option value="">乗車駅を選んでください</option>'; return; }
+
+  if (isCircularRoute(routeVal)) {
+    const fixedDir = getCircularFixedDirection(routeVal);
+    const opts = [];
+    if (fixedDir) {
+      opts.push({ value: fixedDir === "外回り" ? "__outer__" : "__inner__", label: fixedDir + "（固定）" });
+    } else {
+      opts.push({ value: "__outer__", label: "外回り" });
+      opts.push({ value: "__inner__", label: "内回り" });
+    }
+    sel.innerHTML = opts.map(o => `<option value="${o.value}">${o.label}</option>`).join("");
+    document.getElementById("runBtn").disabled = false;
+    return;
+  }
+
+  const stationsOnRoute = allstationData.filter(r => r["路線"] === routeVal);
+  const stationNames = stationsOnRoute.map(r => r["駅名"]);
+  const first = stationsOnRoute[0] ? stationsOnRoute[0]["駅名"] : null;
+  const last = stationsOnRoute.length ? stationsOnRoute[stationsOnRoute.length - 1]["駅名"] : null;
+  function resolveTerminus(name, rawIdx) {
+    if (!isViaEntry(name)) return name;
+    if (rawIdx === 0) { for (let i = 1; i < stationNames.length; i++) if (!isViaEntry(stationNames[i])) return stationNames[i]; }
+    else { for (let i = rawIdx - 1; i >= 0; i--) if (!isViaEntry(stationNames[i])) return stationNames[i]; }
+    return name;
+  }
+  if (!first || !last || first === last) { sel.innerHTML = '<option value="">方面なし（単独駅）</option>'; return; }
+  const resolvedFirst = resolveTerminus(first, 0);
+  const resolvedLast = resolveTerminus(last, stationsOnRoute.length - 1);
+  const termini = [resolvedFirst, resolvedLast].filter(n => n !== boardingStation);
+  sel.innerHTML = termini.map(t => `<option value="${t}">${t} 方面</option>`).join("");
+  document.getElementById("runBtn").disabled = termini.length === 0;
+}
+
+/* ===================== 直通・環状線まわりのヘルパー（scripts.jsと同じロジック） ===================== */
+function isViaEntry(name) { return typeof name === "string" && name.startsWith("via_"); }
+function viaTargetRoute(name) { return name.slice(4).split("#")[0]; }
+
+function isCircularRoute(routeVal) {
+  const row = (allrouteData || []).find(r => r["路線"] === routeVal);
+  if (!row) return false;
+  const v = row["環状"];
+  return v === true || v === 1 || ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
+}
+function isCircularReversed(routeVal) {
+  const row = (allrouteData || []).find(r => r["路線"] === routeVal);
+  if (!row) return false;
+  const v = row["環状反転"];
+  return v === true || v === 1 || ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
+}
+function getCircularFixedDirection(routeVal) {
+  const row = (allrouteData || []).find(r => r["路線"] === routeVal);
+  if (!row) return null;
+  const v = String(row["環状方向限定"] || "").trim();
+  if (v.includes("外回り")) return "外回り";
+  if (v.includes("内回り")) return "内回り";
+  return null;
+}
+function findViaNeighborRawIdx(rawNames, viaRawIdx) {
+  for (let i = viaRawIdx - 1; i >= 0; i--) if (!isViaEntry(rawNames[i])) return i;
+  for (let i = viaRawIdx + 1; i < rawNames.length; i++) if (!isViaEntry(rawNames[i])) return i;
+  return viaRawIdx;
+}
+function isStationReachableViaChain(routeName, boundNameTrim, visited) {
+  if (!routeName || visited.has(routeName)) return false;
+  visited.add(routeName);
+  const rows = (allstationData || []).filter(r => r["路線"] === routeName);
+  const stations = rows.map(r => String(r["駅名"] || "").trim());
+  const found = stations.some(s => s && !isViaEntry(s) &&
+    (s === boundNameTrim || boundNameTrim.includes(s) || s.includes(boundNameTrim)));
+  if (found) return true;
+  for (const r of rows) {
+    const name = r["駅名"];
+    if (isViaEntry(name)) { if (isStationReachableViaChain(viaTargetRoute(name), boundNameTrim, visited)) return true; }
+  }
+  return false;
+}
+
+function timeOfDayMinutes(d) { return d.getHours() * 60 + d.getMinutes(); }
+function formatHM(d) {
+  if (!d) return "";
+  return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+}
+function dateKey(d) {
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+}
+function isWeekendType(d, hSet) {
+  const day = d.getDay();
+  if (day === 0 || day === 6) return true;
+  return hSet.has(dateKey(d));
+}
+function isFlaggedExtra(v) { return ["true","TRUE","1","はい","有","✓"].includes(String(v).trim()); }
+
+/* ===================== ダイヤ（運用シート）データ ===================== */
+function diagramRowMatchesRoute(row, routeVal) {
+  return String(row["路線"] || "").split(",").map(s => s.trim()).includes(routeVal);
+}
+async function getDiagramList() {
+  try { return await fetchJson(`https://opensheet.elk.sh/${DIAGRAM_SHEET_ID}/${encodeURIComponent("ダイヤ一覧")}`); }
+  catch (e) { return []; }
+}
+async function fetchDiagramSheet(id, unban) {
+  try {
+    const data = await fetchJson(`https://opensheet.elk.sh/${DIAGRAM_SHEET_ID}/${encodeURIComponent(id + "_" + unban)}`);
+    return Array.isArray(data) ? data : [];
+  } catch (e) { return []; }
+}
+async function getDiagramCandidates(routeVal, boardingStation, companyVal, todayIsWeekendType) {
+  const list = await getDiagramList();
+  const matches = list.filter(d => {
+    if (d["会社"] !== companyVal || !diagramRowMatchesRoute(d, routeVal)) return false;
+    const dayType = String(d["曜日区分"] || "").trim();
+    if (!dayType) return true;
+    const isHolidayRow = dayType.includes("土") || dayType.includes("休");
+    return isHolidayRow === todayIsWeekendType;
+  });
+  const results = [];
+  for (const d of matches) {
+    const rows = await fetchDiagramSheet(d["ID"], d["運番"]);
+    const isExtra = isFlaggedExtra(d["臨時"]);
+    rows.forEach(r => {
+      if (r["駅名"] !== boardingStation) return;
+      const raw = String(r["発車時刻"] || "").trim();
+      let time = null;
+      const hm = raw.match(/^(\d{1,2}):(\d{2})$/);
+      if (hm) { const now = new Date(); time = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(hm[1]), Number(hm[2])); }
+      else { const parsed = new Date(raw); if (!isNaN(parsed)) time = parsed; }
+      if (!time) return;
+      const bounds = String(r["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
+      const types = String(r["種別"] || "").split("/").map(s => s.trim());
+      const trainNumber = r["列車番号"] || "";
+      if (bounds.length) {
+        bounds.forEach((b, i) => results.push({ isDiagram: true, time, unban: d["運番"], trainNumber, isExtra, type: types[i] || types[0] || "", bound: b }));
+      } else {
+        results.push({ isDiagram: true, time, unban: d["運番"], trainNumber, isExtra, type: "", bound: "" });
+      }
+    });
+  }
+  return results;
+}
+
+/* ===================== ステージ描画 ===================== */
+let stageSeq = 0;
+function renderStage({ title, before, after, note, rows, columns, maxRows }) {
+  stageSeq++;
+  const container = document.getElementById("stages");
+  const el = document.createElement("div");
+  el.className = "stage";
+  const limit = maxRows || 200;
+  const shown = rows.slice(0, limit);
+  const hiddenCount = rows.length - shown.length;
+
+  el.innerHTML = `
+    <div class="stage-head" onclick="this.parentElement.classList.toggle('collapsed')">
+      <span class="title">STEP ${stageSeq}. ${title}</span>
+      <span class="counts">${before} 件 → <b>${after}</b> 件</span>
+    </div>
+    ${note ? `<div class="stage-note">${note}</div>` : ""}
+    <div class="stage-body">
+      ${rows.length ? `<table>
+        <thead><tr>${columns.map(c => `<th>${c.label}</th>`).join("")}<th>判定</th><th>理由</th></tr></thead>
+        <tbody>
+          ${shown.map(r => `
+            <tr class="${r.kept ? "" : "dropped"}">
+              ${columns.map((c, i) => `<td class="${i===0 ? "main" : ""}">${r[c.key] ?? ""}</td>`).join("")}
+              <td>${r.kept ? '<span class="badge ok">残る</span>' : '<span class="badge ng">除外</span>'}</td>
+              <td class="reason">${r.reason || ""}</td>
+            </tr>
+          `).join("")}
+          ${hiddenCount > 0 ? `<tr class="more-row"><td colspan="${columns.length + 2}">...ほか ${hiddenCount} 件（表示省略）</td></tr>` : ""}
+        </tbody>
+      </table>` : `<p class="empty-msg">このステップに該当するデータがありません</p>`}
+    </div>
+  `;
+  container.appendChild(el);
+}
+
+function renderFinalList(candidates) {
+  stageSeq++;
+  const container = document.getElementById("stages");
+  const el = document.createElement("div");
+  el.className = "stage";
+  el.innerHTML = `
+    <div class="stage-head" onclick="this.parentElement.classList.toggle('collapsed')">
+      <span class="title">STEP ${stageSeq}. 最終的にポップアップへ表示される候補</span>
+      <span class="counts">${candidates.length} 件</span>
+    </div>
+    <div class="stage-body">
+      ${candidates.length ? `<div class="final-list">
+        ${candidates.map(c => {
+          const timeLabel = c.time ? formatHM(c.time) : (c.isShortcut && c.shortcutTime ? c.shortcutTime : "(時刻未設定)");
+          const dest = c.type ? `${c.type}${c.bound}行き` : `${c.bound}行き`;
+          const src = c.isDiagram ? `🚆 ダイヤ（運番${c.unban}）` : (c.isShortcut ? `📌 ショートカット（${c.shortcutName}）` : "📋 過去の乗車記録");
+          return `<div class="final-item"><span>${timeLabel} ${dest}</span><span class="src">${src}</span></div>`;
+        }).join("")}
+      </div>` : `<p class="empty-msg">候補が1件もありません（「この中に無い場合は手入力」のみ表示される状態）</p>`}
+    </div>
+  `;
+  container.appendChild(el);
+}
+
+/* ===================== 本体：ステップごとに絞り込みを実行 ===================== */
+async function runDebug() {
+  document.getElementById("stages").innerHTML = "";
+  stageSeq = 0;
+  document.getElementById("runBtn").disabled = true;
+  setStatus("実行中...");
+
+  const routeVal = document.getElementById("routeSel").value;
+  const boardingStation = document.getElementById("stationSel").value;
+  const dirVal = document.getElementById("dirSel").value;
+  const companyVal = document.getElementById("companySel").value;
+  const overrideRaw = document.getElementById("nowOverride").value;
+  const now = overrideRaw ? new Date(overrideRaw) : new Date();
+
+  const stationsOnRoute = allstationData.filter(r => r["路線"] === routeVal);
+  const indexOf = name => stationsOnRoute.findIndex(r => r["駅名"] === name);
+  const isCircular = dirVal === "__outer__" || dirVal === "__inner__";
+  const dirIndex = isCircular ? null : indexOf(dirVal);
+  const boardingIndex = isCircular ? null : indexOf(boardingStation);
+  const totalStations = stationsOnRoute.length;
+  const rawRowNames = stationsOnRoute.map(r => r["駅名"]);
+  const boardRawIdx = rawRowNames.indexOf(boardingStation);
+
+  function circularMatchesDirection(bIndex) {
+    const circBoardingIndex = indexOf(boardingStation);
+    if (bIndex === -1 || circBoardingIndex === -1 || totalStations < 2) return true;
+    const forwardDist = (bIndex - circBoardingIndex + totalStations) % totalStations;
+    const backwardDist = totalStations - forwardDist;
+    const isOuterForBound = forwardDist <= backwardDist;
+    return dirVal === "__outer__" ? isOuterForBound : !isOuterForBound;
+  }
+  function circularViaThroughServiceMatchesDirection(boundName) {
+    if (boardRawIdx === -1 || totalStations < 2) return null;
+    const bTrim = String(boundName || "").trim();
+    if (!bTrim) return null;
+    for (let i = 0; i < rawRowNames.length; i++) {
+      if (!isViaEntry(rawRowNames[i])) continue;
+      const targetRoute = viaTargetRoute(rawRowNames[i]);
+      const found = isStationReachableViaChain(targetRoute, bTrim, new Set([routeVal]));
+      if (!found) continue;
+      const neighborIdx = findViaNeighborRawIdx(rawRowNames, i);
+      const forwardDist = (neighborIdx - boardRawIdx + totalStations) % totalStations;
+      const backwardDist = totalStations - forwardDist;
+      const viaGoesForward = forwardDist <= backwardDist;
+      const reversed = isCircularReversed(routeVal);
+      const wantsOuter = dirVal === "__outer__";
+      const dirGoesForward = reversed ? !wantsOuter : wantsOuter;
+      return viaGoesForward === dirGoesForward;
+    }
+    return null;
+  }
+  function viaThroughServiceMatchesDirection(boundName) {
+    if (isCircular || boardRawIdx === -1 || dirIndex === -1) return null;
+    const dirGoesForward = dirIndex > boardingIndex;
+    const bTrim = String(boundName || "").trim();
+    if (!bTrim) return null;
+    for (let i = 0; i < rawRowNames.length; i++) {
+      if (!isViaEntry(rawRowNames[i])) continue;
+      const targetRoute = viaTargetRoute(rawRowNames[i]);
+      const found = isStationReachableViaChain(targetRoute, bTrim, new Set([routeVal]));
+      if (!found) continue;
+      const neighborIdx = findViaNeighborRawIdx(rawRowNames, i);
+      const viaGoesForward = neighborIdx > boardRawIdx;
+      return viaGoesForward === dirGoesForward;
+    }
+    return null;
+  }
+  function computeMatchesDirection(bIndex, b) {
+    let matchesDirection = true;
+    let reason = "";
+    if (isCircular) {
+      matchesDirection = circularMatchesDirection(bIndex);
+      if (bIndex === -1) {
+        const viaMatch = circularViaThroughServiceMatchesDirection(b);
+        if (viaMatch !== null) { matchesDirection = viaMatch; reason = "直通先(via_)から判定"; }
+        else reason = "直通先の判定不能→含める";
+      }
+    } else if (bIndex !== -1 && boardingIndex !== -1) {
+      matchesDirection = (dirIndex > boardingIndex) ? (bIndex > boardingIndex) : (bIndex < boardingIndex);
+    } else if (bIndex === -1) {
+      const viaMatch = viaThroughServiceMatchesDirection(b);
+      if (viaMatch !== null) { matchesDirection = viaMatch; reason = "直通先(via_)から判定"; }
+      else reason = "直通先の判定不能→含める";
+    }
+    return { matchesDirection, reason };
+  }
+
+  // --- STEP1: 路線・乗車駅が一致（臨時列車を除く） ---
+  const step1rows = ridesData.filter(r => r["路線"] === routeVal && r["乗車駅"] === boardingStation);
+  const step1kept = step1rows.filter(r => !isFlaggedExtra(r["臨時"]));
+  renderStage({
+    title: "路線・乗車駅が一致する過去の乗車記録を抽出（臨時列車は除く）",
+    before: ridesData.length, after: step1kept.length,
+    note: `全 ${ridesData.length} 件の乗車記録（全路線・全ユーザー）のうち、路線=「${routeVal}」かつ乗車駅=「${boardingStation}」の記録。`,
+    columns: [
+      { key: "time", label: "時刻" }, { key: "type", label: "種別" }, { key: "bound", label: "行先" }, { key: "extra", label: "臨時" },
+    ],
+    rows: step1rows.map(r => ({
+      time: r["時刻"] || r["発車時刻"] || "", type: r["種別"] || "", bound: r["行先"] || "",
+      extra: isFlaggedExtra(r["臨時"]) ? "はい" : "",
+      kept: !isFlaggedExtra(r["臨時"]), reason: isFlaggedExtra(r["臨時"]) ? "臨時列車フラグあり" : "",
+    })),
+  });
+
+  // --- STEP2: ダイヤ改正日フィルタ ---
+  const routeRow = (allrouteData || []).find(r => r["路線"] === routeVal);
+  const revisionRaw = routeRow ? routeRow["ダイヤ改正日"] : "";
+  const revisionDate = revisionRaw ? new Date(revisionRaw) : null;
+  const hasValidRevisionDate = revisionDate && !isNaN(revisionDate);
+
+  const step2in = step1kept.map(r => {
+    const parsedTime = new Date(r["時刻"] || r["発車時刻"] || "");
+    return { raw: r, time: isNaN(parsedTime) ? null : parsedTime };
+  });
+  const step2kept = step2in.filter(x => !(hasValidRevisionDate && x.time && x.time < revisionDate));
+  renderStage({
+    title: "ダイヤ改正日より前の記録を除外",
+    before: step2in.length, after: step2kept.length,
+    note: hasValidRevisionDate
+      ? `この路線の「ダイヤ改正日」は ${revisionRaw}。それより前の記録は今のダイヤと違う可能性があるため除外。`
+      : `この路線に「ダイヤ改正日」の設定なし → このステップはスキップ（全件そのまま）`,
+    columns: [{ key: "time", label: "時刻" }, { key: "type", label: "種別" }, { key: "bound", label: "行先" }],
+    rows: step2in.map(x => ({
+      time: x.time ? x.time.toLocaleString("ja-JP") : "(時刻不明)", type: x.raw["種別"] || "", bound: x.raw["行先"] || "",
+      kept: !(hasValidRevisionDate && x.time && x.time < revisionDate),
+      reason: (hasValidRevisionDate && x.time && x.time < revisionDate) ? `ダイヤ改正日(${revisionRaw})より前` : "",
+    })),
+  });
+
+  // --- STEP3: 行先ごとに分解し、方面が一致するものだけ ---
+  const holidaySetLocal = holidaySet;
+  const todayIsWeekendType = isWeekendType(now, holidaySetLocal);
+  const step3items = [];
+  step2kept.forEach(x => {
+    const bounds = String(x.raw["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
+    const types = String(x.raw["種別"] || "").split("/").map(s => s.trim());
+    bounds.forEach((b, i) => {
+      const t = types[i] || types[0] || "";
+      const bIndex = indexOf(b);
+      const { matchesDirection, reason } = computeMatchesDirection(bIndex, b);
+      step3items.push({
+        type: t, bound: b, time: x.time,
+        isWeekendType: x.time ? isWeekendType(x.time, holidaySetLocal) : null,
+        kept: matchesDirection, reason: matchesDirection ? reason : "選んだ方面と逆方向" + (reason ? `（${reason}）` : ""),
+      });
+    });
+  });
+  const raw = step3items.filter(x => x.kept);
+  renderStage({
+    title: `行先ごとに分解し、選んだ方面（${dirVal === "__outer__" ? "外回り" : dirVal === "__inner__" ? "内回り" : dirVal}）と一致するものだけ残す`,
+    before: step3items.length, after: raw.length,
+    note: "併結などで「種別1/種別2」「行先1/行先2」のように複数入っている記録は、ここで1本ずつに分解してから判定する。",
+    columns: [{ key: "time", label: "時刻" }, { key: "type", label: "種別" }, { key: "bound", label: "行先" }],
+    rows: step3items.map(x => ({ time: x.time ? formatHM(x.time) : "(時刻不明)", type: x.type, bound: x.bound, kept: x.kept, reason: x.reason })),
+  });
+
+  // --- STEP4: 曜日タイプで優先（無ければ全部） ---
+  const sameDayType = raw.filter(c => c.isWeekendType === todayIsWeekendType);
+  const dayTypePool = sameDayType.length ? sameDayType : raw;
+  renderStage({
+    title: `今日と同じ曜日タイプ（${todayIsWeekendType ? "土休日ダイヤ" : "平日ダイヤ"}）の記録を優先`,
+    before: raw.length, after: dayTypePool.length,
+    note: sameDayType.length
+      ? `同じ曜日タイプの記録が ${sameDayType.length} 件あったので、それ以外は除外。`
+      : `同じ曜日タイプの記録が1件も無いため、フォールバックして曜日タイプを問わず全件を対象にする。`,
+    columns: [{ key: "time", label: "時刻" }, { key: "type", label: "種別" }, { key: "bound", label: "行先" }, { key: "dayType", label: "曜日タイプ" }],
+    rows: raw.map(c => ({
+      time: c.time ? formatHM(c.time) : "(時刻不明)", type: c.type, bound: c.bound,
+      dayType: c.isWeekendType === null ? "不明" : (c.isWeekendType ? "土休日" : "平日"),
+      kept: dayTypePool.includes(c),
+      reason: dayTypePool.includes(c) ? "" : "曜日タイプ不一致（同タイプのデータがあるため不採用）",
+    })),
+  });
+
+  // --- STEP5: 時間窓で絞り込み ---
+  const max10Mode = localStorage.getItem("tuts4_max10_mode") === "TRUE";
+  const nowMin = timeOfDayMinutes(now);
+  const refMin = (nowMin - 5 + 1440) % 1440;
+  const WINDOW_MINUTES = 65;
+  const withDiff = dayTypePool.filter(c => c.time).map(c => ({ ...c, _diff: (timeOfDayMinutes(c.time) - refMin + 1440) % 1440 }));
+  const inWindow = withDiff.filter(c => max10Mode || c._diff <= WINDOW_MINUTES);
+  const pool = [...inWindow].sort((a, b) => (a._diff - b._diff) || (b.time - a.time)).slice(0, 10);
+  renderStage({
+    title: `現在時刻（${now.toLocaleTimeString("ja-JP", {hour:"2-digit",minute:"2-digit"})}）の「5分前〜1時間後」の窓で絞り込み、近い順に最大10件`,
+    before: withDiff.length, after: pool.length,
+    note: max10Mode ? "運営設定「max10件表示モード」がONのため、窓の制限は無視して近い順に最大10件。" : "窓の外（5分前より前 or 1時間後より後）の記録は除外。窓内でも近い10件に入らなければ除外。",
+    columns: [{ key: "time", label: "時刻" }, { key: "type", label: "種別" }, { key: "bound", label: "行先" }, { key: "diff", label: "現在との差(分)" }],
+    rows: withDiff.sort((a,b)=>a._diff-b._diff).map(c => {
+      const inW = max10Mode || c._diff <= WINDOW_MINUTES;
+      const inTop10 = pool.includes(c);
+      return {
+        time: formatHM(c.time), type: c.type, bound: c.bound, diff: c._diff,
+        kept: inTop10, reason: !inW ? "窓外（±65分の範囲外）" : (!inTop10 ? "窓内だが近い10件に入らなかった" : ""),
+      };
+    }),
+  });
+
+  // --- STEP6: 種別・行先・時刻で重複除去（ショートカット優先） ---
+  const seen = new Set();
+  const candidates = [];
+  function shortcutTimeDiffMinutes(hhmm) {
+    const parts = String(hhmm || "").split(":").map(Number);
+    if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) return Infinity;
+    const t = parts[0] * 60 + parts[1];
+    const diff = Math.abs(t - nowMin);
+    return Math.min(diff, 1440 - diff);
+  }
+  let savedShortcuts = [];
+  try { savedShortcuts = JSON.parse(localStorage.getItem("tuts4_shortcuts") || "[]"); } catch (e) {}
+  const shortcutRows = [];
+  savedShortcuts
+    .filter(s => s.route === routeVal && s.station === boardingStation && s.bound)
+    .forEach(s => {
+      const { matchesDirection } = computeMatchesDirection(indexOf(s.bound), s.bound);
+      const withinTime = !s.time || shortcutTimeDiffMinutes(s.time) <= 90;
+      const key = s.sujitype + "|" + s.bound;
+      const dup = seen.has(key);
+      const kept = matchesDirection && withinTime && !dup;
+      if (kept) { seen.add(key); candidates.push({ type: s.sujitype || "", bound: s.bound, time: null, isShortcut: true, shortcutName: s.name, shortcutTime: s.time || "" }); }
+      shortcutRows.push({
+        time: s.time || "(時刻未設定)", type: `📌 ${s.sujitype || ""}`, bound: s.bound, kept,
+        reason: !matchesDirection ? "方面不一致" : !withinTime ? "時刻が現在から90分超" : dup ? "同じ種別・行先が既出" : "",
+      });
+    });
+
+  const beforeDedupCount = pool.length;
+  const dedupRows = [];
+  pool.forEach(c => {
+    const key = c.type + "|" + c.bound + "|" + formatHM(c.time);
+    const dup = seen.has(key);
+    if (!dup) { seen.add(key); candidates.push(c); }
+    dedupRows.push({ time: formatHM(c.time), type: c.type, bound: c.bound, kept: !dup, reason: dup ? "同じ種別・行先・時刻が既出" : "" });
+  });
+  renderStage({
+    title: "種別・行先・時刻の組み合わせで重複除去（事前登録ショートカットを優先）",
+    before: beforeDedupCount + shortcutRows.length, after: candidates.length,
+    note: "ショートカット（事前登録した定番の乗り方）を先に登録してから、過去の乗車記録を1件ずつ追加。キーが同じ（種別・行先・時刻が全部一致）ものは2件目以降を除外する。",
+    columns: [{ key: "time", label: "時刻" }, { key: "type", label: "種別" }, { key: "bound", label: "行先" }],
+    rows: [...shortcutRows, ...dedupRows],
+  });
+
+  // --- STEP7: ダイヤ側とマージ ---
+  const diagramRaw = await getDiagramCandidates(routeVal, boardingStation, companyVal, todayIsWeekendType);
+  const diagramWithDiff = diagramRaw.map(c => ({ ...c, _diff: (timeOfDayMinutes(c.time) - refMin + 1440) % 1440 }));
+  const diagramInWindow = diagramWithDiff.filter(c => max10Mode || c._diff <= WINDOW_MINUTES);
+  const diagramPool = [...diagramInWindow].sort((a, b) => a._diff - b._diff).slice(0, 10);
+
+  const mergeRows = [];
+  const beforeMergeCount = candidates.length;
+  diagramPool.forEach(c => {
+    const cHM = formatHM(c.time);
+    let replaced = null;
+    for (let i = candidates.length - 1; i >= 0; i--) {
+      if (!candidates[i].isDiagram && !candidates[i].isShortcut && formatHM(candidates[i].time) === cHM && candidates[i].bound === c.bound) {
+        replaced = candidates[i];
+        candidates.splice(i, 1);
+      }
+    }
+    candidates.push(c);
+    mergeRows.push({
+      time: cHM, type: `🚆 ${c.type}`, bound: c.bound, kept: true,
+      reason: replaced ? `同じ列車の過去記録(${formatHM(replaced.time)} ${replaced.type}${replaced.bound}行き)をダイヤ側(運番${c.unban})に差し替え` : `ダイヤから新規追加（運番${c.unban}）`,
+    });
+  });
+  renderStage({
+    title: "ダイヤ（運用シート）由来の候補を混ぜる（本当に同じ列車＝時刻・行先一致の場合のみ差し替え）",
+    before: beforeMergeCount, after: candidates.length,
+    note: `ダイヤ候補 ${diagramInWindow.length} 件（窓内）のうち、近い順に最大10件を対象。`,
+    columns: [{ key: "time", label: "時刻" }, { key: "type", label: "種別" }, { key: "bound", label: "行先" }],
+    rows: mergeRows.length ? mergeRows : [],
+  });
+  if (!mergeRows.length) {
+    const note = document.querySelector("#stages .stage:last-child .stage-note");
+    if (note) note.insertAdjacentHTML("beforeend", "<br>このステップで追加・差し替えされたダイヤ候補はありません。");
+  }
+
+  // --- STEP8: 最終ソート ---
+  function sortableMinutes(c) {
+    if (c.time) return timeOfDayMinutes(c.time);
+    if (c.isShortcut && c.shortcutTime) {
+      const [h, m] = c.shortcutTime.split(":").map(Number);
+      if (!isNaN(h) && !isNaN(m)) return h * 60 + m;
+    }
+    return null;
+  }
+  const noTimeCands = candidates.filter(c => sortableMinutes(c) === null);
+  const timedCands = candidates.filter(c => sortableMinutes(c) !== null).sort((a, b) => sortableMinutes(a) - sortableMinutes(b));
+  const sortedCandidates = [...noTimeCands, ...timedCands];
+
+  renderFinalList(sortedCandidates);
+
+  setStatus(`完了（最終候補 ${sortedCandidates.length} 件。内訳：過去の乗車記録 ${sortedCandidates.filter(c=>!c.isDiagram && !c.isShortcut).length} 件 / ダイヤ ${sortedCandidates.filter(c=>c.isDiagram).length} 件 / ショートカット ${sortedCandidates.filter(c=>c.isShortcut).length} 件）`);
+  document.getElementById("runBtn").disabled = false;
+}
+
+document.getElementById("runBtn").addEventListener("click", runDebug);
+
+loadMasterData().catch(e => setStatus("読み込みエラー: " + e.message));
+</script>
+</body>
+</html>
