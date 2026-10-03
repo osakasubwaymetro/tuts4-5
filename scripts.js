@@ -1,4 +1,15 @@
-// version: 1.33.2
+// version: 1.33.3
+// 1.33.3: ①エリア・区分を選ばずに投稿できてしまう「空投稿」を防止。upload()の冒頭で
+//         両方とも未入力なら送信前にアラートで止めるようにした。②投稿ボタンの連打で
+//         同じ内容の投稿が何件もできてしまう対策として、(a)送信中はボタン自体を
+//         disabledにして連打そのものを無効化、(b)「ユーザー名・乗車時刻・エリア・
+//         区分」が直近8秒以内の送信と完全に同じ場合は新規送信をスキップする、の
+//         2段構えにした。GAS側（rides_gas）の実体ソースはこのセッションから見えない
+//         ため、「同じなら上書き」をサーバー側の行検索・更新として実装することは
+//         せず、そもそも重複リクエストを送らないことで同じ結果（＝同じ内容の行が
+//         1件しか残らない）になるようにした。ユーザー名・乗車時刻・エリア・区分の
+//         どれか1つでも違えば別の投稿として扱われるので、違う端末から同時刻に
+//         投稿した場合など、重複判定が効かないケースは残る点は留意
 // 1.33.2: 投稿のたびに、候補提案用の乗車履歴キャッシュを一旦削除してから、裏で
 //         スプレッドシートの最新データをまるまる取り直して作り直すように変更
 //         （resetForm内）。1.33.0では「キャッシュは消さずそのまま残し、次に候補
@@ -594,8 +605,19 @@ function updatenumberList() {
 
 
 
+// 投稿ボタンの連打で同じ内容が重複投稿されるのを防ぐためのガード。
+// 「ユーザー名・乗車時刻・エリア・区分」が全部同じ投稿が、直近DUPLICATE_GUARD_MSの
+// 間にもう一度送られようとしたら、新規送信はせず今回の分はスキップする
+let _lastSubmitKey = "";
+let _lastSubmitAt = 0;
+const DUPLICATE_GUARD_MS = 8000;
+
 // 投稿ボタン（確認用）
 function upload() {
+    const btn = document.getElementById("uploadSubmitBtn");
+    // 送信中（前回のupload()がまだ後処理中）に連打された場合は何もしない
+    if (btn && btn.disabled) return;
+
     const usernameValue = document.getElementById('username').value;
     const timeValue = document.getElementById('departing_time').value;
 
@@ -633,6 +655,14 @@ function upload() {
     const isExtraValue = document.getElementById('isExtraTrain')?.checked ? "TRUE" : "";
     console.log(numberValue)
 
+  // エリア・区分が未入力の「空投稿」を防ぐ（この2つが埋まっていれば、それ以降の
+  // 会社・路線・乗車駅等のプルダウンも連動して絞り込まれる設計になっているため、
+  // ここを必須にするのが一番手っ取り早い）
+  if (!areaValue || !typeValue) {
+    alert("エリアと区分を選択してください");
+    return;
+  }
+
   const payload = {
     usernameValue,
     timeValue,
@@ -649,6 +679,17 @@ function upload() {
     isExtraValue
   };
 
+  // 送信を連打すると同じ内容の投稿が何件もできてしまう対策。
+  // 「ユーザー名・乗車時刻・エリア・区分」が直近と全く同じなら、新規送信はせず
+  // 今回の分はスキップする（＝最初の1件だけが残り、結果的に上書きと同じ見た目になる）
+  const submitKey = [usernameValue, timeValue, areaValue, typeValue].join("|");
+  if (submitKey === _lastSubmitKey && Date.now() - _lastSubmitAt < DUPLICATE_GUARD_MS) {
+    console.log("同じ内容の投稿が短時間に連続したため、今回の送信はスキップしました:", submitKey);
+    return;
+  }
+  _lastSubmitKey = submitKey;
+  _lastSubmitAt = Date.now();
+
   // ▼ここにGASのデプロイURLを入れる
   const scriptURL = "https://script.google.com/macros/s/AKfycbzuhYRx9gyb5J1a-6ZuxmcCepIU1hIMnuBo58wh5CTYMWE785YAnuJY4ckm_13-ZHc7/exec";
 
@@ -658,6 +699,7 @@ function upload() {
   queue.push({ id: entryId, payload });
   setPendingPosts(queue);
 
+  if (btn) btn.disabled = true;
   showLoadingPopup();
 
   // 1.32.10で「応答を読み取れる送信（Content-Type: text/plain）」に変更したが、
@@ -685,6 +727,7 @@ function upload() {
     hideLoadingPopup();
     showStampPopup(modelValue, numberValue);
     resetForm();
+    if (btn) btn.disabled = false;
   }, 1000);
 }
 
