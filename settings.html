@@ -1,6 +1,12 @@
 <!DOCTYPE html>
 <html lang="ja">
-<!-- version: 1.4.4 -->
+<!-- version: 1.5.0 -->
+<!-- 1.5.0: 「全キャッシュを今すぐ更新」ボタンを追加。ダイヤキャッシュだけでなく、
+           乗車履歴・マスタデータ・祝日・時刻表全乗車データ・show/乗換えキャッシュ
+           （ユーザー別）もまとめて消せるようにした。ショートカット・投稿中の下書き・
+           未送信投稿/乗換えキュー・ログイン情報・運営設定は対象外として明示的に除外。
+           既存の「ダイヤキャッシュを今すぐ更新」ボタンはそのまま残している
+           （軽くてよく使う操作なので、全消し一本化はしなかった） -->
 <!-- 1.4.4: 「ダイヤキャッシュを今すぐ更新」ボタンを運営専用セクションから出して、
            全ユーザーが使えるように変更（自分の端末のキャッシュしか触らない機能なので、
            運営限定にする理由が無かったため） -->
@@ -312,6 +318,12 @@
     ダイヤ一覧の「最終更新」列に日付を入れておけば、全ユーザーの端末で自動的に
     キャッシュが更新されます（このボタンはあくまで自分の端末を今すぐ更新したい時用）
   </p>
+  <button type="button" class="btn-secondary" onclick="clearAllCache()" style="margin-top:8px;">🧹 全キャッシュを今すぐ更新（自分の端末のみ）</button>
+  <p class="small" style="color:#999;">
+    ダイヤ・乗車履歴・マスタデータ・祝日・乗換えなど、このアプリが端末に保存している
+    キャッシュを全部まとめて消します。ショートカットや投稿中の未送信データ、ログイン状態は消えません。
+    何かおかしい時の「とりあえずこれ押して」用です。
+  </p>
 
   <div id="adminSettingsSection" style="display:none;">
     <h2>🛠 運営設定</h2>
@@ -352,6 +364,35 @@ function clearDiagramCache() {
   }
   keysToRemove.forEach(k => localStorage.removeItem(k));
   alert(`ダイヤキャッシュを${keysToRemove.length}件クリアしました。次回、次に発車時刻を選ぶ時に最新のダイヤが取得されます。`);
+}
+
+// ===== 全キャッシュクリア =====
+// 「キャッシュ」として消していいもの（＝サーバーから取り直せば必ず復元できるもの）だけを
+// 明示的に列挙している。ショートカット・未送信の投稿・乗降確認の途中状態・ログイン情報・
+// 運営設定などは絶対に消さない（データ消失やログアウトになってしまうため）。
+function clearAllCache() {
+  const exactKeys = new Set([
+    "tuts4_community_ride_cache", // 乗車履歴（候補提案用、scripts.js）
+    "tuts4_diagram_list_cache",   // ダイヤ一覧（timetable.js）
+    "tuts4_holidays_cache",       // 祝日データ（timetable.js）
+    "tuts4_tt_allrides_cache",    // 時刻表ページの全乗車データ（timetable.js）
+  ]);
+  const prefixes = [
+    "tuts4_diagram_sheet_",   // ダイヤ個別シート（timetable.js）
+    "tuts4_master_",          // エリア/区分/種別/行先/駅名などのマスタデータ（scripts.js）
+    "tuts4_show_cache_",      // show.html の乗車履歴キャッシュ（ユーザー別）
+    "tuts4_transfers_cache_", // 乗換えキャッシュ（ユーザー別）
+  ];
+
+  const keysToRemove = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (exactKeys.has(key) || prefixes.some(p => key.startsWith(p))) {
+      keysToRemove.push(key);
+    }
+  }
+  keysToRemove.forEach(k => localStorage.removeItem(k));
+  alert(`全キャッシュを${keysToRemove.length}件クリアしました。ショートカットや投稿中のデータ、ログイン状態はそのまま残っています。`);
 }
 
 // ===== Googleアカウントの変更 =====
