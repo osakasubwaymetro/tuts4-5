@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>乗車回数ランキング</title>
+<!-- version: 1.0.0 -->
+<!-- 1.0.0: 新規作成。運営用。路線を選んで、コミュニティの過去乗車記録（ダイヤ/運用シートではなく、
+            実際にユーザーが投稿した乗車記録）を 乗車駅×種別×行先×時刻×曜日区分 で集計し、
+            乗車回数が多い順にランキング表示する。「まだダイヤに登録されていないものだけ表示」
+            を使うと、既にダイヤ化済みの組み合わせを除外して、ダイヤ化すべき候補を絞り込める。
+            scripts.js/debug_candidates.htmlと同じデータソース（opensheet / RIDES_URL /
+            ダイヤシート / 祝日API）を使用。本番ロジックを読み込まず複製しているため、
+            行先/種別の"/"区切り分割や曜日判定など、元ロジックを変更した時はここも合わせて直すこと -->
+<style>
+  :root {
+    --bg: #f4f3ef; --fg: #262420; --muted: #827b6c; --card: #ffffff;
+    --border: #ddd6c7; --accent: #004C97; --ok: #2f7a4f; --ok-bg: #e7f3ea;
+    --ng: #b23b2e; --ng-bg: #fbeae6; --head: #efe9db;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+    margin: 0; padding-bottom: 60px; font-size: 14px;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.15rem; margin: 10px 0 4px; color: var(--accent); }
+  p.lead { color: var(--muted); margin: 0 0 16px; font-size: .85rem; }
+
+  .panel {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 16px; margin-bottom: 16px;
+  }
+  .form-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+  }
+  label { display: block; font-size: .78rem; color: var(--muted); margin-bottom: 3px; }
+  select, input[type=number] {
+    width: 100%; padding: 7px 8px; border-radius: 7px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--fg); font-size: .85rem;
+  }
+  .check-row { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: .85rem; }
+  button#runBtn, button#diagCheckBtn {
+    margin-top: 12px; padding: 9px 18px; border: none; border-radius: 8px;
+    background: var(--accent); color: #fff; font-size: .9rem; cursor: pointer;
+  }
+  button#diagCheckBtn { background: #6b5a3a; margin-left: 8px; }
+  button#runBtn:disabled, button#diagCheckBtn:disabled { opacity: .5; cursor: default; }
+  #statusMsg { font-size: .8rem; color: var(--muted); margin-top: 8px; min-height: 1.2em; }
+
+  table { border-collapse: collapse; width: 100%; font-size: .8rem; min-width: 560px; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--card); }
+  tbody tr:hover { background: #faf8f3; }
+  tr.already-diagram { opacity: .45; }
+  .table-wrap { overflow-x: auto; }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: .72rem; }
+  .badge.ok { background: var(--ok-bg); color: var(--ok); }
+  .badge.ng { background: var(--ng-bg); color: var(--ng); }
+  .count-cell { font-weight: 700; color: var(--accent); }
+  .empty-msg { color: var(--muted); padding: 10px 0; font-size: .85rem; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>📈 乗車回数ランキング（運営用）</h1>
+<p class="lead">路線を選ぶと、みんなの実際の乗車記録を「乗車駅・種別・行先・時刻・曜日区分」でまとめて、回数が多い順に並べます。ダイヤ化する優先度の参考にしてください。</p>
+
+<div class="panel">
+  <div class="form-grid">
+    <div>
+      <label>会社</label>
+      <select id="companySel"><option value="">読み込み中...</option></select>
+    </div>
+    <div>
+      <label>路線</label>
+      <select id="routeSel"><option value="">会社を選んでください</option></select>
+    </div>
+    <div>
+      <label>乗車駅（空なら全駅）</label>
+      <select id="stationSel"><option value="">（全駅）</option></select>
+    </div>
+    <div>
+      <label>曜日区分</label>
+      <select id="dayTypeSel">
+        <option value="">平日・土休日 両方（分けて集計）</option>
+        <option value="平">平日のみ</option>
+        <option value="休">土休日のみ</option>
+      </select>
+    </div>
+    <div>
+      <label>最低乗車回数</label>
+      <input type="number" id="minCount" value="2" min="1">
+    </div>
+  </div>
+  <div class="check-row">
+    <input type="checkbox" id="excludeExtra" checked>
+    <label for="excludeExtra" style="margin:0;">臨時列車は除外する</label>
+  </div>
+  <button id="runBtn" disabled>この条件で集計する</button>
+  <button id="diagCheckBtn" disabled>まだダイヤに無いものだけ表示</button>
+  <div id="statusMsg"></div>
+</div>
+
+<div class="table-wrap">
+  <table id="resultTable" style="display:none;">
+    <thead>
+      <tr>
+        <th>乗車駅</th><th>種別</th><th>行先</th><th>時刻</th><th>曜日</th>
+        <th>回数</th><th>利用者数</th><th>最終乗車</th><th>ダイヤ</th>
+      </tr>
+    </thead>
+    <tbody id="resultBody"></tbody>
+  </table>
+  <div id="emptyMsg" class="empty-msg" style="display:none;"></div>
+</div>
+
+</main>
+
+<script src="nav.js"></script>
+<script src="logs.js?v=1.2.1"></script>
+<script>initNav("乗車回数ランキング");</script>
+<script>
+const ADMIN_USERS = ["運営"];
+const currentUser = checkLogin();
+if (!ADMIN_USERS.includes(currentUser)) {
+  alert("このページは管理者専用です。");
+  window.location.href = "index.html";
+}
+document.addEventListener("DOMContentLoaded", () => {
+  logAction("view", "ページ閲覧: ride_ranking.html");
+});
+
+/* ===================== データソース ===================== */
+const SHEET_BASE = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s";
+const RIDES_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
+const DIAGRAM_SHEET_ID = "1JzY1wIGbj2Z83ItsMnMrz1xQ-cviEv50P0mOHiyi70A";
+
+let allrouteData = [];
+let allstationData = [];
+let ridesData = [];
+let holidaySet = new Set();
+let currentRanking = []; // 直近の集計結果（ダイヤ照合用に保持）
+let diagramKeySet = null; // null = まだ照合していない
+
+async function fetchJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("HTTP " + res.status + " : " + url);
+  return res.json();
+}
+function setStatus(msg) { document.getElementById("statusMsg").textContent = msg; }
+
+async function loadMasterData() {
+  setStatus("路線・駅・過去の乗車記録を読み込み中...");
+  const [route, station, rides] = await Promise.all([
+    fetchJson(`${SHEET_BASE}/route`),
+    fetchJson(`${SHEET_BASE}/station`),
+    fetchJson(RIDES_URL),
+  ]);
+  allrouteData = Array.isArray(route) ? route : [];
+  allstationData = Array.isArray(station) ? station : [];
+  ridesData = Array.isArray(rides) ? rides : [];
+
+  try {
+    const hRes = await fetch("https://holidays-jp.github.io/api/v1/date.json");
+    const hData = await hRes.json();
+    holidaySet = new Set(Object.keys(hData));
+  } catch (e) { holidaySet = new Set(); }
+
+  buildCompanyOptions();
+  setStatus(`読み込み完了（乗車記録 ${ridesData.length} 件）`);
+}
+
+function buildCompanyOptions() {
+  const companies = [...new Set(allrouteData.map(r => r["会社"]).filter(Boolean))].sort();
+  const sel = document.getElementById("companySel");
+  sel.innerHTML = '<option value="">選択してください</option>' + companies.map(c => `<option value="${c}">${c}</option>`).join("");
+}
+
+document.getElementById("companySel").addEventListener("change", () => {
+  const companyVal = document.getElementById("companySel").value;
+  const routes = [...new Set(allrouteData.filter(r => r["会社"] === companyVal).map(r => r["路線"]))].filter(Boolean);
+  const routeSel = document.getElementById("routeSel");
+  routeSel.innerHTML = '<option value="">選択してください</option>' + routes.map(r => `<option value="${r}">${r}</option>`).join("");
+  document.getElementById("stationSel").innerHTML = '<option value="">（全駅）</option>';
+  document.getElementById("runBtn").disabled = true;
+  document.getElementById("diagCheckBtn").disabled = true;
+});
+
+document.getElementById("routeSel").addEventListener("change", () => {
+  const routeVal = document.getElementById("routeSel").value;
+  const stations = [...new Set(allstationData.filter(r => r["路線"] === routeVal).map(r => r["駅名"]))].filter(Boolean);
+  const stationSel = document.getElementById("stationSel");
+  stationSel.innerHTML = '<option value="">（全駅）</option>' + stations.map(s => `<option value="${s}">${s}</option>`).join("");
+  document.getElementById("runBtn").disabled = !routeVal;
+  document.getElementById("diagCheckBtn").disabled = true;
+  diagramKeySet = null;
+});
+
+loadMasterData();
+
+/* ===================== 補助関数 ===================== */
+function formatHM(d) {
+  if (!d) return "";
+  return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+}
+function dateKey(d) {
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+}
+function isWeekendType(d, hSet) {
+  const day = d.getDay();
+  if (day === 0 || day === 6) return true;
+  return hSet.has(dateKey(d));
+}
+function isFlaggedExtra(v) { return ["true","TRUE","1","はい","有","✓"].includes(String(v).trim()); }
+function splitBoundsTypes(r) {
+  const bounds = String(r["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
+  const types = String(r["種別"] || "").split("/").map(s => s.trim());
+  if (!bounds.length) return [];
+  return bounds.map((b, i) => ({ type: types[i] || types[0] || "", bound: b }));
+}
+
+/* ===================== 集計 ===================== */
+function buildRanking() {
+  const routeVal = document.getElementById("routeSel").value;
+  if (!routeVal) return;
+  const stationFilter = document.getElementById("stationSel").value;
+  const dayTypeFilter = document.getElementById("dayTypeSel").value; // "", "平", "休"
+  const minCount = Math.max(1, parseInt(document.getElementById("minCount").value, 10) || 1);
+  const excludeExtra = document.getElementById("excludeExtra").checked;
+
+  const groups = new Map();
+  ridesData.forEach(r => {
+    if (r["路線"] !== routeVal) return;
+    if (excludeExtra && isFlaggedExtra(r["臨時"])) return;
+    const station = r["乗車駅"];
+    if (!station) return;
+    if (stationFilter && station !== stationFilter) return;
+    const dt = new Date(r["時刻"]);
+    if (isNaN(dt)) return;
+    const dayTypeLabel = isWeekendType(dt, holidaySet) ? "休" : "平";
+    if (dayTypeFilter && dayTypeFilter !== dayTypeLabel) return;
+    const hm = formatHM(dt);
+
+    splitBoundsTypes(r).forEach(({ type, bound }) => {
+      const key = [station, type, bound, hm, dayTypeLabel].join("|");
+      if (!groups.has(key)) {
+        groups.set(key, { station, type, bound, hm, dayTypeLabel, count: 0, lastDate: null, users: new Set(), isDiagram: null });
+      }
+      const g = groups.get(key);
+      g.count++;
+      g.users.add(r["ユーザー名"]);
+      if (!g.lastDate || dt > g.lastDate) g.lastDate = dt;
+    });
+  });
+
+  currentRanking = [...groups.values()]
+    .filter(g => g.count >= minCount)
+    .sort((a, b) => b.count - a.count || a.hm.localeCompare(b.hm));
+
+  diagramKeySet = null; // 条件が変わったのでダイヤ照合はリセット
+  renderRanking();
+  document.getElementById("diagCheckBtn").disabled = currentRanking.length === 0;
+}
+
+function renderRanking() {
+  const table = document.getElementById("resultTable");
+  const body = document.getElementById("resultBody");
+  const emptyMsg = document.getElementById("emptyMsg");
+
+  const rows = diagramKeySet
+    ? currentRanking.filter(g => !g.isDiagram)
+    : currentRanking;
+
+  if (!rows.length) {
+    table.style.display = "none";
+    emptyMsg.style.display = "block";
+    emptyMsg.textContent = currentRanking.length
+      ? "条件に合う未ダイヤの組み合わせはありませんでした（すべてダイヤ登録済みです）。"
+      : "条件に合う乗車記録がありませんでした。最低乗車回数を下げるか、条件を見直してください。";
+    return;
+  }
+  emptyMsg.style.display = "none";
+  table.style.display = "table";
+
+  body.innerHTML = rows.map(g => {
+    const diagBadge = diagramKeySet
+      ? '<span class="badge ng">未ダイヤ</span>'
+      : (g.isDiagram === true ? '<span class="badge ok">ダイヤ済み</span>'
+        : g.isDiagram === false ? '<span class="badge ng">未ダイヤ</span>'
+        : '<span style="color:var(--muted);">—</span>');
+    const dayLabel = g.dayTypeLabel === "休" ? "土休日" : "平日";
+    return `
+      <tr class="${g.isDiagram === true ? "already-diagram" : ""}">
+        <td>${g.station}</td>
+        <td>${g.type || ""}</td>
+        <td>${g.bound}行き</td>
+        <td>${g.hm}</td>
+        <td>${dayLabel}</td>
+        <td class="count-cell">${g.count}</td>
+        <td>${g.users.size}</td>
+        <td>${g.lastDate ? g.lastDate.toLocaleDateString("ja-JP") : ""}</td>
+        <td>${diagBadge}</td>
+      </tr>`;
+  }).join("");
+}
+
+document.getElementById("runBtn").addEventListener("click", buildRanking);
+
+/* ===================== ダイヤ照合 ===================== */
+function diagramRowMatchesRoute(row, routeVal) {
+  return String(row["路線"] || "").split(",").map(s => s.trim()).includes(routeVal);
+}
+async function getDiagramList() {
+  try { return await fetchJson(`https://opensheet.elk.sh/${DIAGRAM_SHEET_ID}/${encodeURIComponent("ダイヤ一覧")}`); }
+  catch (e) { return []; }
+}
+async function fetchDiagramSheet(id, unban) {
+  try {
+    const data = await fetchJson(`https://opensheet.elk.sh/${DIAGRAM_SHEET_ID}/${encodeURIComponent(id + "_" + unban)}`);
+    return Array.isArray(data) ? data : [];
+  } catch (e) { return []; }
+}
+// 指定路線の、両方の曜日区分のダイヤ候補を全部集めて「駅名|種別|行先|時刻|曜日」キーの集合を作る
+async function buildDiagramKeySet(routeVal, companyVal) {
+  const list = await getDiagramList();
+  const matches = list.filter(d => d["会社"] === companyVal && diagramRowMatchesRoute(d, routeVal));
+  const set = new Set();
+  for (const d of matches) {
+    const rows = await fetchDiagramSheet(d["ID"], d["運番"]);
+    const dayType = String(d["曜日区分"] || "").trim();
+    const isHolidayRow = dayType.includes("土") || dayType.includes("休");
+    const dayLabels = dayType ? [isHolidayRow ? "休" : "平"] : ["平", "休"]; // 空欄=両方の曜日に適用
+    rows.forEach(r => {
+      const station = r["駅名"];
+      if (!station) return;
+      const raw = String(r["発車時刻"] || "").trim();
+      const hm = raw.match(/^(\d{1,2}):(\d{2})$/) ? raw.padStart(5, "0") : null;
+      if (!hm) return;
+      const bounds = String(r["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
+      const types = String(r["種別"] || "").split("/").map(s => s.trim());
+      bounds.forEach((b, i) => {
+        const type = types[i] || types[0] || "";
+        dayLabels.forEach(dl => set.add([station, type, b, hm, dl].join("|")));
+      });
+    });
+  }
+  return set;
+}
+
+document.getElementById("diagCheckBtn").addEventListener("click", async () => {
+  const routeVal = document.getElementById("routeSel").value;
+  const companyVal = document.getElementById("companySel").value;
+  if (!routeVal) return;
+  const btn = document.getElementById("diagCheckBtn");
+  btn.disabled = true;
+  setStatus("ダイヤ（運用シート）と照合中...");
+  try {
+    diagramKeySet = await buildDiagramKeySet(routeVal, companyVal);
+    currentRanking.forEach(g => {
+      const key = [g.station, g.type, g.bound, g.hm, g.dayTypeLabel].join("|");
+      g.isDiagram = diagramKeySet.has(key);
+    });
+    renderRanking();
+    const diagCount = currentRanking.filter(g => g.isDiagram).length;
+    setStatus(`照合完了：${currentRanking.length}件中 ${diagCount}件がダイヤ登録済み、${currentRanking.length - diagCount}件が未ダイヤです。`);
+  } catch (e) {
+    setStatus("ダイヤ照合中にエラーが発生しました: " + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

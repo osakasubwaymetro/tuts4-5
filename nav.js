@@ -2,7 +2,11 @@
  * nav.js — 共通ヘッダー管理ファイル
  * 新しいページを追加するときは NAV_LINKS だけ編集してください
  *
- * version: 1.6.4
+ * version: 1.6.5
+ * 1.6.5: (1) メニュー（.nav-dropdown）にmax-height + overflow-y:autoを追加。
+ *        ページが増えて縦に長くなった時、スマホの画面高さを超えた分がスクロール
+ *        できず「ログアウト」ボタンが見切れて押せなくなる問題を修正。
+ *        (2) 管理者メニューに「乗車回数ランキング」（ride_ranking.html）を追加
  * 1.6.4: ヘッダーから降車記録に回答した直後でも、新規乗車記録を投稿すると
  *        答えたはずの降車記録をまた聞かれてしまう不具合を修正。
  *        原因は、投稿直後に強制実行されるnavMaybeRefreshRideDataの
@@ -138,6 +142,11 @@ const NAV_CSS = `
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.18s ease, transform 0.18s ease;
+    /* ページ（管理者用リンク込み）が増えてメニューが縦に長くなっても、
+       画面の高さを超えた分はスクロールさせて、ログアウト等が必ず操作できるようにする */
+    max-height: calc(100vh - 70px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
   .nav-dropdown.open {
     opacity: 1;
@@ -285,6 +294,7 @@ function initNav(pageTitle) {
         { href: "log.html", icon: "🔍", label: "ログ管理" },
         { href: "inquiries.html", icon: "📮", label: "お問い合わせ管理" },
         { href: "maintenance.html", icon: "🛠", label: "入場編成一覧" },
+        { href: "ride_ranking.html", icon: "📈", label: "乗車回数ランキング" },
       ]
     : [];
 
