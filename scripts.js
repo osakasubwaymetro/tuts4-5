@@ -1,4 +1,9 @@
-// version: 1.33.3
+// version: 1.34.0
+// 1.34.0: 「過去の乗車記録から選ぶ」の候補を、キャッシュ保存（tuts4_community_ride_cache）・
+//         即表示・ページ読込時/方面選択時の先読みを全部やめて、ポップアップを開くたびに
+//         その都度GASから取得して絞り込む方式に変更（古いデータが混ざる可能性を無くすため）。
+//         取得に全部失敗した時は過去記録の候補は空（ダイヤ候補のみ）。投稿直後だけは従来どおり
+//         POST_SETTLE_MS待ってから取得する。旧キャッシュの残骸は読込時に1回掃除する
 // 1.33.3: ①エリア・区分を選ばずに投稿できてしまう「空投稿」を防止。upload()の冒頭で
 //         両方とも未入力なら送信前にアラートで止めるようにした。②投稿ボタンの連打で
 //         同じ内容の投稿が何件もできてしまう対策として、(a)送信中はボタン自体を
@@ -760,14 +765,9 @@ function resetForm() {
   const resultBox = document.getElementById("geoStationResult");
   if (resultBox) resultBox.innerHTML = "";
 
-  // 投稿のたびに、乗車履歴キャッシュ（候補提案用）を一旦消してから、裏で
-  // スプレッドシートの最新データをまるまる取り直してキャッシュを作り直す。
-  // 「消す」のは古いデータを握ったままにしないため、「裏で取り直す」のは
-  // 次にポップアップを開いた時に毎回1から待たされないため（投稿直後、まだGAS側の
-  // 書き込みが終わってない可能性がある分はPOST_SETTLE_MSだけ待ってから取得する）
+  // 候補用の乗車記録はキャッシュせず毎回取りに行く（v1.34.0）。投稿直後だけ、GAS側の
+  // 書き込みが終わる分（POST_SETTLE_MS）待ってから取得するよう、投稿時刻だけ記録しておく
   _lastPostAt = Date.now();
-  localStorage.removeItem(RIDE_HISTORY_CACHE_KEY);
-  getRideHistoryCached(); // 結果は待たず、裏で最新を取得してキャッシュを作り直しておく
 
   // 入力内容の下書きも消す（クリアボタン／投稿完了のどちらでもここを通る）
   localStorage.removeItem("tuts4_form_draft");
@@ -1266,9 +1266,6 @@ function startStationPopupFlow() {
   const boardingStation = stationSelects.length ? stationSelects[0].value : "";
   if (!routeVal || !boardingStation) return;
 
-  // 方面ポップアップを出している間に裏で先読みしておき、履歴選択時のラグを無くす
-  getRideHistoryCached();
-
   const stationsOnRoute = (allstationData || []).filter(r => r["路線"] === routeVal);
   if (stationsOnRoute.length < 2) return;
 
@@ -1397,29 +1394,10 @@ const RIDE_HISTORY_CACHE_KEY = "tuts4_community_ride_cache";
 let _lastPostAt = 0;
 const POST_SETTLE_MS = 3000; // 投稿からこの時間が経つまでは、再取得を少し待つ
 
-// show.html（過去の乗車記録一覧）と同じ考え方：キャッシュに有効期限を設けて「取りに行くか
-// どうか迷う」のはやめ、候補ポップアップを開くたびに必ず最新をGASへ取りに行くようにした。
-// キャッシュは「通信が終わるまでの間、とりあえず前回分を即表示しておく」ためだけに使う
-// （peekCachedRideHistory）。これなら、どんな理由であれ一度古いデータが混ざっても、
-// 次にポップアップを開いた瞬間に必ず最新へ更新される
-
-// 直前に取得できていたデータを、通信を待たずに同期的に返す（無ければnull）。
-// 候補ポップアップを開いた瞬間、まずこれで即表示してから裏で最新を取りに行くのに使う
-function peekCachedRideHistory() {
-  const cached = localStorage.getItem(RIDE_HISTORY_CACHE_KEY);
-  if (!cached) return null;
-  try {
-    const parsed = JSON.parse(cached);
-    if (parsed && Array.isArray(parsed.data) && parsed.data.length) return parsed.data;
-    if (Array.isArray(parsed) && parsed.length) return parsed; // 旧形式の残骸
-  } catch (e) { /* 壊れてたら無視 */ }
-  return null;
-}
-
-// 呼ばれるたびに必ずGASから最新の乗車記録を取りに行く（キャッシュのTTLで古いまま
-// 使い回してしまうことが無いようにするため）。同時に複数箇所から呼ばれても二重に
-// 通信しないよう、取得中は同じPromiseを使い回し、完了したら次の呼び出しでまた
-// 最新を取りに行けるようにリセットする
+// 候補ポップアップを開くたびに、その都度GASから最新の乗車記録を取りに行く。
+// （v1.34.0でキャッシュ保存・即表示・先読みを全部やめた。古いデータが混ざる余地を無くすため）
+// 同時に複数箇所から呼ばれても二重に通信しないよう、取得中だけ同じPromiseを共有し、
+// 完了したらリセットして次の呼び出しでまた最新を取りに行く。
 async function getRideHistoryCached() {
   if (_rideHistoryPromise) return _rideHistoryPromise;
 
@@ -1441,8 +1419,6 @@ async function getRideHistoryCached() {
         if (!res.ok) throw new Error("HTTP " + res.status);
         const all = await res.json();
         if (!Array.isArray(all)) throw new Error("不正なレスポンス形式");
-
-        localStorage.setItem(RIDE_HISTORY_CACHE_KEY, JSON.stringify({ data: all, cachedAt: Date.now() }));
         return all;
       } catch (e) {
         console.error(`乗車履歴の取得に失敗（${attempt}/${MAX_ATTEMPTS}回目）:`, e);
@@ -1452,22 +1428,20 @@ async function getRideHistoryCached() {
       }
     }
 
-    // 全部失敗した場合：古いキャッシュが残っていればそれにフォールバックする
-    // （無ければ空配列。候補が一時的に出なくても、次に開いた時また取り直しにいく）
-    console.error("乗車履歴の取得に失敗したため、前回のキャッシュにフォールバックします");
-    return peekCachedRideHistory() || [];
+    // 全部失敗した場合は空配列（キャッシュが無いので過去記録の候補は出ない。ダイヤ候補は出る）
+    console.error("乗車履歴の取得に全て失敗したため、過去記録の候補は出せません");
+    return [];
   })();
 
   try {
     return await _rideHistoryPromise;
   } finally {
-    // 完了したらリセットし、次に呼ばれた時はまた最新を取りに行くようにする
     _rideHistoryPromise = null;
   }
 }
 
-// ページを開いた時点で先読みを開始しておく（乗車駅を選ぶ頃には取得済みにしておくため）
-getRideHistoryCached();
+// 旧バージョンが端末に保存していた候補用キャッシュの残骸を一度だけ掃除する
+try { localStorage.removeItem(RIDE_HISTORY_CACHE_KEY); } catch (e) { /* ignore */ }
 
 function timeOfDayMinutes(d) {
   return d.getHours() * 60 + d.getMinutes();
@@ -1924,15 +1898,8 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
     renderHistoryPopupList(sortedCandidates, routeVal, boardingStation, dirVal);
   }
 
-  // show.htmlと同じ「キャッシュがあれば即表示→裏で必ず最新を取り直す」方式。
-  // キャッシュが無い（この端末で一度もまだ取得できていない）時だけ「確認中」を表示して待つ
-  const instant = peekCachedRideHistory();
-  if (instant) {
-    await buildAndRender(instant);
-  } else {
-    list.innerHTML = '<p class="modal-loading">過去の乗車記録を確認中...</p>';
-  }
-
+  // キャッシュは使わず、開くたびにその都度取得して表示する
+  list.innerHTML = '<p class="modal-loading">過去の乗車記録を確認中...</p>';
   const fresh = await getRideHistoryCached();
   await buildAndRender(fresh);
 }
