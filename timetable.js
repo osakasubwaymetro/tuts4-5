@@ -1,5 +1,10 @@
 // timetable.js
-// version: 1.5.3
+// version: 1.6.1
+// 1.6.1: 終着駅の判定を修正。運用シートに終点駅の行が無いことも多いため、列車の最終行でも
+//        「駅名が行先と一致する」場合だけ終着駅(発車無し)として扱うようにした。一致しない最終行は
+//        途中駅なので、1個の時刻は到着=発車として時刻表に載る
+// 1.6.0: ダイヤの時刻セルの「到着/発車」の読み方に対応(2個=到着・発車、1個=同じ、終着駅の1個=到着のみ)。
+//        駅ごとの時刻表は発車時刻(終着駅は載せない)、列車を選んだ時の各駅の時間は到着時刻を表示
 // 1.5.3: 直通運転で複数路線にまたがる運用（例：JR京都線, JR湖西線, JR北陸本線をまたぐ
 //        サンダーバードを1行にまとめて登録した場合）で、京都線内の駅は時刻表に出るのに
 //        湖西線・北陸本線内の駅だけ出てこない不具合を修正。原因は、各駅の方向判定が
@@ -272,6 +277,23 @@ function ttRouteStationOrder(routeVal) {
 }
 
 // 運用シートの行を「列車番号」が続く限り同じ列車の停車順とみなしてグループ化
+// ダイヤの時刻セルの読み方（運営ルール）：時刻が2個（改行等区切り）なら1個目＝到着・2個目＝発車。
+// 1個だけなら到着＝発車。ただし列車の最終行（終着駅）の1個だけは「到着時刻」で発車は無し。
+// group（同じ列車番号の行のまとまり）を渡すと、各行に対応する { arr, dep }（"H:MM" or null）の配列を返す
+function ttParseGroupTimes(group) {
+  return group.map((r, i) => {
+    const found = String(r["発車時刻"] || "").match(/\d{1,2}:\d{2}/g) || [];
+    const isLast = i === group.length - 1;
+    // 運用シートに終点駅の行が無いことも多いので、最終行でも「その駅が行先と一致する」場合だけ終着駅扱い
+    const bounds = String(r["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
+    const isTerminus = isLast && bounds.includes(String(r["駅名"] || "").trim());
+    let dep = null;
+    if (found.length >= 2) dep = found[1];
+    else if (found.length === 1) dep = isTerminus ? null : found[0];
+    return { arr: found[0] || null, dep };
+  });
+}
+
 function ttGroupByTrainNumber(rows) {
   const groups = [];
   let cur = null, curNum = null;
@@ -358,10 +380,11 @@ async function ttCollectStationEntries(stationName, routeVal) {
 
     const groups = ttGroupByTrainNumber(rows);
     groups.forEach(group => {
+      const groupTimes = ttParseGroupTimes(group);
       group.forEach((row, idx) => {
         if (row["駅名"] !== stationName) return;
-        const timeRaw = String(row["発車時刻"] || "").trim();
-        const hm = timeRaw.match(/^(\d{1,2}):(\d{2})$/);
+        // 駅ごとの時刻表は「発車時刻」を載せる（終着駅は発車が無いので載せない）
+        const hm = groupTimes[idx].dep ? groupTimes[idx].dep.match(/^(\d{1,2}):(\d{2})$/) : null;
         if (!hm) return;
 
         // 直通運転で複数路線にまたがる運用の場合、すぐ隣の停車駅がこの路線の駅マスタに
@@ -388,10 +411,11 @@ async function ttCollectStationEntries(stationName, routeVal) {
         // グループ）の停車駅を丸ごと持たせておく。終点駅は発車時刻が入っていないことが
         // 多いので、時刻の有無では絞り込まず駅名があれば全部残す
         const stops = group
-          .filter(r2 => r2["駅名"])
-          .map(r2 => ({
+          .map((r2, k) => ({ r2, arr: groupTimes[k].arr }))
+          .filter(({ r2 }) => r2["駅名"])
+          .map(({ r2, arr }) => ({
             station: r2["駅名"],
-            time: String(r2["発車時刻"] || "").trim(),
+            time: arr || "", // 列車詳細には「到着時刻」を載せる
             type: String(r2["種別"] || "").split("/").map(s => s.trim()).filter(Boolean)[0] || "",
             bound: String(r2["行先"] || "").split("/").map(s => s.trim()).filter(Boolean)[0] || ""
           }));
@@ -562,7 +586,7 @@ function ttShowTrainDetail(idx) {
   document.getElementById("ttTrainDetailTitle").innerHTML = (title || "列車詳細") + (subtitle ? `<span class="sub">${escapeHtmlTT(subtitle)}</span>` : "");
   document.getElementById("ttTrainDetailBody").innerHTML = `
     <table class="tt-detail-table">
-      <tr><th>駅名</th><th>発車時刻</th></tr>
+      <tr><th>駅名</th><th>到着時刻</th></tr>
       ${rowsHTML}
     </table>
   `;
