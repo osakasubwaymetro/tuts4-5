@@ -1,4 +1,10 @@
-// version: 1.34.0
+// version: 1.34.2
+// 1.34.2: 終着駅の判定を修正。運用シートに終点駅の行が無いことも多いため、列車の最終行でも
+//         「駅名が行先と一致する」場合だけ終着駅(発車無し)として扱う。一致しない最終行は途中駅なので
+//         1個の時刻は到着=発車として候補に出る
+// 1.34.1: ダイヤ(運用シート)の時刻セルの読み方を変更。改行等で時刻が2個入っていれば1個目=到着・
+//         2個目=発車、1個だけなら到着=発車、列車の最終行(終着駅)の1個だけは到着時刻で発車無し。
+//         乗車駅の候補にはこの「発車時刻」を使い、終着駅は候補に出さない(parseDiagramTimes)
 // 1.34.0: 「過去の乗車記録から選ぶ」の候補を、キャッシュ保存（tuts4_community_ride_cache）・
 //         即表示・ページ読込時/方面選択時の先読みを全部やめて、ポップアップを開くたびに
 //         その都度GASから取得して絞り込む方式に変更（古いデータが混ざる可能性を無くすため）。
@@ -1600,6 +1606,31 @@ async function prefetchDiagramDataForRoute(companyVal, routeVal) {
     await Promise.all(matches.map(d => fetchDiagramSheet(d["ID"], d["運番"], d["最終更新"])));
   } catch (e) { /* ignore */ }
 }
+// ダイヤの時刻セルの読み方（運営ルール）：
+//  ・改行等で時刻が2個入っている → 1個目が「到着時刻」、2個目が「発車時刻」
+//  ・時刻が1個だけ → 到着＝発車（同じ時刻）
+//  ・ただし列車（同じ列車番号のまとまり）の最終行＝終着駅の1個だけは「到着時刻」で、
+//    発車という概念が無い（折り返しは別の列車番号になる）ので、発車時刻は無し
+// rows（運用シートの行配列）を渡すと、各行に { row, arr, dep } を付けて返す。
+// arr / dep は "H:MM" 形式の文字列、無ければ null
+function parseDiagramTimes(rows) {
+  const out = rows.map(r => {
+    const found = String(r["発車時刻"] || "").match(/\d{1,2}:\d{2}/g) || [];
+    return { row: r, found, arr: found[0] || null, dep: null };
+  });
+  // 同じ列車番号が連続するまとまりの最終行を終着駅として扱う
+  out.forEach((o, i) => {
+    const next = out[i + 1];
+    const isLastOfTrain = !next || next.row["列車番号"] !== o.row["列車番号"];
+    // 運用シートに終点駅の行が無いことも多いので、最終行でも「その駅が行先と一致する」場合だけ
+    // 終着駅として扱う（一致しなければ途中駅の最後の行＝1個の時刻は到着=発車）
+    const bounds = String(o.row["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
+    const isTerminus = isLastOfTrain && bounds.includes(String(o.row["駅名"] || "").trim());
+    if (o.found.length >= 2) o.dep = o.found[1];
+    else if (o.found.length === 1) o.dep = isTerminus ? null : o.found[0];
+  });
+  return out;
+}
 function isFlaggedExtraGeneric(v) {
   return ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(v).trim());
 }
@@ -1620,19 +1651,13 @@ async function getDiagramCandidates(routeVal, boardingStation, todayIsWeekendTyp
   for (const d of matches) {
     const rows = await fetchDiagramSheet(d["ID"], d["運番"], d["最終更新"]);
     const isExtra = isFlaggedExtraGeneric(d["臨時"]);
-    rows.forEach(r => {
+    parseDiagramTimes(rows).forEach(({ row: r, dep }) => {
       if (r["駅名"] !== boardingStation) return;
-      const raw = String(r["発車時刻"] || "").trim();
-      let time = null;
-      const hm = raw.match(/^(\d{1,2}):(\d{2})$/);
-      if (hm) {
-        const now = new Date();
-        time = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(hm[1]), Number(hm[2]));
-      } else {
-        const parsed = new Date(raw);
-        if (!isNaN(parsed)) time = parsed;
-      }
-      if (!time) return;
+      // 乗車駅の候補には「発車時刻」を使う（終着駅は発車が無いので候補に出さない）
+      if (!dep) return;
+      const hm = dep.match(/^(\d{1,2}):(\d{2})$/);
+      const now = new Date();
+      const time = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(hm[1]), Number(hm[2]));
 
       // 種別・行先は増結対応で「/」区切り（併結時と同じ形式）
       const bounds = String(r["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
