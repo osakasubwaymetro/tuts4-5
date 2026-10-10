@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="ja">
-<!-- version: 1.2.5 -->
+<!-- version: 1.3.0 -->
+<!-- 1.3.0: 駅名入力の候補表示を、ブラウザ標準のdatalistから、編成表ページの「形式名で検索」と同じ
+           方式(入力に応じて一致する駅名のボタン一覧を表示→タップで選択)に変更。timetable.jsのバージョンクエリも更新 -->
 <!-- 1.2.5: timetable.jsの更新(終着駅判定の修正)にあわせてバージョンクエリを更新 -->
 <!-- 1.2.4: timetable.jsの更新(到着/発車時刻の読み方)にあわせてバージョンクエリを更新 -->
 <!-- 1.2.3: timetable.jsの更新（直通運転で複数路線にまたがる運用の方向判定バグ修正）
@@ -57,6 +59,27 @@
     margin-bottom: 16px;
   }
 
+  /* 駅名の候補リスト（編成表ページの「形式名で検索」と同じ見た目・動き） */
+  .search-results {
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+    margin-top: 6px;
+    overflow: hidden;
+  }
+  .search-results button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: #fff;
+    border: none;
+    border-bottom: 1px solid #f0f0f0;
+    padding: 10px 12px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .search-results button:last-child { border-bottom: none; }
+  .search-results button:active { background: #F4F7FB; }
   .picker-card {
     background: white;
     border-radius: 14px;
@@ -279,8 +302,8 @@
   <div class="picker-card">
     <div class="form-row">
       <label>駅名</label>
-      <input type="text" id="ttStationInput" list="ttStationList" placeholder="駅名を入力・選択" autocomplete="off">
-      <datalist id="ttStationList"></datalist>
+      <input type="text" id="ttStationInput" placeholder="駅名を入力" autocomplete="off">
+      <div id="ttStationResults"></div>
     </div>
     <div class="form-row">
       <label>路線</label>
@@ -310,6 +333,6 @@
 <script>initNav("時刻表");</script>
 <script src="logs.js?v=1.2.1"></script>
 <script>checkLogin();</script>
-<script src="timetable.js?v=1.6.1"></script>
+<script src="timetable.js?v=1.7.0"></script>
 </body>
 </html>
