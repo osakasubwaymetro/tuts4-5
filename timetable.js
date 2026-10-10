@@ -1,5 +1,7 @@
 // timetable.js
-// version: 1.6.1
+// version: 1.7.0
+// 1.7.0: 駅名入力の候補表示を、ブラウザ標準のdatalistから、編成表ページの「形式名で検索」と同じ
+//        方式(入力に応じて一致する駅名のボタン一覧→タップで選択)に変更
 // 1.6.1: 終着駅の判定を修正。運用シートに終点駅の行が無いことも多いため、列車の最終行でも
 //        「駅名が行先と一致する」場合だけ終着駅(発車無し)として扱うようにした。一致しない最終行は
 //        途中駅なので、1個の時刻は到着=発車として時刻表に載る
@@ -642,10 +644,46 @@ async function ttRenderTimetable(stationName, routeVal, sign) {
 }
 
 /* ---------- UIの初期化・連動 ---------- */
-function ttPopulateStationList() {
-  const names = [...new Set((ttStationData || []).filter(r => !ttIsViaEntry(r["駅名"])).map(r => r["駅名"]))];
-  const list = document.getElementById("ttStationList");
-  list.innerHTML = names.map(n => `<option value="${escapeHtmlTT(n)}"></option>`).join("");
+// 駅名の候補を出す仕組みは編成表ページの「形式名で検索」(runModelSearch)と同じ：
+// 入力に応じて、部分一致する駅名のボタン一覧を出し、タップしたものを選択する
+function ttStationNames() {
+  return [...new Set((ttStationData || []).filter(r => !ttIsViaEntry(r["駅名"])).map(r => r["駅名"]))].filter(Boolean);
+}
+
+function ttRunStationSearch() {
+  const q = document.getElementById("ttStationInput").value.trim().toLowerCase();
+  const box = document.getElementById("ttStationResults");
+  if (!q) { box.innerHTML = ""; return; }
+
+  const names = ttStationNames().filter(n => n.toLowerCase().includes(q));
+  if (!names.length) {
+    box.innerHTML = '<p class="section-desc">見つかりませんでした</p>';
+    return;
+  }
+  box.innerHTML = `<div class="search-results">${names.map(n => `<button type="button" data-n="${escapeHtmlTT(n)}">${escapeHtmlTT(n)}</button>`).join("")}</div>`;
+  box.querySelectorAll("button").forEach(btn => {
+    btn.onclick = () => {
+      document.getElementById("ttStationInput").value = btn.dataset.n;
+      box.innerHTML = "";
+      ttOnStationChosen(btn.dataset.n);
+    };
+  });
+}
+
+// 駅名が決まった（候補をタップした）時、または入力が変わって駅が未確定になった時の後処理
+function ttOnStationChosen(name) {
+  const routeSel = document.getElementById("ttRouteSelect");
+  const dirSel = document.getElementById("ttDirSelect");
+  document.getElementById("ttResult").innerHTML = "";
+  document.getElementById("ttStatus").textContent = "";
+  dirSel.innerHTML = '<option value="">まず路線を選んでください</option>';
+  dirSel.disabled = true;
+  if (!name) {
+    routeSel.innerHTML = '<option value="">まず駅名を選んでください</option>';
+    routeSel.disabled = true;
+    return;
+  }
+  ttPopulateRouteSelect(name);
 }
 
 function ttPopulateRouteSelect(stationName) {
@@ -717,7 +755,6 @@ function ttPopulateDirSelect(stationName, routeVal) {
 document.addEventListener("DOMContentLoaded", () => {
   ttFetchCachedMaster("station", `${TT_MASTER_BASE}/station`, data => {
     ttStationData = data;
-    ttPopulateStationList();
   });
   ttFetchCachedMaster("route", `${TT_MASTER_BASE}/route`, data => {
     ttRouteData = data;
@@ -727,18 +764,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const routeSel = document.getElementById("ttRouteSelect");
   const dirSel = document.getElementById("ttDirSelect");
 
-  stationInput.addEventListener("change", () => {
-    const name = stationInput.value.trim();
-    document.getElementById("ttResult").innerHTML = "";
-    document.getElementById("ttStatus").textContent = "";
-    dirSel.innerHTML = '<option value="">まず路線を選んでください</option>';
-    dirSel.disabled = true;
-    if (!name) {
-      routeSel.innerHTML = '<option value="">まず駅名を選んでください</option>';
-      routeSel.disabled = true;
-      return;
-    }
-    ttPopulateRouteSelect(name);
+  // 入力するたびに候補を出し直す。入力が変わったら、前に選んだ駅の路線・方向は無効にする
+  stationInput.addEventListener("input", () => {
+    ttRunStationSearch();
+    ttOnStationChosen("");
   });
 
   routeSel.addEventListener("change", () => {
