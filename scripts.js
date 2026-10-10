@@ -1,4 +1,7 @@
-// version: 1.34.2
+// version: 1.34.3
+// 1.34.3: ダイヤ(運用シート)由来の候補に方面フィルタが掛かっておらず、選んだ方面と逆向きの
+//         列車も出てしまっていたのを修正。過去の乗車記録側と同じcomputeMatchesDirectionで、
+//         時刻の窓・上位10件に絞る前に逆方向を除外する
 // 1.34.2: 終着駅の判定を修正。運用シートに終点駅の行が無いことも多いため、列車の最終行でも
 //         「駅名が行先と一致する」場合だけ終着駅(発車無し)として扱う。一致しない最終行は途中駅なので
 //         1個の時刻は到着=発車として候補に出る
@@ -1892,6 +1895,9 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
     const diagramRaw = await getDiagramCandidates(routeVal, boardingStation, todayIsWeekendType);
     if (myToken !== _historyPopupToken) return;
     diagramRaw
+      // 選んだ方面と逆向きの列車は除外（過去の乗車記録側と同じ方向判定。時刻の窓・上位10件に
+      // 絞る前にやらないと、逆方向の列車が枠を食ってしまう）
+      .filter(c => !c.bound || computeMatchesDirection(indexOf(c.bound), c.bound))
       .map(c => ({ ...c, _diff: (timeOfDayMinutes(c.time) - refMin + 1440) % 1440 }))
       .filter(c => max10Mode || c._diff <= WINDOW_MINUTES)
       .sort((a, b) => a._diff - b._diff)
