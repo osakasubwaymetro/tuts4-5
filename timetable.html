@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="ja">
-<!-- version: 1.4.0 -->
+<!-- version: 1.5.0 -->
+<!-- 1.5.0: スタフ表示のデザインを参考画像に合わせて作り直し(列車/最高速度等の枠、運転時分は行の下端、着線発線/制限速度/記事の枠、注意事項バー)。timetable.jsのバージョンクエリも更新 -->
 <!-- 1.4.0: 列車詳細に「スタフ表示」(乗務員用の運転時刻表風の全画面表示)を追加。timetable.jsのバージョンクエリも更新 -->
 <!-- 1.3.0: 駅名入力の候補表示を、ブラウザ標準のdatalistから、編成表ページの「形式名で検索」と同じ
            方式(入力に応じて一致する駅名のボタン一覧を表示→タップで選択)に変更。timetable.jsのバージョンクエリも更新 -->
@@ -60,6 +61,83 @@
     margin-bottom: 16px;
   }
 
+  /* 駅名の候補リスト（編成表ページの「形式名で検索」と同じ見た目・動き） */
+  .search-results {
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+    margin-top: 6px;
+    overflow: hidden;
+  }
+  .search-results button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: #fff;
+    border: none;
+    border-bottom: 1px solid #f0f0f0;
+    padding: 10px 12px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .search-results button:last-child { border-bottom: none; }
+  .search-results button:active { background: #F4F7FB; }
+  /* スタフ表示（乗務員用の運転時刻表風） */
+  .tt-staff-btn {
+    width: 100%; margin-bottom: 10px; padding: 10px; border: none; border-radius: 8px;
+    background: #2e7d32; color: #fff; font-size: 14px; font-weight: bold; cursor: pointer;
+  }
+  .tt-staff-overlay {
+    display: none; position: fixed; inset: 0; z-index: 10000; background: #fff;
+    flex-direction: column;
+  }
+  .tt-staff-overlay.show { display: flex; }
+  .tt-staff-bar {
+    background: #0b8a0b; color: #fff; display: flex; align-items: center;
+    justify-content: space-between; padding: 10px 16px; font-weight: bold;
+  }
+  .tt-staff-bar button { background: none; border: none; color: #fff; font-size: 20px; cursor: pointer; }
+  .tt-staff-scroll { flex: 1; overflow-y: auto; background: #fff; }
+  .tt-staff-foot {
+    background: #111; color: #fff; padding: 10px 16px; font-size: 18px; letter-spacing: 0.3em;
+  }
+  table.tt-staff-meta { width: 100%; border-collapse: collapse; table-layout: fixed; background: #eef0f2; }
+  table.tt-staff-meta th {
+    font-size: 11px; font-weight: normal; color: #555; padding: 4px 2px;
+    border: 1px solid #d3d8dd; background: #e3e6e9;
+  }
+  table.tt-staff-meta td { height: 48px; border: 1px solid #d3d8dd; background: #fff; text-align: center; }
+  table.tt-staff-meta td.num { font-size: 24px; color: #2a4fb5; letter-spacing: 0.3em; font-weight: bold; }
+  table.tt-staff-meta td.num small { display: block; font-size: 10px; letter-spacing: 0; color: #666; font-weight: normal; }
+  .tt-staff-cars { padding: 8px 16px; background: #fff; border-bottom: 1px solid #d3d8dd; font-size: 15px; color: #444; }
+  .tt-staff-cars .box { display: inline-block; min-width: 3.2em; height: 1.8em; border: 1px solid #c5ccd3; vertical-align: middle; }
+  table.tt-staff-table { width: 100%; border-collapse: collapse; table-layout: fixed; background: #fff; }
+  table.tt-staff-table th {
+    background: #dde1e5; font-size: 10px; color: #444; padding: 5px 2px; font-weight: normal;
+    border-bottom: 1px solid #b9c0c8;
+  }
+  table.tt-staff-table th.hl { background: #0b6b2a; color: #fff; font-size: 17px; font-weight: bold; }
+  table.tt-staff-table th:nth-child(1) { width: 11%; }
+  table.tt-staff-table th:nth-child(2) { width: 27%; }
+  table.tt-staff-table th:nth-child(3) { width: 17%; }
+  table.tt-staff-table th:nth-child(4) { width: 17%; }
+  table.tt-staff-table th:nth-child(5) { width: 8%; }
+  table.tt-staff-table th:nth-child(6) { width: 9%; }
+  table.tt-staff-table th:nth-child(7) { width: 11%; }
+  table.tt-staff-table td {
+    height: 64px; border-bottom: 1px solid #d5dae0; vertical-align: middle;
+    font-weight: bold; color: #111; padding: 0 2px;
+  }
+  /* 運転時分は行の下端（次の駅との境目）・左寄せ */
+  table.tt-staff-table td.run { vertical-align: bottom; text-align: left; padding: 0 0 2px 6px; font-size: 22px; }
+  table.tt-staff-table td.st { font-size: 22px; padding-left: 4px; }
+  table.tt-staff-table td.st span { display: inline-block; min-width: 4em; text-align: justify; text-align-last: justify; }
+  table.tt-staff-table td.arr, table.tt-staff-table td.dep {
+    text-align: right; padding-right: 8px; font-size: 22px; font-variant-numeric: tabular-nums;
+  }
+  table.tt-staff-table sub { font-size: 12px; vertical-align: baseline; position: relative; top: 4px; margin-left: 1px; }
+  table.tt-staff-table td.ln, table.tt-staff-table td.spd, table.tt-staff-table td.note { font-size: 14px; }
+  .tt-staff-after { padding: 10px 14px 120px; font-size: 11px; color: #888; border-top: 1px solid #d5dae0; }
   /* 駅名の候補リスト（編成表ページの「形式名で検索」と同じ見た目・動き） */
   .search-results {
     background: #fff;
@@ -371,6 +449,7 @@
       <button type="button" onclick="ttCloseStaff()" aria-label="閉じる">✕</button>
     </div>
     <div class="tt-staff-scroll" id="ttStaffBody"></div>
+    <div class="tt-staff-foot">注意事項</div>
   </div>
 
   <div id="ttStatus"></div>
@@ -381,6 +460,6 @@
 <script>initNav("時刻表");</script>
 <script src="logs.js?v=1.2.1"></script>
 <script>checkLogin();</script>
-<script src="timetable.js?v=1.8.0"></script>
+<script src="timetable.js?v=1.9.0"></script>
 </body>
 </html>

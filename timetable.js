@@ -1,5 +1,9 @@
 // timetable.js
-// version: 1.8.0
+// version: 1.9.0
+// 1.9.0: スタフ表示を参考画像に合わせて作り直し。時刻をh.mm表記（秒があれば小さい数字で併記）に、
+//        運転時分は「この駅の発車→次の駅の到着」を行の下端に表示、列車/最高速度/速度種別/けん引定数・
+//        両数・着線発線/制限速度/記事・着後・注意事項の枠もデザイン上は用意（データが無いので中身は空）。
+//        時刻セルの秒（H:MM:SS）もスタフ表示用に読めるようにした
 // 1.8.0: ダイヤ由来の列車の詳細に「スタフ表示」ボタンを追加。乗務員用の運転時刻表（スタフ）風の
 //        画面で、運転時分・停車場名・着・発（通）を縦に並べて表示する
 // 1.7.0: 駅名入力の候補表示を、ブラウザ標準のdatalistから、編成表ページの「形式名で検索」と同じ
@@ -286,15 +290,18 @@ function ttRouteStationOrder(routeVal) {
 // group（同じ列車番号の行のまとまり）を渡すと、各行に対応する { arr, dep }（"H:MM" or null）の配列を返す
 function ttParseGroupTimes(group) {
   return group.map((r, i) => {
-    const found = String(r["発車時刻"] || "").match(/\d{1,2}:\d{2}/g) || [];
+    // "H:MM" または "H:MM:SS"。秒は無ければnull（スタフ表示の小さい数字用）
+    const found = [...String(r["発車時刻"] || "").matchAll(/(\d{1,2}):(\d{2})(?::(\d{2}))?/g)]
+      .map(m => ({ hm: `${m[1]}:${m[2]}`, sec: m[3] !== undefined ? Number(m[3]) : null }));
     const isLast = i === group.length - 1;
     // 運用シートに終点駅の行が無いことも多いので、最終行でも「その駅が行先と一致する」場合だけ終着駅扱い
-    const bounds = String(r["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
+    const bounds = String(r["行先"] || "").split("/").map(x => x.trim()).filter(Boolean);
     const isTerminus = isLast && bounds.includes(String(r["駅名"] || "").trim());
     let dep = null;
     if (found.length >= 2) dep = found[1];
     else if (found.length === 1) dep = isTerminus ? null : found[0];
-    return { arr: found[0] || null, dep };
+    return { arr: found[0] ? found[0].hm : null, arrSec: found[0] ? found[0].sec : null,
+             dep: dep ? dep.hm : null, depSec: dep ? dep.sec : null };
   });
 }
 
@@ -415,20 +422,21 @@ async function ttCollectStationEntries(stationName, routeVal) {
         // グループ）の停車駅を丸ごと持たせておく。終点駅は発車時刻が入っていないことが
         // 多いので、時刻の有無では絞り込まず駅名があれば全部残す
         const stops = group
-          .map((r2, k) => ({ r2, arr: groupTimes[k].arr, dep: groupTimes[k].dep }))
+          .map((r2, k) => ({ r2, arr: groupTimes[k].arr, dep: groupTimes[k].dep, arrSec: groupTimes[k].arrSec, depSec: groupTimes[k].depSec }))
           .filter(({ r2 }) => r2["駅名"])
-          .map(({ r2, arr, dep }) => ({
+          .map(({ r2, arr, dep, arrSec, depSec }) => ({
             station: r2["駅名"],
             time: arr || "", // 列車詳細には「到着時刻」を載せる
             arr: arr || "",
             dep: dep || "", // スタフ表示用（終着駅は発車無し）
+            arrSec: arrSec, depSec: depSec,
             type: String(r2["種別"] || "").split("/").map(s => s.trim()).filter(Boolean)[0] || "",
             bound: String(r2["行先"] || "").split("/").map(s => s.trim()).filter(Boolean)[0] || ""
           }));
         // 運用シート自体に終点駅の行が無い場合（行先の駅が最後の停車駅として登録されて
         // いない）は、行先データから終点駅を補って末尾に足す
         if (bound && (!stops.length || stops[stops.length - 1].station !== bound)) {
-          stops.push({ station: bound, time: "", arr: "", dep: "", type: "", bound: "" });
+          stops.push({ station: bound, time: "", arr: "", dep: "", arrSec: null, depSec: null, type: "", bound: "" });
         }
 
         pushEntry(sign, {
@@ -601,9 +609,18 @@ function ttShowTrainDetail(idx) {
 }
 
 // ===== スタフ表示（乗務員用の運転時刻表風の画面） =====
-function ttHmToMin(hm) {
+// 時刻は「h.mm」表記。秒がある時だけ、右下に小さい数字で秒を付ける。
+// 時の部分は、最初の時刻・時が変わった時・終着駅の到着だけに付け、他は分だけにする。
+function ttToSec(hm, sec) {
   const m = String(hm || "").match(/^(\d{1,2}):(\d{2})$/);
-  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+  return m ? (Number(m[1]) * 60 + Number(m[2])) * 60 + (sec || 0) : null;
+}
+function ttStaffTimeHTML(hm, sec, showHour) {
+  const m = String(hm || "").match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return "";
+  const hourPart = showHour ? `${Number(m[1])}.` : "";
+  const secPart = sec ? `<sub>${String(sec).padStart(2, "0")}</sub>` : "";
+  return `${hourPart}${m[2]}${secPart}`;
 }
 
 function ttShowStaff(idx) {
@@ -611,23 +628,44 @@ function ttShowStaff(idx) {
   if (!e || !e.stops || !e.stops.length) return;
 
   const stops = e.stops;
+  let lastHour = null;
   const rowsHTML = stops.map((st, i) => {
     const isFirst = i === 0;
     const isLast = i === stops.length - 1;
-    // 着の欄は、到着と発車が違う時間の駅と、終着駅だけに出す（始発駅・通常の停車駅は発の欄だけ）
-    const showArr = st.arr && (isLast || (st.dep && st.arr !== st.dep)) && !(isFirst && st.arr === st.dep);
-    // 運転時分：前の駅の発車から、この駅の到着までの分数（日付またぎも考慮）
-    let run = "";
-    if (i > 0) {
-      const prevDep = ttHmToMin(stops[i - 1].dep || stops[i - 1].arr);
-      const thisArr = ttHmToMin(st.arr);
-      if (prevDep !== null && thisArr !== null) run = String(((thisArr - prevDep) % 1440 + 1440) % 1440);
+    // 着の欄は、到着と発車が違う時間の駅と終着駅だけに出す（始発駅・通常の停車駅は発の欄だけ）
+    const showArr = !!st.arr && (isLast || (!!st.dep && (st.arr !== st.dep || (st.arrSec || 0) !== (st.depSec || 0))));
+
+    const hourOf = hm => Number(String(hm).split(":")[0]);
+    function timeCell(hm, sec, force) {
+      if (!hm) return "";
+      const h = hourOf(hm);
+      const show = force || lastHour === null || h !== lastHour;
+      lastHour = h;
+      return ttStaffTimeHTML(hm, sec, show);
     }
-    return `<tr${isFirst ? ' class="tt-staff-first"' : ""}>
-      <td class="run">${run}</td>
-      <td class="st">${escapeHtmlTT(st.station)}</td>
-      <td class="arr">${showArr ? escapeHtmlTT(st.arr) : ""}</td>
-      <td class="dep">${st.dep ? escapeHtmlTT(st.dep) : (isLast ? '<span class="end">終着</span>' : "")}</td>
+    const arrHTML = showArr ? timeCell(st.arr, st.arrSec, isLast) : "";
+    const depHTML = st.dep ? timeCell(st.dep, st.depSec, isFirst) : (isLast ? "" : "");
+
+    // 運転時分：この駅の発車から、次の駅の到着までの時間。行の下端（次の駅との境目）に出す
+    let run = "";
+    if (!isLast) {
+      const from = ttToSec(st.dep || st.arr, st.dep ? st.depSec : st.arrSec);
+      const next = stops[i + 1];
+      const to = ttToSec(next.arr || next.dep, next.arr ? next.arrSec : next.depSec);
+      if (from !== null && to !== null) {
+        const d = ((to - from) % 86400 + 86400) % 86400;
+        const mm = Math.floor(d / 60), ss = d % 60;
+        run = `${mm}${ss ? `<sub>${String(ss).padStart(2, "0")}</sub>` : ""}`;
+      }
+    }
+    return `<tr>
+      <td class="run"><span>${run}</span></td>
+      <td class="st"><span>${escapeHtmlTT(st.station)}</span></td>
+      <td class="arr">${arrHTML}</td>
+      <td class="dep">${depHTML}</td>
+      <td class="ln"></td>
+      <td class="spd"></td>
+      <td class="note"></td>
     </tr>`;
   }).join("");
 
@@ -635,14 +673,19 @@ function ttShowStaff(idx) {
   const sub = [e.type, e.bound ? `${e.bound}行き` : ""].filter(Boolean).join("　");
   document.getElementById("ttStaffTitle").textContent = e.unban ? `運番 ${e.unban}` : "スタフ";
   document.getElementById("ttStaffBody").innerHTML = `
-    <div class="tt-staff-train">
-      <div class="num">${num}</div>
-      <div class="sub">${escapeHtmlTT(sub)}</div>
-    </div>
+    <table class="tt-staff-meta">
+      <thead><tr><th>列　車</th><th>最高速度<br>(Km / h)</th><th>速度種別</th><th>けん引定数</th></tr></thead>
+      <tbody><tr><td class="num">${num}<small>${escapeHtmlTT(sub)}</small></td><td></td><td></td><td></td></tr></tbody>
+    </table>
+    <div class="tt-staff-cars"><span class="box">　　</span> 両</div>
     <table class="tt-staff-table">
-      <thead><tr><th>運転<br>時分</th><th>停車場名</th><th class="hl">着</th><th>発（通）</th></tr></thead>
+      <thead><tr>
+        <th>運転<br>時分</th><th>停車場名</th><th class="hl">着</th><th>発（通）</th>
+        <th>着線<br>発線</th><th>制限<br>速度</th><th>記事</th>
+      </tr></thead>
       <tbody>${rowsHTML}</tbody>
     </table>
+    <div class="tt-staff-after">着後</div>
   `;
   document.getElementById("ttStaffOverlay").classList.add("show");
 }
