@@ -1,4 +1,8 @@
-// version: 1.34.4
+// version: 1.34.5
+// 1.34.5: 投稿ボタンを押しても「送信中」も出ず無反応になる不具合への対策。原因候補は、送信前の未送信キュー
+//         (setPendingPosts)がlocalStorageの容量いっぱいで例外を投げ、upload()が途中で止まること。
+//         ①setPendingPostsの例外を握りつぶして送信を続行、②upload()全体をtry/catchで包み、予期しない
+//         例外が出たらエラー内容をアラートで表示してボタンを元に戻す（無反応にしない）
 // 1.34.4: 投稿ボタンが「押しても反応しない」状態になり得る弱点を補強。①投稿後の後処理（ログ・乗り継ぎ記録・
 //         スタンプ表示・フォームクリア等）のどれかで例外が出ても、他の処理とボタンの復帰が止まらないように
 //         個別にtry/catch、②念のため5秒後にボタンを必ず押せる状態へ戻す保険を追加、③連打防止で
@@ -630,8 +634,22 @@ let _lastSubmitKey = "";
 let _lastSubmitAt = 0;
 const DUPLICATE_GUARD_MS = 8000;
 
-// 投稿ボタン（確認用）
+// 投稿ボタン。中身(_uploadImpl)のどこかで予期しない例外が出ても、無反応にならず
+// 原因をアラートで知らせてボタンを元に戻す
 function upload() {
+  try {
+    _uploadImpl();
+  } catch (e) {
+    console.error("投稿処理でエラー:", e);
+    const b = document.getElementById("uploadSubmitBtn");
+    if (b) b.disabled = false;
+    try { hideLoadingPopup(); } catch (e2) { /* ignore */ }
+    alert("投稿処理でエラーが発生しました。\n" + (e && e.message ? e.message : e) +
+          "\n\n設定ページの「全キャッシュを今すぐ更新」を押してから、もう一度お試しください。");
+  }
+}
+
+function _uploadImpl() {
     const btn = document.getElementById("uploadSubmitBtn");
     // 送信中（前回のupload()がまだ後処理中）に連打された場合は何もしない
     if (btn && btn.disabled) return;
@@ -2676,7 +2694,16 @@ function getPendingPosts() {
   catch (e) { return []; }
 }
 function setPendingPosts(list) {
-  localStorage.setItem(PENDING_POSTS_KEY, JSON.stringify(list));
+  // 端末の保存容量(localStorage)がいっぱいだとsetItemが例外を投げる。ここで例外を出すと
+  // 投稿処理そのものが途中で止まって「押しても反応しない」ことになるので握りつぶす
+  // （その場合は未送信の控えが残せないだけで、送信自体は続行する）
+  try {
+    localStorage.setItem(PENDING_POSTS_KEY, JSON.stringify(list));
+    return true;
+  } catch (e) {
+    console.warn("未送信キューの保存に失敗しました（保存容量がいっぱいの可能性）:", e);
+    return false;
+  }
 }
 
 let _flushingPendingPosts = false;
