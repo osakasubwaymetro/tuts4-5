@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="ja">
-<!-- version: 1.6.0 -->
+<!-- version: 1.7.0 -->
 <!-- 1.5.0: 「全キャッシュを今すぐ更新」ボタンを追加。ダイヤキャッシュだけでなく、
            乗車履歴・マスタデータ・祝日・時刻表全乗車データ・show/乗換えキャッシュ
            （ユーザー別）もまとめて消せるようにした。ショートカット・投稿中の下書き・
@@ -142,6 +142,14 @@
   .storage-bar { display:flex; height:18px; background:#e6e6e6; border-radius:9px; overflow:hidden; }
   .storage-bar .seg { height:100%; transition:width .4s; }
   .storage-legend { display:flex; flex-wrap:wrap; gap:4px 12px; margin-top:8px; font-size:12px; color:#555; }
+  .storage-detail { background:#fff; border-radius:10px; padding:10px 14px; margin-bottom:8px; box-shadow:0 1px 4px rgba(0,0,0,.08); font-size:13px; }
+  .storage-detail summary { cursor:pointer; color:#1e4a8f; font-weight:bold; }
+  .storage-row { display:flex; align-items:center; gap:8px; padding:6px 0; border-top:1px solid #eee; }
+  .storage-row:first-child { border-top:none; }
+  .storage-row .nm { flex:1; word-break:break-all; color:#444; }
+  .storage-row .sz { white-space:nowrap; color:#666; }
+  .storage-row .del { border:none; background:#f3dede; color:#a33; border-radius:6px; padding:4px 10px; font-size:12px; }
+  .storage-row .keep { font-size:11px; color:#999; white-space:nowrap; }
   .storage-legend .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:4px; vertical-align:middle; }
 
   /* ショートカット一覧 */
@@ -341,6 +349,10 @@
     <div class="storage-legend" id="storageLegend"></div>
   </div>
   <p class="small" id="storageNote" style="color:#999;"></p>
+  <details class="storage-detail">
+    <summary>📂 容量の大きいデータ TOP10（タップで開く）</summary>
+    <div id="storageTop"></div>
+  </details>
   <button type="button" class="btn-secondary" onclick="measureRealQuota()" id="storageProbeBtn">🔍 実際の上限を測る（数秒かかります）</button>
   <p class="small" style="color:#999;">
     ブラウザによって上限は違い、だいたい5MB前後です。100%近いと投稿ボタンなどが
@@ -405,6 +417,8 @@ function clearAllCache() {
     "tuts4_master_",          // エリア/区分/種別/行先/駅名などのマスタデータ（scripts.js）
     "tuts4_show_cache_",      // show.html の乗車履歴キャッシュ（ユーザー別）
     "tuts4_transfers_cache_", // 乗換えキャッシュ（ユーザー別）
+    "tuts4_stats_cache_",     // 統計ページの乗車キャッシュ（ユーザー別）
+    "tuts4_stats_transfers_cache_", // 統計ページの乗換えキャッシュ（ユーザー別）
   ];
 
   const keysToRemove = [];
@@ -427,10 +441,10 @@ let storageQuota = STORAGE_QUOTA_DEFAULT;
 let storageQuotaMeasured = false;
 
 function storageCategoryOf(key) {
-  if (key === "tuts4_community_ride_cache" || key.startsWith("tuts4_show_cache_") || key === "tuts4_tt_allrides_cache") return "乗車履歴";
+  if (key === "tuts4_community_ride_cache" || key.startsWith("tuts4_show_cache_") || key === "tuts4_tt_allrides_cache" || key.startsWith("tuts4_stats_cache_")) return "乗車履歴";
   if (key === "tuts4_diagram_list_cache" || key.startsWith("tuts4_diagram_sheet_")) return "ダイヤ";
   if (key.startsWith("tuts4_master_")) return "マスタ";
-  if (key === "tuts4_holidays_cache" || key.startsWith("tuts4_transfers_cache_")) return "その他キャッシュ";
+  if (key === "tuts4_holidays_cache" || key.startsWith("tuts4_transfers_cache_") || key.startsWith("tuts4_stats_transfers_cache_")) return "その他キャッシュ";
   if (key === "tuts4_shortcuts" || key.startsWith("tuts4_pending_") || key === "tuts4_form_draft") return "ショートカット・未送信";
   return "その他";
 }
@@ -438,6 +452,13 @@ const STORAGE_COLORS = {
   "乗車履歴": "#4a90d9", "ダイヤ": "#2e9e6b", "マスタ": "#e0a030",
   "その他キャッシュ": "#9b6fd0", "ショートカット・未送信": "#d9534f", "その他": "#999"
 };
+
+// 消してもサーバーから取り直せる「キャッシュ」だけ true（clearAllCache と同じ基準）
+function isClearableCacheKey(key) {
+  const exact = ["tuts4_community_ride_cache", "tuts4_diagram_list_cache", "tuts4_holidays_cache", "tuts4_tt_allrides_cache"];
+  const pre = ["tuts4_diagram_sheet_", "tuts4_master_", "tuts4_show_cache_", "tuts4_transfers_cache_", "tuts4_stats_cache_", "tuts4_stats_transfers_cache_"];
+  return exact.includes(key) || pre.some(p => key.startsWith(p));
+}
 
 function fmtSize(chars) {
   const bytes = chars * 2; // localStorage は UTF-16 で保存される
@@ -448,6 +469,7 @@ function fmtSize(chars) {
 
 function renderStorageMeter() {
   const totals = {};
+  const keySizes = [];
   let used = 0;
   try {
     for (let i = 0; i < localStorage.length; i++) {
@@ -457,6 +479,7 @@ function renderStorageMeter() {
       const n = k.length + v.length;
       const cat = storageCategoryOf(k);
       totals[cat] = (totals[cat] || 0) + n;
+      keySizes.push({ key: k, n, cat });
       used += n;
     }
   } catch (e) {
@@ -478,6 +501,25 @@ function renderStorageMeter() {
     const item = document.createElement("span");
     item.innerHTML = `<span class="dot" style="background:${STORAGE_COLORS[cat] || "#999"}"></span>${cat} ${fmtSize(totals[cat])}`;
     legend.appendChild(item);
+  });
+  // 大きい順 TOP10（キャッシュは個別に削除可、設定・未送信データは削除不可）
+  const top = document.getElementById("storageTop");
+  top.innerHTML = "";
+  keySizes.sort((a, b) => b.n - a.n).slice(0, 10).forEach(it => {
+    const row = document.createElement("div");
+    row.className = "storage-row";
+    const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = it.key;
+    const sz = document.createElement("span"); sz.className = "sz"; sz.textContent = fmtSize(it.n);
+    row.appendChild(nm); row.appendChild(sz);
+    if (isClearableCacheKey(it.key)) {
+      const b = document.createElement("button");
+      b.className = "del"; b.type = "button"; b.textContent = "削除";
+      b.onclick = () => { try { localStorage.removeItem(it.key); } catch (e) {} renderStorageMeter(); };
+      row.appendChild(b);
+    } else {
+      const kp = document.createElement("span"); kp.className = "keep"; kp.textContent = "消せません"; row.appendChild(kp);
+    }
+    top.appendChild(row);
   });
   const pctEl = document.getElementById("storagePct");
   pctEl.textContent = pct.toFixed(1) + "%";
