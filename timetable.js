@@ -1,5 +1,9 @@
 // timetable.js
-// version: 1.9.0
+// version: 1.10.0
+// 1.10.0: スタフ表示に、右上の現在時刻（秒単位）、GPSのON/OFF切替、現在位置の緑表示を追加。
+//         時刻（到着〜発車の間なら停車中、発車〜次の到着の間なら駅間走行中）またはGPS
+//         （HeartRailsの最寄り駅＋速度で停車中/走行中を判定）で位置を判断し、停車中はその駅の運転時分欄を緑、
+//         駅間走行中は2駅分の行を薄緑にして境目に太い緑線を表示
 // 1.9.0: スタフ表示を参考画像に合わせて作り直し。時刻をh.mm表記（秒があれば小さい数字で併記）に、
 //        運転時分は「この駅の発車→次の駅の到着」を行の下端に表示、列車/最高速度/速度種別/けん引定数・
 //        両数・着線発線/制限速度/記事・着後・注意事項の枠もデザイン上は用意（データが無いので中身は空）。
@@ -658,7 +662,7 @@ function ttShowStaff(idx) {
         run = `${mm}${ss ? `<sub>${String(ss).padStart(2, "0")}</sub>` : ""}`;
       }
     }
-    return `<tr>
+    return `<tr data-i="${i}">
       <td class="run"><span>${run}</span></td>
       <td class="st"><span>${escapeHtmlTT(st.station)}</span></td>
       <td class="arr">${arrHTML}</td>
@@ -671,7 +675,7 @@ function ttShowStaff(idx) {
 
   const num = e.trainNumber ? escapeHtmlTT(e.trainNumber) : (e.unban ? escapeHtmlTT(e.unban) : "");
   const sub = [e.type, e.bound ? `${e.bound}行き` : ""].filter(Boolean).join("　");
-  document.getElementById("ttStaffTitle").textContent = e.unban ? `運番 ${e.unban}` : "スタフ";
+  document.getElementById("ttStaffTitle").textContent = e.trainNumber || (e.unban ? `運番 ${e.unban}` : "スタフ");
   document.getElementById("ttStaffBody").innerHTML = `
     <table class="tt-staff-meta">
       <thead><tr><th>列　車</th><th>最高速度<br>(Km / h)</th><th>速度種別</th><th>けん引定数</th></tr></thead>
@@ -688,9 +692,175 @@ function ttShowStaff(idx) {
     <div class="tt-staff-after">着後</div>
   `;
   document.getElementById("ttStaffOverlay").classList.add("show");
+  ttStaffStart(stops);
 }
 function ttCloseStaff() {
   document.getElementById("ttStaffOverlay").classList.remove("show");
+  ttStaffStop();
+}
+
+// ===== スタフ表示：現在時刻・現在位置（時刻 or GPS） =====
+let ttStaffState = null; // { stops, timer, gpsOn, watchId, pos, lastPos, speed, nearest, lastQueryAt, lastQueryPos, lastStopIdx }
+
+function ttStaffStart(stops) {
+  ttStaffStop();
+  ttStaffState = { stops, timer: null, gpsOn: false, watchId: null, pos: null, lastPos: null, speed: null,
+                   nearest: null, nearestAt: 0, lastQueryAt: 0, lastQueryPos: null, lastStopIdx: null, querying: false };
+  ttStaffSetGpsUI(false, "");
+  ttStaffTick();
+  ttStaffState.timer = setInterval(ttStaffTick, 1000);
+}
+function ttStaffStop() {
+  if (!ttStaffState) return;
+  clearInterval(ttStaffState.timer);
+  if (ttStaffState.watchId !== null && navigator.geolocation) navigator.geolocation.clearWatch(ttStaffState.watchId);
+  ttStaffState = null;
+}
+
+function ttStaffSetGpsUI(on, msg) {
+  const box = document.getElementById("ttStaffGps");
+  if (box) {
+    box.querySelector(".on").classList.toggle("active", on);
+    box.querySelector(".off").classList.toggle("active", !on);
+  }
+  const m = document.getElementById("ttStaffGpsMsg");
+  if (m) m.textContent = msg || "";
+}
+
+function ttStaffToggleGps() {
+  const st = ttStaffState;
+  if (!st) return;
+  if (st.gpsOn) {
+    st.gpsOn = false;
+    if (st.watchId !== null) navigator.geolocation.clearWatch(st.watchId);
+    st.watchId = null; st.nearest = null; st.pos = null; st.lastPos = null; st.speed = null; st.lastStopIdx = null;
+    ttStaffSetGpsUI(false, "");
+    ttStaffTick();
+    return;
+  }
+  if (!navigator.geolocation) { ttStaffSetGpsUI(false, "この端末ではGPSが使えません（時刻で判定します）"); return; }
+  st.gpsOn = true;
+  ttStaffSetGpsUI(true, "GPSで測位中…（取れるまでは時刻で判定します）");
+  st.watchId = navigator.geolocation.watchPosition(
+    p => ttStaffOnPosition(p),
+    err => {
+      if (!ttStaffState) return;
+      ttStaffSetGpsUI(true, err && err.code === 1 ? "位置情報が許可されていません（時刻で判定します）" : "GPSを取得できません（時刻で判定します）");
+    },
+    { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 }
+  );
+}
+
+function ttDistM(a, b) {
+  const R = 6371000, rad = x => x * Math.PI / 180;
+  const dLat = rad(b.lat - a.lat), dLon = rad(b.lon - a.lon);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function ttNormStation(n) {
+  return String(n || "").replace(/駅$/, "").replace(/ヶ/g, "ケ").replace(/ッ/g, "ツ").replace(/\s/g, "");
+}
+
+function ttStaffOnPosition(p) {
+  const st = ttStaffState;
+  if (!st) return;
+  const cur = { lat: p.coords.latitude, lon: p.coords.longitude, t: p.timestamp || Date.now() };
+  // 速度（m/s）：端末が教えてくれればそれを使い、無ければ直前の位置との差から推定する
+  let speed = (typeof p.coords.speed === "number" && !isNaN(p.coords.speed)) ? p.coords.speed : null;
+  if (speed === null && st.pos && cur.t > st.pos.t) speed = ttDistM(st.pos, cur) / ((cur.t - st.pos.t) / 1000);
+  st.lastPos = st.pos; st.pos = cur; st.speed = speed;
+  ttStaffSetGpsUI(true, "GPS測位中");
+
+  // 最寄り駅の問い合わせ（HeartRails。新規投稿の「近くの駅」と同じAPI）：8秒以上空け、位置が20m以上動いた時だけ
+  const now = Date.now();
+  const moved = !st.lastQueryPos || ttDistM(st.lastQueryPos, cur) > 20;
+  if (!st.querying && now - st.lastQueryAt > 8000 && (moved || now - st.lastQueryAt > 30000)) {
+    st.querying = true; st.lastQueryAt = now; st.lastQueryPos = cur;
+    fetch(`https://express.heartrails.com/api/json?method=getStations&x=${cur.lon}&y=${cur.lat}`)
+      .then(r => r.json())
+      .then(data => {
+        if (ttStaffState !== st) return;
+        const list = (data.response && data.response.station) || [];
+        const first = list[0];
+        st.nearest = first ? { name: first.name, dist: parseInt(String(first.distance), 10) || 0 } : null;
+        st.nearestAt = Date.now();
+      })
+      .catch(() => {})
+      .finally(() => { st.querying = false; ttStaffTick(); });
+  }
+  ttStaffTick();
+}
+
+// 時刻だけで判定した現在位置：{ type: "stop"|"run", idx } or null
+function ttStaffStateByTime(stops, nowSec) {
+  const ev = []; // 各駅の [到着, 発車]（秒、日付またぎは連続するよう+86400して展開）
+  let prev = -1;
+  stops.forEach((s, i) => {
+    const a0 = ttToSec(s.arr || s.dep, s.arr ? s.arrSec : s.depSec);
+    const d0 = ttToSec(s.dep || s.arr, s.dep ? s.depSec : s.arrSec);
+    if (a0 === null) { ev.push(null); return; }
+    let a = a0, d = d0;
+    while (a < prev) a += 86400;
+    while (d < a) d += 86400;
+    prev = d;
+    ev.push({ a, d, i });
+  });
+  const timed = ev.filter(Boolean);
+  if (!timed.length) return null;
+  for (const n of [nowSec, nowSec + 86400]) {
+    for (let k = 0; k < timed.length; k++) {
+      const e = timed[k], next = timed[k + 1];
+      // 停車中：到着〜発車（発車が到着と同じ駅も、最低20秒は停車扱い。次の駅に着くまで）
+      const stopEnd = Math.min(Math.max(e.d, e.a + 20), next ? next.a : e.a + 60);
+      if (n >= e.a && n <= stopEnd && (e.d > e.a || n <= e.a + 20 || !next)) return { type: "stop", idx: e.i };
+      if (next && n > Math.max(e.d, e.a + 20) && n < next.a) return { type: "run", idx: e.i };
+    }
+  }
+  return null;
+}
+
+// GPSで判定した現在位置（取れていなければnull）
+function ttStaffStateByGps(st, timeState) {
+  if (!st.gpsOn || !st.pos || !st.nearest || Date.now() - st.nearestAt > 40000) return null;
+  const speed = st.speed === null ? 0 : st.speed;
+  const cands = [];
+  st.stops.forEach((s, i) => { if (ttNormStation(s.station) === ttNormStation(st.nearest.name)) cands.push(i); });
+  if (cands.length && st.nearest.dist <= 250 && speed < 1.5) {
+    // 同じ駅名が複数ある（折り返し等）時は、時刻判定に一番近いものを選ぶ
+    let idx = cands[0];
+    if (timeState) idx = cands.reduce((b, c) => Math.abs(c - timeState.idx) < Math.abs(b - timeState.idx) ? c : b, cands[0]);
+    st.lastStopIdx = idx;
+    return { type: "stop", idx };
+  }
+  if (st.lastStopIdx !== null && st.lastStopIdx < st.stops.length - 1) return { type: "run", idx: st.lastStopIdx };
+  return null;
+}
+
+function ttStaffTick() {
+  const st = ttStaffState;
+  if (!st) return;
+  const d = new Date();
+  const p2 = n => String(n).padStart(2, "0");
+  const clock = document.getElementById("ttStaffClock");
+  if (clock) clock.textContent = `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+
+  const nowSec = (d.getHours() * 60 + d.getMinutes()) * 60 + d.getSeconds();
+  const byTime = ttStaffStateByTime(st.stops, nowSec);
+  const state = ttStaffStateByGps(st, byTime) || byTime;
+
+  document.querySelectorAll("#ttStaffBody tr[data-i]").forEach(tr => {
+    tr.classList.remove("cur-stop", "cur-run", "cur-run-next");
+  });
+  if (!state) return;
+  const row = document.querySelector(`#ttStaffBody tr[data-i="${state.idx}"]`);
+  if (!row) return;
+  if (state.type === "stop") {
+    row.classList.add("cur-stop");
+  } else {
+    row.classList.add("cur-run");
+    const next = document.querySelector(`#ttStaffBody tr[data-i="${state.idx + 1}"]`);
+    if (next) next.classList.add("cur-run-next");
+  }
 }
 function ttCloseTrainDetail() {
   document.getElementById("ttTrainDetailOverlay").classList.remove("show");

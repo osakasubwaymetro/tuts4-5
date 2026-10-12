@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="ja">
-<!-- version: 1.5.0 -->
+<!-- version: 1.6.0 -->
+<!-- 1.6.0: スタフ表示に、右上の現在時刻（秒単位）・GPSのON/OFF切替・現在位置の緑表示（停車中/駅間走行中）を追加。
+           あわせて、前回(1.5.0)でスタフ用CSSが二重に入ってしまい古い定義が後ろで上書きしていた不具合を修正。timetable.jsのバージョンクエリも更新 -->
 <!-- 1.5.0: スタフ表示のデザインを参考画像に合わせて作り直し(列車/最高速度等の枠、運転時分は行の下端、着線発線/制限速度/記事の枠、注意事項バー)。timetable.jsのバージョンクエリも更新 -->
 <!-- 1.4.0: 列車詳細に「スタフ表示」(乗務員用の運転時刻表風の全画面表示)を追加。timetable.jsのバージョンクエリも更新 -->
 <!-- 1.3.0: 駅名入力の候補表示を、ブラウザ標準のdatalistから、編成表ページの「形式名で検索」と同じ
@@ -94,9 +96,23 @@
   .tt-staff-overlay.show { display: flex; }
   .tt-staff-bar {
     background: #0b8a0b; color: #fff; display: flex; align-items: center;
-    justify-content: space-between; padding: 10px 16px; font-weight: bold;
+    justify-content: space-between; padding: 8px 12px; font-weight: bold; gap: 8px;
   }
-  .tt-staff-bar button { background: none; border: none; color: #fff; font-size: 20px; cursor: pointer; }
+  .tt-staff-bar .close { background: none; border: none; color: #fff; font-size: 20px; cursor: pointer; padding: 0 4px; }
+  .tt-staff-bar .mid { flex: 1; text-align: center; font-size: 15px; letter-spacing: 0.25em; }
+  .tt-staff-bar .right { display: flex; align-items: center; gap: 8px; }
+  .tt-staff-bar .clock { font-size: 20px; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+  .tt-staff-bar .clock::before { content: "\1F319"; font-size: 14px; margin-right: 4px; }
+  .tt-staff-bar .gps { display: inline-flex; border: 2px solid #fff; border-radius: 6px; overflow: hidden; cursor: pointer; font-size: 11px; }
+  .tt-staff-bar .gps b { padding: 3px 6px; background: #0b8a0b; color: #fff; }
+  .tt-staff-bar .gps b.active { background: #fff; color: #0b6b2a; }
+  .tt-staff-gpsmsg { font-size: 11px; color: #555; background: #eef6ee; padding: 0 12px; }
+  .tt-staff-gpsmsg:not(:empty) { padding: 3px 12px; }
+  /* 現在位置の表示：停車中はその駅の運転時分欄が緑、駅間走行中は間（2駅分の行）が薄緑で、境目に太い緑線 */
+  table.tt-staff-table tr.cur-stop td.run { background: #0b8a0b; color: #fff; }
+  table.tt-staff-table tr.cur-run td, table.tt-staff-table tr.cur-run-next td { background: #e2f4d8; }
+  table.tt-staff-table tr.cur-run td { border-bottom: 5px solid #0b8a0b; }
+  table.tt-staff-table tr.cur-run td.run { background: #0b8a0b; color: #fff; }
   .tt-staff-scroll { flex: 1; overflow-y: auto; background: #fff; }
   .tt-staff-foot {
     background: #111; color: #fff; padding: 10px 16px; font-size: 18px; letter-spacing: 0.3em;
@@ -138,66 +154,6 @@
   table.tt-staff-table sub { font-size: 12px; vertical-align: baseline; position: relative; top: 4px; margin-left: 1px; }
   table.tt-staff-table td.ln, table.tt-staff-table td.spd, table.tt-staff-table td.note { font-size: 14px; }
   .tt-staff-after { padding: 10px 14px 120px; font-size: 11px; color: #888; border-top: 1px solid #d5dae0; }
-  /* 駅名の候補リスト（編成表ページの「形式名で検索」と同じ見た目・動き） */
-  .search-results {
-    background: #fff;
-    border-radius: 10px;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.06);
-    margin-top: 6px;
-    overflow: hidden;
-  }
-  .search-results button {
-    display: block;
-    width: 100%;
-    text-align: left;
-    background: #fff;
-    border: none;
-    border-bottom: 1px solid #f0f0f0;
-    padding: 10px 12px;
-    font-size: 14px;
-    cursor: pointer;
-  }
-  .search-results button:last-child { border-bottom: none; }
-  .search-results button:active { background: #F4F7FB; }
-  /* スタフ表示（乗務員用の運転時刻表風） */
-  .tt-staff-btn {
-    width: 100%; margin-bottom: 10px; padding: 10px; border: none; border-radius: 8px;
-    background: #2e7d32; color: #fff; font-size: 14px; font-weight: bold; cursor: pointer;
-  }
-  .tt-staff-overlay {
-    display: none; position: fixed; inset: 0; z-index: 10000; background: #fff;
-    flex-direction: column;
-  }
-  .tt-staff-overlay.show { display: flex; }
-  .tt-staff-bar {
-    background: #2e7d32; color: #fff; display: flex; align-items: center;
-    justify-content: space-between; padding: 12px 16px; font-weight: bold;
-  }
-  .tt-staff-bar button {
-    background: none; border: none; color: #fff; font-size: 20px; cursor: pointer;
-  }
-  .tt-staff-scroll { flex: 1; overflow-y: auto; background: #fafaf7; }
-  .tt-staff-train {
-    display: flex; align-items: baseline; gap: 14px; padding: 12px 16px;
-    background: #eef1f4; border-bottom: 2px solid #cfd6dd;
-  }
-  .tt-staff-train .num { font-size: 26px; color: #2a4fb5; letter-spacing: 0.25em; font-weight: bold; }
-  .tt-staff-train .sub { font-size: 13px; color: #555; }
-  table.tt-staff-table { width: 100%; border-collapse: collapse; background: #fff; }
-  table.tt-staff-table th {
-    background: #dde2e7; font-size: 11px; color: #444; padding: 6px 4px; font-weight: normal;
-    border-bottom: 1px solid #b9c0c8;
-  }
-  table.tt-staff-table th.hl { background: #2e7d32; color: #fff; font-size: 15px; font-weight: bold; }
-  table.tt-staff-table td { padding: 12px 6px; border-bottom: 1px solid #d5dae0; vertical-align: middle; }
-  table.tt-staff-table td.run { width: 12%; text-align: center; color: #666; font-size: 12px; }
-  table.tt-staff-table td.st { font-size: 20px; letter-spacing: 0.3em; }
-  table.tt-staff-table td.arr, table.tt-staff-table td.dep {
-    width: 22%; text-align: center; font-size: 19px; font-variant-numeric: tabular-nums;
-  }
-  table.tt-staff-table td.arr { background: #f3f6f3; }
-  table.tt-staff-table td .end { font-size: 12px; color: #999; }
-  table.tt-staff-table tr.tt-staff-first td.run { background: #2e7d32; }
   .picker-card {
     background: white;
     border-radius: 14px;
@@ -445,9 +401,16 @@
 
   <div class="tt-staff-overlay" id="ttStaffOverlay">
     <div class="tt-staff-bar">
-      <span id="ttStaffTitle">スタフ</span>
-      <button type="button" onclick="ttCloseStaff()" aria-label="閉じる">✕</button>
+      <button type="button" class="close" onclick="ttCloseStaff()" aria-label="閉じる">✕</button>
+      <span id="ttStaffTitle" class="mid">スタフ</span>
+      <span class="right">
+        <span class="gps" id="ttStaffGps" onclick="ttStaffToggleGps()" role="button" aria-label="GPSの切り替え">
+          <b class="on">📍ON</b><b class="off active">OFF</b>
+        </span>
+        <span id="ttStaffClock" class="clock">--:--:--</span>
+      </span>
     </div>
+    <div class="tt-staff-gpsmsg" id="ttStaffGpsMsg"></div>
     <div class="tt-staff-scroll" id="ttStaffBody"></div>
     <div class="tt-staff-foot">注意事項</div>
   </div>
@@ -460,6 +423,6 @@
 <script>initNav("時刻表");</script>
 <script src="logs.js?v=1.2.1"></script>
 <script>checkLogin();</script>
-<script src="timetable.js?v=1.9.0"></script>
+<script src="timetable.js?v=1.10.0"></script>
 </body>
 </html>
