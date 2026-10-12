@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="ja">
-<!-- version: 1.5.0 -->
+<!-- version: 1.6.0 -->
 <!-- 1.5.0: 「全キャッシュを今すぐ更新」ボタンを追加。ダイヤキャッシュだけでなく、
            乗車履歴・マスタデータ・祝日・時刻表全乗車データ・show/乗換えキャッシュ
            （ユーザー別）もまとめて消せるようにした。ショートカット・投稿中の下書き・
@@ -134,6 +134,15 @@
     transition: background 0.2s;
   }
   .btn-secondary:hover { background: #ddd; }
+
+  /* 保存容量メーター */
+  .storage-meter { background:#fff; border-radius:10px; padding:12px 14px; box-shadow:0 1px 4px rgba(0,0,0,.08); margin-bottom:8px; }
+  .storage-label { display:flex; justify-content:space-between; font-size:13px; color:#444; margin-bottom:6px; }
+  .storage-label #storagePct { font-weight:bold; }
+  .storage-bar { display:flex; height:18px; background:#e6e6e6; border-radius:9px; overflow:hidden; }
+  .storage-bar .seg { height:100%; transition:width .4s; }
+  .storage-legend { display:flex; flex-wrap:wrap; gap:4px 12px; margin-top:8px; font-size:12px; color:#555; }
+  .storage-legend .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:4px; vertical-align:middle; }
 
   /* ショートカット一覧 */
   .shortcut-list {
@@ -325,6 +334,19 @@
     何かおかしい時の「とりあえずこれ押して」用です。
   </p>
 
+  <h2>📊 端末の保存容量</h2>
+  <div id="storageMeter" class="storage-meter">
+    <div class="storage-label"><span id="storageLabelMain">計測中…</span><span id="storagePct"></span></div>
+    <div class="storage-bar" id="storageBar"></div>
+    <div class="storage-legend" id="storageLegend"></div>
+  </div>
+  <p class="small" id="storageNote" style="color:#999;"></p>
+  <button type="button" class="btn-secondary" onclick="measureRealQuota()" id="storageProbeBtn">🔍 実際の上限を測る（数秒かかります）</button>
+  <p class="small" style="color:#999;">
+    ブラウザによって上限は違い、だいたい5MB前後です。100%近いと投稿ボタンなどが
+    動かなくなることがあります。赤くなってきたら「全キャッシュを今すぐ更新」を押してください。
+  </p>
+
   <div id="adminSettingsSection" style="display:none;">
     <h2>🛠 運営設定</h2>
     <label class="toggle-row">
@@ -363,6 +385,7 @@ function clearDiagramCache() {
     }
   }
   keysToRemove.forEach(k => localStorage.removeItem(k));
+  renderStorageMeter();
   alert(`ダイヤキャッシュを${keysToRemove.length}件クリアしました。次回、次に発車時刻を選ぶ時に最新のダイヤが取得されます。`);
 }
 
@@ -392,8 +415,119 @@ function clearAllCache() {
     }
   }
   keysToRemove.forEach(k => localStorage.removeItem(k));
+  renderStorageMeter();
   alert(`全キャッシュを${keysToRemove.length}件クリアしました。ショートカットや投稿中のデータ、ログイン状態はそのまま残っています。`);
 }
+
+// ===== 保存容量メーター =====
+// localStorage の使用量は「キー＋値の文字数」で数える（ブラウザの上限もほぼ文字数ベース）。
+// 上限は目安として 5,000,000 文字。「実際の上限を測る」で端末の実測値に置き換える。
+const STORAGE_QUOTA_DEFAULT = 5000000;
+let storageQuota = STORAGE_QUOTA_DEFAULT;
+let storageQuotaMeasured = false;
+
+function storageCategoryOf(key) {
+  if (key === "tuts4_community_ride_cache" || key.startsWith("tuts4_show_cache_") || key === "tuts4_tt_allrides_cache") return "乗車履歴";
+  if (key === "tuts4_diagram_list_cache" || key.startsWith("tuts4_diagram_sheet_")) return "ダイヤ";
+  if (key.startsWith("tuts4_master_")) return "マスタ";
+  if (key === "tuts4_holidays_cache" || key.startsWith("tuts4_transfers_cache_")) return "その他キャッシュ";
+  if (key === "tuts4_shortcuts" || key.startsWith("tuts4_pending_") || key === "tuts4_form_draft") return "ショートカット・未送信";
+  return "その他";
+}
+const STORAGE_COLORS = {
+  "乗車履歴": "#4a90d9", "ダイヤ": "#2e9e6b", "マスタ": "#e0a030",
+  "その他キャッシュ": "#9b6fd0", "ショートカット・未送信": "#d9534f", "その他": "#999"
+};
+
+function fmtSize(chars) {
+  const bytes = chars * 2; // localStorage は UTF-16 で保存される
+  if (bytes < 1024) return bytes + "B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + "KB";
+  return (bytes / 1024 / 1024).toFixed(2) + "MB";
+}
+
+function renderStorageMeter() {
+  const totals = {};
+  let used = 0;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k === "__tuts4_probe__") continue;
+      const v = localStorage.getItem(k) || "";
+      const n = k.length + v.length;
+      const cat = storageCategoryOf(k);
+      totals[cat] = (totals[cat] || 0) + n;
+      used += n;
+    }
+  } catch (e) {
+    document.getElementById("storageLabelMain").textContent = "保存領域にアクセスできません（プライベートモード等）";
+    return;
+  }
+  const pct = Math.min(100, used / storageQuota * 100);
+  const bar = document.getElementById("storageBar");
+  const legend = document.getElementById("storageLegend");
+  bar.innerHTML = "";
+  legend.innerHTML = "";
+  Object.keys(totals).sort((a, b) => totals[b] - totals[a]).forEach(cat => {
+    const seg = document.createElement("div");
+    seg.className = "seg";
+    seg.style.width = (totals[cat] / storageQuota * 100) + "%";
+    seg.style.background = STORAGE_COLORS[cat] || "#999";
+    seg.title = cat + " " + fmtSize(totals[cat]);
+    bar.appendChild(seg);
+    const item = document.createElement("span");
+    item.innerHTML = `<span class="dot" style="background:${STORAGE_COLORS[cat] || "#999"}"></span>${cat} ${fmtSize(totals[cat])}`;
+    legend.appendChild(item);
+  });
+  const pctEl = document.getElementById("storagePct");
+  pctEl.textContent = pct.toFixed(1) + "%";
+  pctEl.style.color = pct >= 90 ? "#d9534f" : pct >= 70 ? "#e0a030" : "#2e9e6b";
+  document.getElementById("storageLabelMain").textContent =
+    `${fmtSize(used)} / ${fmtSize(storageQuota)}` + (storageQuotaMeasured ? "（実測）" : "（目安）");
+  const note = document.getElementById("storageNote");
+  note.textContent = pct >= 90 ? "⚠ ほぼ満杯です。「全キャッシュを今すぐ更新」を押してください。"
+    : pct >= 70 ? "そろそろ多めです。重いと感じたらキャッシュを更新してください。" : "";
+  note.style.color = pct >= 90 ? "#d9534f" : "#999";
+}
+
+// 実際に書き込めるところまで書いて上限を測る（測定用キーは必ず消す）
+function measureRealQuota() {
+  const btn = document.getElementById("storageProbeBtn");
+  btn.disabled = true;
+  btn.textContent = "測定中…";
+  setTimeout(() => {
+    const PROBE = "__tuts4_probe__";
+    let used = 0;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k === PROBE) continue;
+        used += k.length + (localStorage.getItem(k) || "").length;
+      }
+      localStorage.removeItem(PROBE);
+      const chunk = "x".repeat(50000);
+      let probe = "";
+      let ok = true;
+      let guard = 0;
+      while (ok && guard++ < 400) { // 最大 20,000,000 文字まで
+        try { localStorage.setItem(PROBE, probe + chunk); probe += chunk; }
+        catch (e) { ok = false; }
+      }
+      const free = probe.length - PROBE.length;
+      storageQuota = used + Math.max(0, free) + PROBE.length;
+      storageQuotaMeasured = true;
+    } catch (e) {
+      alert("測定に失敗しました: " + e.message);
+    } finally {
+      try { localStorage.removeItem(PROBE); } catch (e) {}
+      btn.disabled = false;
+      btn.textContent = "🔍 実際の上限を測る（数秒かかります）";
+      renderStorageMeter();
+    }
+  }, 50);
+}
+
+renderStorageMeter();
 
 // ===== Googleアカウントの変更 =====
 const GOOGLE_CLIENT_ID = "63849227908-th525fl0grpko8l0m78m98rbp03fnni7.apps.googleusercontent.com";
