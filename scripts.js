@@ -1,4 +1,8 @@
-// version: 1.34.3
+// version: 1.34.4
+// 1.34.4: 投稿ボタンが「押しても反応しない」状態になり得る弱点を補強。①投稿後の後処理（ログ・乗り継ぎ記録・
+//         スタンプ表示・フォームクリア等）のどれかで例外が出ても、他の処理とボタンの復帰が止まらないように
+//         個別にtry/catch、②念のため5秒後にボタンを必ず押せる状態へ戻す保険を追加、③連打防止で
+//         スキップした時は無反応にせず「同じ内容を直前に送信済み」とアラートで知らせるようにした
 // 1.34.3: ダイヤ(運用シート)由来の候補に方面フィルタが掛かっておらず、選んだ方面と逆向きの
 //         列車も出てしまっていたのを修正。過去の乗車記録側と同じcomputeMatchesDirectionで、
 //         時刻の窓・上位10件に絞る前に逆方向を除外する
@@ -699,6 +703,7 @@ function upload() {
   const submitKey = [usernameValue, timeValue, areaValue, typeValue].join("|");
   if (submitKey === _lastSubmitKey && Date.now() - _lastSubmitAt < DUPLICATE_GUARD_MS) {
     console.log("同じ内容の投稿が短時間に連続したため、今回の送信はスキップしました:", submitKey);
+    alert("同じ内容の投稿を直前に送信済みです（連打防止のため、今回は送信しませんでした）");
     return;
   }
   _lastSubmitKey = submitKey;
@@ -714,7 +719,7 @@ function upload() {
   setPendingPosts(queue);
 
   if (btn) btn.disabled = true;
-  showLoadingPopup();
+  try { showLoadingPopup(); } catch (e) { console.error("読み込み表示でエラー:", e); }
 
   // 1.32.10で「応答を読み取れる送信（Content-Type: text/plain）」に変更したが、
   // rides_gas側がこの方式のレスポンスに対応しておらず、CORSで応答が読めず常に失敗扱いに
@@ -735,14 +740,19 @@ function upload() {
       console.error("送信エラー（あとで自動的に再送します）:", err);
     });
 
-  setTimeout(async () => {
-    logAction("post", `投稿: ${routeValue} / ${modelValue} ${numberValue} / ${stationValue} → ${boundValue}`);
-    handleTripBookkeeping(routeValue, boundValue, timeValue, stationValue, sujitypeValue);
-    hideLoadingPopup();
-    showStampPopup(modelValue, numberValue);
-    resetForm();
+  // 後処理のどれかで例外が出ても、他の後処理とボタンの復帰が止まらないようにする
+  // （以前は途中で例外が出ると、ボタンがdisabledのまま戻らず「押しても反応しない」状態になり得た）
+  const safe = (label, fn) => { try { fn(); } catch (e) { console.error(`投稿後の処理でエラー（${label}）:`, e); } };
+  setTimeout(() => {
+    safe("ログ", () => logAction("post", `投稿: ${routeValue} / ${modelValue} ${numberValue} / ${stationValue} → ${boundValue}`));
+    safe("乗り継ぎ記録", () => handleTripBookkeeping(routeValue, boundValue, timeValue, stationValue, sujitypeValue));
+    safe("読み込み表示を閉じる", () => hideLoadingPopup());
+    safe("スタンプ表示", () => showStampPopup(modelValue, numberValue));
+    safe("フォームのクリア", () => resetForm());
     if (btn) btn.disabled = false;
   }, 1000);
+  // 念のための保険：何があっても数秒後にはボタンを必ず押せる状態に戻す
+  setTimeout(() => { if (btn) btn.disabled = false; }, 5000);
 }
 
 // 投稿完了後、次の入力に備えてフォームを全クリアする
