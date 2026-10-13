@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="ja">
-<!-- version: 1.7.0 -->
+<!-- version: 1.8.0 -->
 <!-- 1.5.0: 「全キャッシュを今すぐ更新」ボタンを追加。ダイヤキャッシュだけでなく、
            乗車履歴・マスタデータ・祝日・時刻表全乗車データ・show/乗換えキャッシュ
            （ユーザー別）もまとめて消せるようにした。ショートカット・投稿中の下書き・
@@ -372,6 +372,7 @@
 
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="nav.js"></script>
+<script src="idbcache.js?v=1.0.0"></script>
 <script src="logs.js?v=1.2.1"></script>
 <script>initNav("設定");</script>
 <script>
@@ -429,6 +430,7 @@ function clearAllCache() {
     }
   }
   keysToRemove.forEach(k => localStorage.removeItem(k));
+  if (window.tuts4IdbCache) window.tuts4IdbCache.clear(); // IndexedDB 側（numberマスタ）も消す
   renderStorageMeter();
   alert(`全キャッシュを${keysToRemove.length}件クリアしました。ショートカットや投稿中のデータ、ログイン状態はそのまま残っています。`);
 }

@@ -7,7 +7,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>編成表</title>
-<!-- version: 1.0.1 -->
+<!-- version: 1.1.0 -->
 <!-- 1.0.1: 形式名検索を大文字小文字区別なしに変更 -->
 <style>
   body {
@@ -143,6 +143,7 @@
 </main>
 
 <script src="nav.js"></script>
+<script src="idbcache.js?v=1.0.0"></script>
 <script>initNav("編成表");</script>
 <script>
 document.addEventListener("DOMContentLoaded", () => {
@@ -163,6 +164,11 @@ async function fetchJsonArrayWithRetry(url, attempts = 2) {
   return [];
 }
 function fetchCachedMasterData(cacheKey, url, handler) {
+  // number シートは大きい(1〜2MB)ので localStorage ではなく IndexedDB に保存する
+  if (cacheKey === "number" && window.tuts4IdbCache) {
+    window.tuts4IdbCache.fetchMaster(cacheKey, url, handler, fetchJsonArrayWithRetry);
+    return;
+  }
   const key = "tuts4_master_" + cacheKey;
   try {
     const cached = localStorage.getItem(key);

@@ -1,4 +1,4 @@
-// version: 1.34.5
+// version: 1.35.0
 // 1.34.5: 投稿ボタンを押しても「送信中」も出ず無反応になる不具合への対策。原因候補は、送信前の未送信キュー
 //         (setPendingPosts)がlocalStorageの容量いっぱいで例外を投げ、upload()が途中で止まること。
 //         ①setPendingPostsの例外を握りつぶして送信を続行、②upload()全体をtry/catchで包み、予期しない
@@ -218,6 +218,11 @@ function getEffectiveNow() {
 }
 
 function fetchCachedMasterData(cacheKey, url, handler) {
+  // number シートは大きい(1〜2MB)ので localStorage ではなく IndexedDB に保存する
+  if (cacheKey === "number" && window.tuts4IdbCache) {
+    window.tuts4IdbCache.fetchMaster(cacheKey, url, handler, fetchJsonArrayWithRetry);
+    return;
+  }
   const key = "tuts4_master_" + cacheKey;
 
   try {
