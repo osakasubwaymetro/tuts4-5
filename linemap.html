@@ -7,7 +7,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.9.7 -->
+<!-- version: 1.10.0 -->
+<!-- 1.10.0: 「🚆 列車位置を表示」を追加（trainpos.js）。ダイヤの時刻から今走ってる列車の位置を計算して、路線図の線の左右に
+           列車番号バッジ・アイコン・種別行先を表示。同じ日の乗車記録（路線・駅・時刻・行先が一致）があれば編成アイコンと編成番号も表示 -->
 <!-- 1.9.7: via_の隣接駅（分岐駅）判定が、前後の駅が両方とも直通先の路線にも実在するケース
            （例: 阪神本線⇔阪神なんば線の「大物」「尼崎」のように、2駅とも両方の路線に
            載っている場合）で、正しい分岐駅を選べず常に後方向（この例では大物）に決め打ち
@@ -170,6 +172,7 @@
   .route-coverage-pct { font-size: 12px; font-weight: normal; color: #666; }
 
   .route-line-scroll {
+    position: relative;
     padding: 0;
     background: #fff;
     border-radius: 12px;
@@ -287,6 +290,20 @@
     padding-left: 4px;
   }
   .via-branch-mid svg { flex-shrink: 0; display: block; }
+  /* 列車位置（trainpos.js） */
+  .tp-bar { background:#fff; border-radius:10px; padding:10px 14px; margin:0 0 10px; box-shadow:0 1px 4px rgba(0,0,0,.08); font-size:14px; }
+  .tp-sw { display:inline-flex; align-items:center; gap:6px; margin-right:12px; font-weight:600; color:#333; }
+  .tp-opts { display:inline; }
+  .tp-opts input[type=time] { font-size:14px; padding:3px 6px; border:1px solid #ccc; border-radius:6px; }
+  .tp-clock { margin-left:10px; font-weight:bold; font-variant-numeric:tabular-nums; color:#17324f; }
+  #tpLayer { position:absolute; inset:0; pointer-events:none; z-index:6; overflow:hidden; }
+  .tp-train { position:absolute; width:64px; display:flex; flex-direction:column; align-items:center; transform:translateY(-50%); }
+  .tp-badge { background:#111; color:#fff; border-radius:8px; padding:0 6px; font-size:10px; font-weight:700; line-height:15px; white-space:nowrap; max-width:76px; overflow:hidden; text-overflow:ellipsis; }
+  .tp-icon { width:44px; height:28px; margin-top:1px; }
+  .tp-icon img { width:100%; height:100%; object-fit:contain; display:block; }
+  .tp-label { background:#111; color:#fff; border-radius:3px; padding:0 4px; font-size:9px; line-height:13px; white-space:nowrap; max-width:76px; overflow:hidden; text-overflow:ellipsis; margin-top:-3px; }
+  .tp-num { font-size:11px; color:#222; font-weight:600; line-height:13px; text-shadow:0 0 3px #fff,0 0 3px #fff; }
+  .tp-train.tp-stop .tp-badge { background:#0a7a3d; }
   .via-pill {
     padding: 4px 10px;
     border-radius: 14px;
@@ -323,6 +340,8 @@
     <button type="button" id="mapRouteBtn" class="picker-trigger-btn placeholder" onclick="openRoutePicker()">選択してください</button>
   </div>
 
+  <div id="trainposBar" class="tp-bar"></div>
+
   <div id="mapResult"></div>
 
   <div id="pickerOverlay" class="picker-overlay">
@@ -338,6 +357,8 @@
 
 <script src="nav.js"></script>
 <script src="logs.js?v=1.2.1"></script>
+<script src="idbcache.js?v=1.0.0"></script>
+<script src="trainpos.js?v=1.0.0"></script>
 <script>initNav("乗車路線マップ確認用");</script>
 <script>
 const username = checkLogin();
@@ -345,6 +366,7 @@ const IS_ADMIN = (username === "運営");
 
 document.addEventListener("DOMContentLoaded", () => {
   logAction("view", "ページ閲覧: linemap.html");
+  if (window.TrainPos) TrainPos.init();
 });
 
 /* ----------------------------------------
@@ -1405,6 +1427,17 @@ function renderMap() {
   box.querySelectorAll(".via-pill").forEach(btn => {
     btn.onclick = () => jumpToRoute(btn.dataset.route);
   });
+
+  // 列車位置（trainpos.js）：描画した路線図の上に、今走ってる列車を重ねる
+  if (window.TrainPos) {
+    const routeRow = allrouteData.find(r => r["路線"] === routeVal);
+    TrainPos.onMapRendered({
+      routeVal,
+      stationsOnRoute,
+      isLoop,
+      company: routeRow ? routeRow["会社"] : ""
+    });
+  }
 }
 </script>
 
