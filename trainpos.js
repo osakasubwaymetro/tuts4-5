@@ -1,4 +1,6 @@
-// trainpos.js v1.1.0
+// trainpos.js v1.1.1
+// 1.1.1: 種別・行先が両方空の行（通過駅）は「停車中」（緑）にせず、通過の時刻として位置の計算にだけ使う。
+//        路線の境界駅が通過でも、時刻が入っていれば路線に入る／出る位置が正しく出る
 // 1.1.0: 列車をタップすると、時刻表で時刻を押した時と同じ「列車の詳細」（各駅の到着時刻＋スタフ表示）を開く（timetable.js の ttOpenTrainDetail を使用）
 // 乗車路線マップ（linemap.html）に「列車位置」を重ねて表示する。
 //  ・ダイヤ（運用シート）の時刻から、今走っている列車の位置を計算（駅に停車中／駅間）
@@ -139,7 +141,8 @@
           if (k === "a") a = t; else d = t;
         });
         if (!r["駅名"]) return;
-        stops.push({ s: String(r["駅名"]).trim(), a, d, type: splitSlash(r["種別"])[0] || "", bound: bounds[0] || "" });
+        const type0 = splitSlash(r["種別"])[0] || "";
+        stops.push({ s: String(r["駅名"]).trim(), a, d, type: type0, bound: bounds[0] || "", pass: !type0 && !bounds.length });
       });
       if (!stops.length) return;
       const bounds = new Set();
@@ -314,7 +317,7 @@
       if (i == null) return;
       const a = s.a != null ? s.a : s.d, d = s.d != null ? s.d : s.a;
       if (a == null) return;
-      on.push({ i, a, d });
+      on.push({ i, a, d, pass: !!s.pass });
     });
     if (!on.length) return null;
     if (t < on[0].a || t > on[on.length - 1].d) return null;
@@ -325,7 +328,7 @@
         const nx = on[k + 1], pv = on[k - 1];
         let sign = nx ? Math.sign(nx.i - cur.i) : (pv ? Math.sign(cur.i - pv.i) : 1);
         if (ctx.isLoop && nx && Math.abs(nx.i - cur.i) > N / 2) sign = -sign;
-        return { row0: cur.i, row1: cur.i, frac: 0, sign: sign || 1, atStation: true };
+        return { row0: cur.i, row1: cur.i, frac: 0, sign: sign || 1, atStation: !cur.pass }; // 通過駅は停車扱いにしない
       }
       const nx = on[k + 1];
       if (nx && t > cur.d && t < nx.a) {
