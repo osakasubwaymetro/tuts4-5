@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>候補デバッグツール</title>
-<!-- version: 1.0.3 -->
+<!-- version: 1.0.4 -->
 <!-- 1.0.3: ダイヤ由来の候補にも方面フィルタを掛けるようにした(scripts.js v1.34.3と同じ) -->
 <!-- 1.0.2: 終着駅の判定を「最終行かつ駅名=行先」に修正(scripts.js v1.34.2と同じ) -->
 <!-- 1.0.1: scripts.js v1.34.1に合わせ、ダイヤの時刻セルの「到着/発車」の読み方(2個=到着・発車、1個=同じ、終着駅の1個=到着のみ)を反映 -->
@@ -354,6 +354,7 @@ async function getDiagramCandidates(routeVal, boardingStation, companyVal, today
       const bounds = String(r["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
       const types = String(r["種別"] || "").split("/").map(s => s.trim());
       const trainNumber = r["列車番号"] || "";
+      if (!bounds.length && !types.some(Boolean)) return; // 種別・行先が両方空なら通過
       if (bounds.length) {
         bounds.forEach((b, i) => results.push({ isDiagram: true, time, unban: d["運番"], trainNumber, isExtra, type: types[i] || types[0] || "", bound: b }));
       } else {

@@ -1,4 +1,5 @@
-// version: 1.35.0
+// version: 1.35.1
+// 1.35.1: ダイヤ候補で、時刻が書いてあっても「種別」「行先」が両方とも空の行は「通過」とみなして候補に出さないようにした
 // 1.34.5: 投稿ボタンを押しても「送信中」も出ず無反応になる不具合への対策。原因候補は、送信前の未送信キュー
 //         (setPendingPosts)がlocalStorageの容量いっぱいで例外を投げ、upload()が途中で止まること。
 //         ①setPendingPostsの例外を握りつぶして送信を続行、②upload()全体をtry/catchで包み、予期しない
@@ -1699,6 +1700,8 @@ async function getDiagramCandidates(routeVal, boardingStation, todayIsWeekendTyp
       const bounds = String(r["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
       const types = String(r["種別"] || "").split("/").map(s => s.trim());
       const trainNumber = r["列車番号"] || "";
+      // 時刻があっても、種別・行先が両方とも書いてない行は「通過」なので候補に出さない
+      if (!bounds.length && !types.some(Boolean)) return;
       if (bounds.length) {
         bounds.forEach((b, i) => {
           results.push({ isDiagram: true, time, unban: d["運番"], trainNumber, isExtra, type: types[i] || types[0] || "", bound: b });

@@ -1,5 +1,6 @@
 // timetable.js
-// version: 1.11.0
+// version: 1.11.1
+// 1.11.1: 駅ごとの時刻表で、ダイヤに時刻があっても「種別」「行先」が両方とも空の行は通過とみなして載せないようにした
 // 1.11.0: 列車の詳細（各駅の到着時刻）＋スタフ表示を、他ページ（linemap.html の列車位置）からも
 //         開けるようにした。ttOpenTrainDetail(entry) を追加。駅名入力欄が無いページに
 //         読み込まれても、時刻表ページ用の初期化は何もしないようにした（二重にマスタを取りに行かない）
@@ -312,6 +313,11 @@ function ttParseGroupTimes(group) {
   });
 }
 
+// "/"区切りのセルを、空要素を除いた配列にする
+function splitTT(v) {
+  return String(v || "").split("/").map(x => x.trim()).filter(Boolean);
+}
+
 function ttGroupByTrainNumber(rows) {
   const groups = [];
   let cur = null, curNum = null;
@@ -404,6 +410,9 @@ async function ttCollectStationEntries(stationName, routeVal) {
         // 駅ごとの時刻表は「発車時刻」を載せる（終着駅は発車が無いので載せない）
         const hm = groupTimes[idx].dep ? groupTimes[idx].dep.match(/^(\d{1,2}):(\d{2})$/) : null;
         if (!hm) return;
+
+        // 時刻があっても、種別・行先が両方とも書いてない行は「通過」なので時刻表に載せない
+        if (!splitTT(row["種別"]).length && !splitTT(row["行先"]).length) return;
 
         // 直通運転で複数路線にまたがる運用の場合、すぐ隣の停車駅がこの路線の駅マスタに
         // 無い（＝他路線の駅）ことがあるので、隣1駅だけでなく、この路線の駅マスタ上に
