@@ -1,4 +1,5 @@
-// trainpos.js v1.0.0
+// trainpos.js v1.1.0
+// 1.1.0: 列車をタップすると、時刻表で時刻を押した時と同じ「列車の詳細」（各駅の到着時刻＋スタフ表示）を開く（timetable.js の ttOpenTrainDetail を使用）
 // 乗車路線マップ（linemap.html）に「列車位置」を重ねて表示する。
 //  ・ダイヤ（運用シート）の時刻から、今走っている列車の位置を計算（駅に停車中／駅間）
 //  ・列車番号を黒いバッジで表示
@@ -357,6 +358,38 @@
     return out;
   }
 
+  /* ---------- 列車の詳細（時刻表ページと同じ表示を開く） ---------- */
+  function secToHm(sec) {
+    if (sec == null) return { hm: "", sec: null };
+    const day = ((sec % 86400) + 86400) % 86400;
+    const h = Math.floor(day / 3600), m = Math.floor((day % 3600) / 60), s = day % 60;
+    return { hm: `${h}:${pad(m)}`, sec: s ? s : null };
+  }
+
+  function openDetail(train) {
+    if (typeof window.ttOpenTrainDetail !== "function") return;
+    const stops = train.stops.map(s => {
+      const a = secToHm(s.a), d = secToHm(s.d);
+      return {
+        station: s.s,
+        time: a.hm,          // 列車詳細には「到着時刻」を載せる（時刻表ページと同じ）
+        arr: a.hm, dep: d.hm,
+        arrSec: a.sec, depSec: d.sec,
+        type: s.type, bound: s.bound
+      };
+    });
+    const first = train.stops.find(s => s.bound) || train.stops[0] || {};
+    const bound = first.bound || "";
+    // 運用シートに終点駅の行が無い場合は、行先から終点駅を補う（時刻表ページと同じ）
+    if (bound && (!stops.length || stops[stops.length - 1].station !== bound)) {
+      stops.push({ station: bound, time: "", arr: "", dep: "", arrSec: null, depSec: null, type: "", bound: "" });
+    }
+    window.ttOpenTrainDetail({
+      unban: train.unban, trainNumber: train.trainNumber,
+      type: first.type || "", bound, stops
+    });
+  }
+
   /* ---------- 描画 ---------- */
   function currentNow() {
     const now = new Date();
@@ -418,6 +451,7 @@
         <div class="tp-icon"><img src="${esc(icon)}" alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';"></div>
         <div class="tp-label">${esc(label)}</div>
         ${fm && fm.number ? `<div class="tp-num">${esc(cleanNum(fm.number))}</div>` : ""}`;
+      el.onclick = () => openDetail(p.a.train);
       layer.appendChild(el);
     });
 
