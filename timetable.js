@@ -1,5 +1,8 @@
 // timetable.js
-// version: 1.10.0
+// version: 1.11.0
+// 1.11.0: 列車の詳細（各駅の到着時刻）＋スタフ表示を、他ページ（linemap.html の列車位置）からも
+//         開けるようにした。ttOpenTrainDetail(entry) を追加。駅名入力欄が無いページに
+//         読み込まれても、時刻表ページ用の初期化は何もしないようにした（二重にマスタを取りに行かない）
 // 1.10.0: スタフ表示に、右上の現在時刻（秒単位）、GPSのON/OFF切替、現在位置の緑表示を追加。
 //         時刻（到着〜発車の間なら停車中、発車〜次の到着の間なら駅間走行中）またはGPS
 //         （HeartRailsの最寄り駅＋速度で停車中/走行中を判定）で位置を判断し、停車中はその駅の運転時分欄を緑、
@@ -1020,7 +1023,15 @@ function ttPopulateDirSelect(stationName, routeVal) {
   dirSel.disabled = false;
 }
 
+// 他ページ（linemap.html の列車位置）から、時刻表と同じ「列車の詳細」を開く。
+// entry = { unban, trainNumber, type, bound, stops:[{station, time, arr, dep, arrSec, depSec, type, bound}] }
+function ttOpenTrainDetail(entry) {
+  ttTrainDetailRegistry = [entry];
+  ttShowTrainDetail(0);
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  if (!document.getElementById("ttStationInput")) return; // 時刻表ページ以外では初期化しない
   ttFetchCachedMaster("station", `${TT_MASTER_BASE}/station`, data => {
     ttStationData = data;
   });
