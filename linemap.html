@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.12.0 -->
+<!-- version: 1.13.0 -->
+<!-- 1.13.0: 列車位置の「乗車記録だけの列車」を、その日の記録ではなく、ダイヤ改正日より後の全日程の記録（表示日と同じ平日／土休日）から出すように変更 -->
 <!-- 1.12.0: 列車位置に、ダイヤに無い乗車記録（その日の記録の発車時刻 HH:MM の00〜59秒の間だけ乗車駅に表示。バッジは発車時刻、タップ不可）も表示 -->
 <!-- 1.11.0: 列車位置の列車をタップすると、時刻表で時刻を押した時と同じ「列車の詳細（各駅の到着時刻）」と「スタフ表示」が開く（timetable.js を共用） -->
 <!-- 1.10.0: 「🚆 列車位置を表示」を追加（trainpos.js）。ダイヤの時刻から今走ってる列車の位置を計算して、路線図の線の左右に
@@ -523,7 +524,7 @@
 <script src="logs.js?v=1.2.1"></script>
 <script src="idbcache.js?v=1.0.0"></script>
 <script src="timetable.js?v=1.11.1"></script>
-<script src="trainpos.js?v=1.2.0"></script>
+<script src="trainpos.js?v=1.3.0"></script>
 <script>initNav("乗車路線マップ確認用");</script>
 <script>
 const username = checkLogin();
@@ -1602,7 +1603,9 @@ function renderMap() {
       routeVal,
       stationsOnRoute,
       isLoop,
-      company: routeRow ? routeRow["会社"] : ""
+      company: routeRow ? routeRow["会社"] : "",
+      // 路線マスタの「ダイヤ改正日」。これより前の乗車記録は使わない（時刻表ページと同じ判定）
+      revisionDate: (routeRow && routeRow["ダイヤ改正日"]) ? new Date(routeRow["ダイヤ改正日"]) : null
     });
   }
 }
