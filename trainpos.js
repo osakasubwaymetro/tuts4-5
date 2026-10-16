@@ -1,4 +1,7 @@
-// trainpos.js v1.1.1
+// trainpos.js v1.1.2
+// 1.1.2: 折り返しなどで列車番号が変わっても編成アイコン・編成番号が消えないようにした。
+//        乗車記録の紐づけは、同じ運用（ダイヤ一覧の同じID＋運番＝同じ編成が1日走り続ける）の
+//        他の列車の記録まで見て、1本でも一致すれば、その運用の全ての列車に同じ編成を出す
 // 1.1.1: 種別・行先が両方空の行（通過駅）は「停車中」（緑）にせず、通過の時刻として位置の計算にだけ使う。
 //        路線の境界駅が通過でも、時刻が入っていれば路線に入る／出る位置が正しく出る
 // 1.1.0: 列車をタップすると、時刻表で時刻を押した時と同じ「列車の詳細」（各駅の到着時刻＋スタフ表示）を開く（timetable.js の ttOpenTrainDetail を使用）
@@ -151,6 +154,7 @@
         unban: listRow["運番"] || "",
         trainNumber: group[0]["列車番号"] || "",
         dayType, isExtra: isTrue(listRow["臨時"]),
+        sheetKey: `${listRow["ID"] || ""}_${listRow["運番"] || ""}_${dayType}`, // 同じ運用（＝同じ編成が走り続ける）の目印
         bounds: [...bounds], stops
       });
     });
@@ -158,7 +162,7 @@
   }
 
   async function loadRouteTrains(ctx, onProgress) {
-    const cacheKey = "tp_trains_" + ctx.company + "_" + ctx.routeVal;
+    const cacheKey = "tp_trains2_" + ctx.company + "_" + ctx.routeVal;
     if (idb()) {
       const c = await idb().get(cacheKey);
       if (c && Array.isArray(c.trains) && Date.now() - c.fetchedAt < TRAINS_TTL_MS) return c.trains;
@@ -305,6 +309,30 @@
     return { model: best[0], number: best[1] };
   }
 
+  // 自分の列車に記録が無くても、同じ運用（sheetKey）の他の列車に記録があれば、その編成を使う
+  // （折り返すと列車番号は変わるが、編成は同じ運用のまま走り続けるため）
+  function findFormationForSheet(train, serviceDate, ridesIdx, memo) {
+    const own = findFormation(train, serviceDate, ridesIdx);
+    if (own || !train.sheetKey) return own;
+    const mk = train.sheetKey + "|" + dateKey(serviceDate);
+    if (memo.has(mk)) return memo.get(mk);
+    const tally = new Map();
+    st.trains.forEach(t => {
+      if (t.sheetKey !== train.sheetKey) return;
+      const f = findFormation(t, serviceDate, ridesIdx);
+      if (!f) return;
+      const k = f.model + "\u0001" + f.number;
+      tally.set(k, (tally.get(k) || 0) + 1);
+    });
+    let result = null;
+    if (tally.size) {
+      const best = [...tally.entries()].sort((a, b) => b[1] - a[1])[0][0].split("\u0001");
+      result = { model: best[0], number: best[1] };
+    }
+    memo.set(mk, result);
+    return result;
+  }
+
   /* ---------- 位置計算 ---------- */
   // t: 秒（サービス日の0時起点）。戻り値 { row0, row1, frac, sign, atStation }（rowは描画行の番号）
   function locate(train, t, ctx) {
@@ -422,6 +450,7 @@
     layer.id = "tpLayer";
     scroll.appendChild(layer);
 
+    const fmMemo = new Map();
     const slots = { left: [], right: [] }; // 同じ側で近い列車を横にずらすための記録
     const placed = active.map(a => {
       const y0 = centers[a.pos.row0], y1 = centers[a.pos.row1];
@@ -434,7 +463,7 @@
       let k = 0;
       while (slots[side].some(s => s.k === k && Math.abs(s.y - p.y) < 74)) k++;
       slots[side].push({ y: p.y, k });
-      const fm = findFormation(p.a.train, p.a.serviceDate, ridesIdx);
+      const fm = findFormationForSheet(p.a.train, p.a.serviceDate, ridesIdx, fmMemo);
       const last = p.a.train.stops[p.a.train.stops.length - 1];
       const stopOnNow = p.a.train.stops.find(s => s.bound) || {};
       const type = stopOnNow.type || "";
