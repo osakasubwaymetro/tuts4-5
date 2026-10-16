@@ -1,4 +1,7 @@
-// trainpos.js v1.1.2
+// trainpos.js v1.2.0
+// 1.2.0: ダイヤに無い乗車記録（その日・この路線・記録の発車時刻が HH:MM の記録）も、HH:MM:00〜HH:MM:59 の間だけ
+//        乗車駅に表示する。ダイヤが無いのでタップしても何も起きない。列車番号の代わりに発車時刻（HH:MM）を表示。
+//        ダイヤの列車と一致する記録（駅・時刻・行先）は、二重に出さない
 // 1.1.2: 折り返しなどで列車番号が変わっても編成アイコン・編成番号が消えないようにした。
 //        乗車記録の紐づけは、同じ運用（ダイヤ一覧の同じID＋運番＝同じ編成が1日走り続ける）の
 //        他の列車の記録まで見て、1本でも一致すれば、その運用の全ての列車に同じ編成を出す
@@ -333,6 +336,65 @@
     return result;
   }
 
+  // ダイヤに無い乗車記録を「その分の間だけ乗車駅に居る列車」として返す
+  function computeRideOnly(ctx, sec, date) {
+    if (!st.rides) return [];
+    const idxOf = new Map();
+    ctx.stationsOnRoute.forEach((n, i) => { if (!idxOf.has(n)) idxOf.set(n, i); });
+    const dk = dateKey(date);
+    const hol = isHoliday(date);
+
+    // ダイヤの列車が、駅・時刻（HH:MM）・行先で持っている組み合わせ（記録がそれと一致したらダイヤ側で表示済み）
+    const diaIdx = new Map();
+    const hmKey = (station, t) => {
+      const day = ((t % 86400) + 86400) % 86400;
+      return `${station}|${pad(Math.floor(day / 3600))}:${pad(Math.floor((day % 3600) / 60))}`;
+    };
+    st.trains.forEach(tr => {
+      if (tr.dayType !== "both" && tr.dayType !== (hol ? "holiday" : "weekday")) return;
+      tr.stops.forEach(sp => {
+        [sp.a, sp.d].forEach(t => {
+          if (t == null) return;
+          const k = hmKey(sp.s, t);
+          let set = diaIdx.get(k);
+          if (!set) { set = new Set(); diaIdx.set(k, set); }
+          if (!tr.bounds.length) set.add("*");
+          tr.bounds.forEach(b => set.add(b));
+        });
+      });
+    });
+
+    const out = [], seen = new Set();
+    st.rides.forEach(r => {
+      if (r["路線"] !== ctx.routeVal) return;
+      if (ctx.company && r["会社"] && r["会社"] !== ctx.company) return;
+      const station = String(r["乗車駅"] || "").trim();
+      const row = idxOf.get(station);
+      if (row == null) return;
+      const d = new Date(String(r["時刻"] || "").trim().replace(" ", "T"));
+      if (isNaN(d) || dateKey(d) !== dk) return;
+      const t0 = d.getHours() * 3600 + d.getMinutes() * 60;
+      if (sec < t0 || sec > t0 + 59) return; // 発車時刻 HH:MM の 00秒〜59秒の間だけ
+      const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      const rb = splitSlash(r["行先"]);
+      const dset = diaIdx.get(`${station}|${hm}`);
+      if (dset && (dset.has("*") || !rb.length || rb.some(b => dset.has(b)))) return; // ダイヤの列車と同じ
+      const model = splitSlash(r["車両形式"])[0] || "";
+      const number = splitSlash(r["車番"])[0] || "";
+      const dedupe = [station, hm, rb[0] || "", number].join("|");
+      if (seen.has(dedupe)) return;
+      seen.add(dedupe);
+      let sign = null;
+      if (typeof window.ttResolveRideDirectionSign === "function" && rb[0]) {
+        try {
+          sign = window.ttResolveRideDirectionSign(ctx.routeVal, window.ttRouteStationOrder(ctx.routeVal), window.ttRouteRawOrder(ctx.routeVal), station, rb[0]);
+        } catch (e) { sign = null; }
+      }
+      out.push({ row, sign: sign || 1, hm, type: splitSlash(r["種別"])[0] || "", bound: rb[0] || "", model, number });
+    });
+    return out;
+  }
+
   /* ---------- 位置計算 ---------- */
   // t: 秒（サービス日の0時起点）。戻り値 { row0, row1, frac, sign, atStation }（rowは描画行の番号）
   function locate(train, t, ctx) {
@@ -455,14 +517,41 @@
     const placed = active.map(a => {
       const y0 = centers[a.pos.row0], y1 = centers[a.pos.row1];
       if (y0 == null || y1 == null) return null;
-      return { a, y: y0 + (y1 - y0) * a.pos.frac };
-    }).filter(Boolean).sort((p, q) => p.y - q.y);
+      return { kind: "dia", a, sign: a.pos.sign, y: y0 + (y1 - y0) * a.pos.frac };
+    }).filter(Boolean);
+    // ダイヤに無い乗車記録（その分の間だけ乗車駅に表示）
+    const rideOnly = computeRideOnly(ctx, sec, date).map(r => {
+      const y = centers[r.row];
+      return y == null ? null : { kind: "ride", r, sign: r.sign, y };
+    }).filter(Boolean);
+    const all = placed.concat(rideOnly).sort((p, q) => p.y - q.y);
 
-    placed.forEach(p => {
-      const side = p.a.pos.sign < 0 ? "left" : "right";
+    all.forEach(p => {
+      const side = p.sign < 0 ? "left" : "right";
       let k = 0;
       while (slots[side].some(s => s.k === k && Math.abs(s.y - p.y) < 74)) k++;
       slots[side].push({ y: p.y, k });
+      const off = 18 + 66 * k; // 線から離す距離。同じ側が混む時は外側へずらす
+      const el = document.createElement("div");
+      el.style.top = p.y + "px";
+      // 上り（index減少）は線の左側、下り（index増加）は右側に置く
+      if (side === "left") el.style.right = `calc(50% + ${off}px)`;
+      else el.style.left = `calc(50% + ${off}px)`;
+
+      if (p.kind === "ride") {
+        // 乗車記録だけの列車：バッジは列車番号の代わりに発車時刻。ダイヤが無いのでタップしても何も起きない
+        const r = p.r;
+        const icon = (r.model || r.number) ? resolveIcon(r.model, r.number) : FALLBACK_TRAIN_IMAGE;
+        el.className = "tp-train tp-ride tp-" + side;
+        el.innerHTML = `
+          <div class="tp-badge">${esc(r.hm)}</div>
+          <div class="tp-icon"><img src="${esc(icon)}" alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';"></div>
+          <div class="tp-label">${esc(`${r.type}${r.bound}`)}</div>
+          ${r.number ? `<div class="tp-num">${esc(cleanNum(r.number))}</div>` : ""}`;
+        layer.appendChild(el);
+        return;
+      }
+
       const fm = findFormationForSheet(p.a.train, p.a.serviceDate, ridesIdx, fmMemo);
       const last = p.a.train.stops[p.a.train.stops.length - 1];
       const stopOnNow = p.a.train.stops.find(s => s.bound) || {};
@@ -471,13 +560,7 @@
       const label = `${type}${bound}`;
       const icon = fm ? resolveIcon(fm.model, fm.number) : FALLBACK_TRAIN_IMAGE;
       const badge = p.a.train.trainNumber || (p.a.train.unban ? "運" + p.a.train.unban : "");
-      const off = 18 + 66 * k; // 線から離す距離。同じ側が混む時は外側へずらす
-      const el = document.createElement("div");
       el.className = "tp-train tp-" + side + (p.a.pos.atStation ? " tp-stop" : "");
-      el.style.top = p.y + "px";
-      // 上り（index減少）は線の左側、下り（index増加）は右側に置く
-      if (side === "left") el.style.right = `calc(50% + ${off}px)`;
-      else el.style.left = `calc(50% + ${off}px)`;
       el.innerHTML = `
         <div class="tp-badge">${esc(badge)}</div>
         <div class="tp-icon"><img src="${esc(icon)}" alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';"></div>
@@ -488,7 +571,7 @@
     });
 
     const status = document.getElementById("tpStatus");
-    if (status && !st.loading) status.textContent = `運行中 ${placed.length}本`;
+    if (status && !st.loading) status.textContent = `運行中 ${placed.length}本` + (rideOnly.length ? `（乗車記録のみ ${rideOnly.length}本）` : "");
   }
 
   function updateClock() {
