@@ -1,7 +1,10 @@
-// trainpos.js v1.2.0
-// 1.2.0: ダイヤに無い乗車記録（その日・この路線・記録の発車時刻が HH:MM の記録）も、HH:MM:00〜HH:MM:59 の間だけ
-//        乗車駅に表示する。ダイヤが無いのでタップしても何も起きない。列車番号の代わりに発車時刻（HH:MM）を表示。
-//        ダイヤの列車と一致する記録（駅・時刻・行先）は、二重に出さない
+// trainpos.js v1.3.0
+// 1.3.0: 1.2.1 の変更（乗車記録を毎回取り直す・件数表示）を元に戻した（1.2.0 相当）。そのうえで、
+//        ダイヤに無い乗車記録は「その日の分」ではなく、「路線マスタのダイヤ改正日より後の全ての日の記録のうち、
+//        表示している日と同じ区分（平日／土休日）の記録」を使うようにした。記録の発車時刻が HH:MM なら、
+//        HH:MM:00〜HH:MM:59 の間だけ乗車駅に表示する（同じ駅・時刻・行先が複数日にあれば一番新しい記録の編成を使う）
+// 1.2.0: ダイヤに無い乗車記録も、HH:MM:00〜HH:MM:59 の間だけ乗車駅に表示する。ダイヤが無いのでタップしても何も起きない。
+//        列車番号の代わりに発車時刻（HH:MM）を表示。ダイヤの列車と一致する記録（駅・時刻・行先）は、二重に出さない
 // 1.1.2: 折り返しなどで列車番号が変わっても編成アイコン・編成番号が消えないようにした。
 //        乗車記録の紐づけは、同じ運用（ダイヤ一覧の同じID＋運番＝同じ編成が1日走り続ける）の
 //        他の列車の記録まで見て、1本でも一致すれば、その運用の全ての列車に同じ編成を出す
@@ -336,13 +339,58 @@
     return result;
   }
 
+  // ダイヤ改正日より後の全ての乗車記録を、「区分（平日/土休日）＋発車時刻(HH:MM)」ごとに整理する。
+  // 同じ 駅・時刻・行先 が複数日にあれば、一番新しい記録（＝最近の編成）を代表にする。
+  // 乗車記録の取得（st.rides）か路線が変わった時だけ作り直す。
+  function buildRideSlotIndex(ctx) {
+    const sig = `${ctx.routeVal}|${ctx.revisionDate ? ctx.revisionDate.getTime() : ""}|${st.ridesFetchedAt}|${st.rides ? st.rides.length : 0}`;
+    if (st.slotIdx && st.slotIdxSig === sig) return st.slotIdx;
+    const idxOf = new Map();
+    ctx.stationsOnRoute.forEach((n, i) => { if (!idxOf.has(n)) idxOf.set(n, i); });
+    const rev = ctx.revisionDate && !isNaN(ctx.revisionDate) ? ctx.revisionDate : null;
+    const best = new Map(); // 重複排除用：dtype|hm|station|bound → { d, ...記録 }
+    (st.rides || []).forEach(r => {
+      if (r["路線"] !== ctx.routeVal) return;
+      if (ctx.company && r["会社"] && r["会社"] !== ctx.company) return;
+      const station = String(r["乗車駅"] || "").trim();
+      const row = idxOf.get(station);
+      if (row == null) return;
+      const d = new Date(String(r["時刻"] || "").trim().replace(" ", "T"));
+      if (isNaN(d)) return;
+      if (rev && d < rev) return; // ダイヤ改正日より前の記録は使わない
+      const dtype = isHoliday(d) ? "holiday" : "weekday";
+      const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      const rb = splitSlash(r["行先"]);
+      const key = [dtype, hm, station, rb[0] || ""].join("|");
+      const prev = best.get(key);
+      if (prev && prev.d >= d) return;
+      best.set(key, {
+        d, dtype, hm, station, row,
+        bound: rb[0] || "", bounds: rb,
+        type: splitSlash(r["種別"])[0] || "",
+        model: splitSlash(r["車両形式"])[0] || "",
+        number: splitSlash(r["車番"])[0] || ""
+      });
+    });
+    const idx = new Map(); // dtype|hm → [記録]
+    best.forEach(v => {
+      const k = v.dtype + "|" + v.hm;
+      if (!idx.has(k)) idx.set(k, []);
+      idx.get(k).push(v);
+    });
+    st.slotIdx = idx; st.slotIdxSig = sig;
+    return idx;
+  }
+
   // ダイヤに無い乗車記録を「その分の間だけ乗車駅に居る列車」として返す
   function computeRideOnly(ctx, sec, date) {
     if (!st.rides) return [];
-    const idxOf = new Map();
-    ctx.stationsOnRoute.forEach((n, i) => { if (!idxOf.has(n)) idxOf.set(n, i); });
-    const dk = dateKey(date);
     const hol = isHoliday(date);
+    const dtype = hol ? "holiday" : "weekday";
+    const nowH = Math.floor(sec / 3600) % 24, nowM = Math.floor((sec % 3600) / 60);
+    const hm = `${pad(nowH)}:${pad(nowM)}`; // 今の「分」の間だけ（HH:MM:00〜HH:MM:59）
+    const cands = buildRideSlotIndex(ctx).get(dtype + "|" + hm);
+    if (!cands || !cands.length) return [];
 
     // ダイヤの列車が、駅・時刻（HH:MM）・行先で持っている組み合わせ（記録がそれと一致したらダイヤ側で表示済み）
     const diaIdx = new Map();
@@ -351,7 +399,7 @@
       return `${station}|${pad(Math.floor(day / 3600))}:${pad(Math.floor((day % 3600) / 60))}`;
     };
     st.trains.forEach(tr => {
-      if (tr.dayType !== "both" && tr.dayType !== (hol ? "holiday" : "weekday")) return;
+      if (tr.dayType !== "both" && tr.dayType !== dtype) return;
       tr.stops.forEach(sp => {
         [sp.a, sp.d].forEach(t => {
           if (t == null) return;
@@ -364,33 +412,17 @@
       });
     });
 
-    const out = [], seen = new Set();
-    st.rides.forEach(r => {
-      if (r["路線"] !== ctx.routeVal) return;
-      if (ctx.company && r["会社"] && r["会社"] !== ctx.company) return;
-      const station = String(r["乗車駅"] || "").trim();
-      const row = idxOf.get(station);
-      if (row == null) return;
-      const d = new Date(String(r["時刻"] || "").trim().replace(" ", "T"));
-      if (isNaN(d) || dateKey(d) !== dk) return;
-      const t0 = d.getHours() * 3600 + d.getMinutes() * 60;
-      if (sec < t0 || sec > t0 + 59) return; // 発車時刻 HH:MM の 00秒〜59秒の間だけ
-      const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-      const rb = splitSlash(r["行先"]);
-      const dset = diaIdx.get(`${station}|${hm}`);
-      if (dset && (dset.has("*") || !rb.length || rb.some(b => dset.has(b)))) return; // ダイヤの列車と同じ
-      const model = splitSlash(r["車両形式"])[0] || "";
-      const number = splitSlash(r["車番"])[0] || "";
-      const dedupe = [station, hm, rb[0] || "", number].join("|");
-      if (seen.has(dedupe)) return;
-      seen.add(dedupe);
+    const out = [];
+    cands.forEach(c => {
+      const dset = diaIdx.get(`${c.station}|${c.hm}`);
+      if (dset && (dset.has("*") || !c.bounds.length || c.bounds.some(b => dset.has(b)))) return; // ダイヤの列車と同じ
       let sign = null;
-      if (typeof window.ttResolveRideDirectionSign === "function" && rb[0]) {
+      if (typeof window.ttResolveRideDirectionSign === "function" && c.bound) {
         try {
-          sign = window.ttResolveRideDirectionSign(ctx.routeVal, window.ttRouteStationOrder(ctx.routeVal), window.ttRouteRawOrder(ctx.routeVal), station, rb[0]);
+          sign = window.ttResolveRideDirectionSign(ctx.routeVal, window.ttRouteStationOrder(ctx.routeVal), window.ttRouteRawOrder(ctx.routeVal), c.station, c.bound);
         } catch (e) { sign = null; }
       }
-      out.push({ row, sign: sign || 1, hm, type: splitSlash(r["種別"])[0] || "", bound: rb[0] || "", model, number });
+      out.push({ row: c.row, sign: sign || 1, hm: c.hm, type: c.type, bound: c.bound, model: c.model, number: c.number });
     });
     return out;
   }
