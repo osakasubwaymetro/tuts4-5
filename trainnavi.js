@@ -1,4 +1,5 @@
-// trainnavi.js v1.1.0
+// trainnavi.js v1.2.0
+// 1.2.0: 家でデバッグできるように「🛠 デバッグ」を追加（GPSなしのシミュレーション：自動走行／倍速／駅間スライダー／速度指定／駅の前後移動／判定の数値表示）
 // Train Navi表示：運転台のモニター風の画面（列車種別／次駅／列車番号／両数）を出し、
 // GPSで現在位置を判定して、合成音声（女声）で停車駅ごとに4回注意喚起する。
 //   ① 発車直後          ：種別＋次駅を表示、「次は、○○、停車。」
@@ -11,7 +12,7 @@
   "use strict";
   const CAR_KEY = "tuts4_navi_cars";
   const VOICE_KEY = "tuts4_navi_voice";
-  const nv = { stops: null, ev: null, timer: null, voiceOn: true, cars: "", spoken: new Set(), audio: null, lastPhase: "", flash: false, flashTimer: null, watchId: null, pos: null, speed: 0, fixAt: 0, acc: 9999, seg: null, src: "time", speaking: false, lastMid: 0, spokenAnything: false, token: 0 };
+  const nv = { stops: null, ev: null, timer: null, voiceOn: true, cars: "", spoken: new Set(), audio: null, lastPhase: "", flash: false, flashTimer: null, watchId: null, pos: null, speed: 0, fixAt: 0, acc: 9999, seg: null, src: "time", sim: { on: false, run: false, k: 0, mode: "stop", D: 0, v: 0, dwell: 0, mult: 1, t: 0, kmh: 72, timer: null }, speaking: false, lastMid: 0, spokenAnything: false, token: 0 };
 
   function esc(s) { return typeof escapeHtmlTT === "function" ? escapeHtmlTT(s) : String(s || ""); }
   function lsGet(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } }
@@ -48,6 +49,14 @@
       #tnOverlay .tn-led i { width:22px; height:8px; background:#5a2a2a; display:block; }
       #tnOverlay .tn-led.blink i { background:#e60012; animation:tnled .5s steps(1) infinite; }
       #tnOverlay .tn-led.blink i:nth-child(even) { animation-delay:.25s; }
+      #tnOverlay .b-dbg { background:#6a4c93; }
+      #tnDbg { display:none; position:absolute; left:0; right:92px; bottom:0; background:rgba(20,20,30,.93); color:#eee; font-size:12px; padding:8px 10px; z-index:2; max-height:62%; overflow:auto; }
+      #tnDbg.show { display:block; }
+      #tnDbg .row { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:4px 0; }
+      #tnDbg button { border:none; border-radius:5px; background:#4a5a8a; color:#fff; padding:6px 9px; font-size:12px; cursor:pointer; }
+      #tnDbg button.on { background:#2e9d4a; }
+      #tnDbg input[type=range] { flex:1; min-width:120px; }
+      #tnDbg .info { font-family:monospace; color:#9fe29f; white-space:pre-wrap; }
       @keyframes tnled { 50% { background:#5a2a2a; } }
       #tnOverlay .b-close { background:#c0392b; }
       #tnOverlay .tn-stop-card { color:#000; }
@@ -77,12 +86,33 @@
       <div class="tn-side">
         <button type="button" class="b-voice" id="tnVoiceBtn">🔊 音声</button>
         <div class="tn-gpsmsg" id="tnGpsMsg"></div>
+        <button type="button" class="b-dbg" id="tnDbgBtn">🛠 デバッグ</button>
         <div class="tn-clock" id="tnClock"></div>
         <button type="button" class="b-close" id="tnCloseBtn">閉じる</button>
       </div>`;
     document.body.appendChild(d);
     document.getElementById("tnVoiceBtn").onclick = () => { nv.voiceOn = !nv.voiceOn; lsSet(VOICE_KEY, nv.voiceOn ? "1" : "0"); renderBtns(); if (!nv.voiceOn) cancelSpeech(); else unlockAudio(); };
     document.getElementById("tnCloseBtn").onclick = closeNavi;
+    // デバッグパネル
+    const dbg = document.createElement("div");
+    dbg.id = "tnDbg";
+    dbg.innerHTML = `
+      <div class="row"><b>🛠 シミュレーション（GPSなし）</b><button id="dbgOn">OFF</button></div>
+      <div class="row"><button id="dbgPlay">▶ 自動走行</button><button id="dbgPrev">◀ 前の駅間</button><button id="dbgNext">次の駅間 ▶</button>
+        <span>倍速</span><button data-m="1" class="mu on">×1</button><button data-m="3" class="mu">×3</button><button data-m="8" class="mu">×8</button></div>
+      <div class="row"><span id="dbgSegLbl"></span></div>
+      <div class="row"><span>次の駅まで</span><input type="range" id="dbgD" min="0" max="1500" step="5" value="1500"><span id="dbgDv">1500m</span></div>
+      <div class="row"><span>速度</span><input type="range" id="dbgV" min="0" max="130" step="5" value="72"><span id="dbgVv">72km/h</span></div>
+      <div class="row info" id="dbgInfo"></div>`;
+    d.appendChild(dbg);
+    document.getElementById("tnDbgBtn").onclick = () => dbg.classList.toggle("show");
+    document.getElementById("dbgOn").onclick = () => simSetOn(!nv.sim.on);
+    document.getElementById("dbgPlay").onclick = () => { if (!nv.sim.on) simSetOn(true); nv.sim.run = !nv.sim.run; simUi(); };
+    document.getElementById("dbgPrev").onclick = () => simJump(-1);
+    document.getElementById("dbgNext").onclick = () => simJump(1);
+    dbg.querySelectorAll(".mu").forEach(b => b.onclick = () => { nv.sim.mult = Number(b.dataset.m); simUi(); });
+    document.getElementById("dbgD").oninput = e => { if (!nv.sim.on) simSetOn(true); nv.sim.run = false; nv.sim.mode = "run"; nv.sim.D = Number(e.target.value); nv.sim.v = nv.sim.kmh / 3.6; nv.sim.t = nv.sim.D > nv.sim.L - 400 ? 5 : 60; simUi(); tick(); };
+    document.getElementById("dbgV").oninput = e => { nv.sim.kmh = Number(e.target.value); nv.sim.v = nv.sim.kmh / 3.6; simUi(); tick(); };
     document.getElementById("tnCars").onclick = () => {
       const v = prompt("編成両数を入力（数字のみ。空欄で未設定）", nv.cars || "");
       if (v === null) return;
@@ -123,7 +153,7 @@
       const u = new SpeechSynthesisUtterance(text);
       u.lang = "ja-JP"; u.pitch = 1.2; u.rate = 1.0; u.volume = 1;
       const v = pickVoice(); if (v) u.voice = v;
-      nv.speaking = true; nv.spokenAnything = true;
+      nv.speaking = true; nv.spokenAnything = true; nv.lastSaid = text;
       u.onend = u.onerror = () => { nv.speaking = false; };
       speechSynthesis.speak(u);
     } catch (e) { nv.speaking = false; }
@@ -231,6 +261,61 @@
   }
   function gpsFresh() { return nv.pos && Date.now() - nv.fixAt < 20000 && nv.acc <= 150; }
 
+  // ---------- デバッグ：GPSなしのシミュレーション ----------
+  function segLen(k) {
+    const a = nv.ev[k], b = nv.ev[k + 1];
+    return a && b && a.c && b.c ? Math.max(300, Math.round(dist(a.c, b.c))) : 1500;
+  }
+  function simClearSpoken(k) { [...nv.spoken].forEach(x => { if (x.endsWith(":" + k)) nv.spoken.delete(x); }); }
+  function simSetOn(on) {
+    const m = nv.sim;
+    m.on = on; clearInterval(m.timer); m.timer = null;
+    if (on) {
+      nv.spoken = new Set(); nv.lastMid = 0;
+      m.k = 0; m.mode = "stop"; m.dwell = 0; m.run = false; m.L = segLen(0); m.D = m.L; m.v = 0;
+      m.timer = setInterval(simStep, 200);
+    }
+    simUi(); tick();
+  }
+  function simJump(d) {
+    const m = nv.sim; if (!m.on) simSetOn(true);
+    m.k = Math.max(0, Math.min(nv.ev.length - 2, m.k + d));
+    m.L = segLen(m.k); m.D = m.L; m.v = 0; m.t = 0; m.mode = "run"; m.dwell = 0;
+    simClearSpoken(m.k); nv.lastMid = 0; simUi(); tick();
+  }
+  function simStep() {
+    const m = nv.sim; if (!m.on || !m.run || !nv.stops) return;
+    const dt = 0.2 * m.mult, vmax = Math.min(m.kmh / 3.6, 33);
+    if (m.mode === "stop") {
+      m.dwell += dt;
+      if (m.dwell >= 6 && m.k < nv.ev.length - 1) { m.mode = "run"; m.L = segLen(m.k); m.D = m.L; m.v = 0; m.t = 0; simClearSpoken(m.k); }
+    } else {
+      m.t += dt;
+      const brake = m.v * m.v / (2 * 0.9) + 10;
+      if (m.D <= brake) m.v = Math.max(1.5, m.v - 0.9 * dt); else m.v = Math.min(vmax, m.v + 0.9 * dt);
+      m.D -= m.v * dt;
+      if (m.D <= 0.5) { m.D = 0; m.v = 0; m.mode = "stop"; m.k++; m.dwell = 0; if (m.k >= nv.ev.length - 1) m.run = false; }
+    }
+    simUi(); tick();
+  }
+  function simLoc() {
+    const m = nv.sim;
+    nv.src = "gps";
+    if (m.mode === "stop") return { kind: "stop", k: m.k, src: "gps" };
+    return { kind: "run", k: m.k, D: m.D, v: m.v, t: m.t, src: "gps" };
+  }
+  function simUi() {
+    const m = nv.sim, q = id => document.getElementById(id);
+    if (!q("dbgOn")) return;
+    q("dbgOn").textContent = m.on ? "ON" : "OFF"; q("dbgOn").classList.toggle("on", m.on);
+    q("dbgPlay").textContent = m.run ? "⏸ 一時停止" : "▶ 自動走行"; q("dbgPlay").classList.toggle("on", m.run);
+    document.querySelectorAll("#tnDbg .mu").forEach(b => b.classList.toggle("on", Number(b.dataset.m) === m.mult));
+    const a = nv.ev[m.k], b = nv.ev[m.k + 1];
+    q("dbgSegLbl").textContent = a ? `${m.mode === "stop" ? "停車中：" : "区間："}${a.name}${b ? " → " + b.name : ""}（駅間 約${m.L || segLen(m.k)}m${a.c && b && b.c ? "" : "・座標なしの仮の長さ"}）` : "";
+    q("dbgD").max = m.L || segLen(m.k); if (m.mode === "run") q("dbgD").value = Math.round(m.D);
+    q("dbgDv").textContent = `${Math.round(m.D)}m`; q("dbgVv").textContent = `${Math.round(m.on && m.mode === "run" ? m.v * 3.6 : m.kmh)}km/h`;
+  }
+
   // ---------- 位置の判定 ----------
   // 返り値：{kind:"wait"|"stop"|"run"|"end", k, D(次の停車駅までの距離m or null), R(時刻での残り秒 or null), t(発車からの秒), v, src}
   function timeLocate(n, ev) {
@@ -248,6 +333,7 @@
   }
 
   function locate() {
+    if (nv.sim.on) return simLoc();
     const ev = nv.ev, n = nowSec();
     const tl = timeLocate(n, ev);
     nv.src = "time";
@@ -335,7 +421,7 @@
     document.getElementById("tnNextTxt").textContent = shown;
     document.getElementById("tnNext").classList.toggle("fit", shown.length > 5);
     document.getElementById("tnLed").classList.toggle("blink", warn || pf);
-    setGpsMsg(nv.src === "gps" && gpsFresh() ? "📍 GPSで判定中" : (nv.watchId != null ? "GPS待ち（時刻で判定中）" : "時刻で判定中"));
+    setGpsMsg(nv.sim.on ? "🛠 シミュレーション中" : nv.src === "gps" && gpsFresh() ? "📍 GPSで判定中" : (nv.watchId != null ? "GPS待ち（時刻で判定中）" : "時刻で判定中"));
 
     // 音声
     const k = loc ? loc.k : -1;
@@ -352,6 +438,14 @@
       if (nv.spokenAnything) { cancelSpeech(); nv.spokenAnything = false; }
     }
     nv.lastPhase = phase;
+    const info = document.getElementById("dbgInfo");
+    if (info && document.getElementById("tnDbg").classList.contains("show")) {
+      info.textContent = `phase=${phase}  判定元=${nv.sim.on ? "シミュレーション" : nv.src}\n` +
+        (loc && loc.kind === "run" ? `次駅まで ${loc.D != null ? Math.round(loc.D) + "m" : "(時刻判定) 残り" + Math.round(loc.R) + "秒"} / 速度 ${loc.v != null ? (loc.v * 3.6).toFixed(0) + "km/h" : "-"} / 発車から ${Math.round(loc.t || 0)}秒\n` : "") +
+        `GPS: ${nv.pos ? nv.pos.lat.toFixed(5) + "," + nv.pos.lon.toFixed(5) + " 精度" + Math.round(nv.acc) + "m 速度" + ((nv.speed || 0) * 3.6).toFixed(0) + "km/h" : "なし"}\n` +
+        `駅座標: ${nv.ev.map(e => e.name + (e.c ? "○" : "×")).join(" ")}\n` +
+        `最後の発声: ${nv.lastSaid || "-"}`;
+    }
   }
 
   // ---------- 開閉 ----------
@@ -379,11 +473,11 @@
     clearInterval(nv.timer); nv.timer = null;
     cancelSpeech();
     const ov = document.getElementById("tnOverlay"); if (ov) ov.classList.remove("show", "brake", "platform");
-    stopGps(); clearInterval(nv.flashTimer); nv.token++;
+    stopGps(); clearInterval(nv.flashTimer); nv.token++; simSetOn(false);
     try { nv.wake && nv.wake.release(); nv.wake = null; } catch (e) {}
     nv.stops = null;
   }
 
   window.ttShowNavi = function (idx) { open(ttTrainDetailRegistry[idx]); };
-  window.TrainNavi = { open, close: closeNavi, _buildEvents: buildEvents, _onFix: onFix, _state: nv, _coordCache: coordCache };
+  window.TrainNavi = { open, close: closeNavi, _buildEvents: buildEvents, _onFix: onFix, _state: nv, _sim: () => nv.sim, _coordCache: coordCache };
 })();
