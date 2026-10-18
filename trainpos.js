@@ -1,4 +1,4 @@
-// trainpos.js v1.4.0
+// trainpos.js v1.4.1
 // 1.4.0: ・終点駅の行が無くてもいい仕組みをやめた（最後に書いてある行は終着＝時刻1個なら到着のみ）。列車の詳細の終点補足も廃止
 //        ・路線の境界駅が通過（時刻が書いていない）でも、列車が消えないようにした。時刻の無い行は前後の時刻から
 //          按分して推定し、行が無い場合は、他路線と共通の駅（境界駅）を探して、駅数の比で推定する
@@ -612,7 +612,7 @@
         time: a.hm,          // 列車詳細には「到着時刻」を載せる（時刻表ページと同じ）
         arr: a.hm, dep: d.hm,
         arrSec: a.sec, depSec: d.sec,
-        type: s.type, bound: s.bound
+        type: s.type, bound: s.bound, pass: !!s.pass
       };
     });
     const first = train.stops.find(s => s.bound) || train.stops[0] || {};

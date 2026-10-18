@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.14.0 -->
+<!-- version: 1.15.1 -->
+<!-- 1.15.0: 列車の詳細に「Train Navi表示」ボタンを追加（trainnavi.js） -->
 <!-- 1.14.0: 列車位置で、並走路線の列車も出す／路線の境界駅が通過（時刻なし）でも列車が消えないようにした（trainpos.js 1.4.0）。終点駅の扱いを変更（timetable.js 1.12.0） -->
 <!-- 1.13.1: 同じ駅から直通先が2つ以上に分かれる時の描画を、横並び（路線名が長いと吹き出しが重なる）から、1段ずつ縦に並べる形に変更 -->
 <!-- 1.13.0: 列車位置の「乗車記録だけの列車」を、その日の記録ではなく、ダイヤ改正日より後の全日程の記録（表示日と同じ平日／土休日）から出すように変更 -->
@@ -319,6 +320,7 @@
     width: 100%; margin-bottom: 10px; padding: 10px; border: none; border-radius: 8px;
     background: #2e7d32; color: #fff; font-size: 14px; font-weight: bold; cursor: pointer;
   }
+  .tt-staff-btn.tt-navi-btn { background: #1565c0; }
   .tt-staff-overlay {
     display: none; position: fixed; inset: 0; z-index: 10000; background: #fff;
     flex-direction: column;
@@ -527,8 +529,9 @@
 <script src="nav.js"></script>
 <script src="logs.js?v=1.2.1"></script>
 <script src="idbcache.js?v=1.0.0"></script>
-<script src="timetable.js?v=1.12.0"></script>
-<script src="trainpos.js?v=1.4.0"></script>
+<script src="timetable.js?v=1.13.0"></script>
+<script src="trainnavi.js?v=1.1.0"></script>
+<script src="trainpos.js?v=1.4.1"></script>
 <script>initNav("乗車路線マップ確認用");</script>
 <script>
 const username = checkLogin();

@@ -1,5 +1,6 @@
 // timetable.js
-// version: 1.12.0
+// version: 1.13.0
+// 1.13.0: 列車の詳細に「Train Navi表示」ボタンを追加（trainnavi.js）
 // 1.12.0: 「終点駅の行が無くてもいい」仕組みをやめた。同じ列車番号のまとまりの最後の行は、時刻が1個だけなら
 //         到着時刻のみ（発車なし）。行先から終点駅を補って足すのもやめ、スタフ・到着時刻の画面はスプシに
 //         書いてある最後の駅までを表示する
@@ -613,6 +614,7 @@ function ttShowTrainDetail(idx) {
   document.getElementById("ttTrainDetailTitle").innerHTML = (title || "列車詳細") + (subtitle ? `<span class="sub">${escapeHtmlTT(subtitle)}</span>` : "");
   document.getElementById("ttTrainDetailBody").innerHTML = `
     <button type="button" class="tt-staff-btn" onclick="ttShowStaff(${idx})">📋 スタフ表示</button>
+    ${typeof ttShowNavi === "function" ? `<button type="button" class="tt-staff-btn tt-navi-btn" onclick="ttShowNavi(${idx})">🚃 Train Navi表示</button>` : ""}
     <table class="tt-detail-table">
       <tr><th>駅名</th><th>到着時刻</th></tr>
       ${rowsHTML}

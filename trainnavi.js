@@ -1,0 +1,389 @@
+// trainnavi.js v1.1.0
+// Train Navi表示：運転台のモニター風の画面（列車種別／次駅／列車番号／両数）を出し、
+// GPSで現在位置を判定して、合成音声（女声）で停車駅ごとに4回注意喚起する。
+//   ① 発車直後          ：種別＋次駅を表示、「次は、○○、停車。」
+//   ② 停止制動の開始位置：「停車」を赤白点滅、「停車、停車、停車。」
+//   ③ 入駅（ホーム端）  ：「N両」を表示、「N両、停車。N両、停車。」
+//   ④ ホーム中間付近    ：「N両」を表示、「N両、N両。」を停車まで繰り返す
+// GPSが取れない間（地下など）は、ダイヤの時刻で代わりに判定する。
+// timetable.js の ttTrainDetailRegistry / ttToSec / escapeHtmlTT / ttNormStation を共用する。
+(function () {
+  "use strict";
+  const CAR_KEY = "tuts4_navi_cars";
+  const VOICE_KEY = "tuts4_navi_voice";
+  const nv = { stops: null, ev: null, timer: null, voiceOn: true, cars: "", spoken: new Set(), audio: null, lastPhase: "", flash: false, flashTimer: null, watchId: null, pos: null, speed: 0, fixAt: 0, acc: 9999, seg: null, src: "time", speaking: false, lastMid: 0, spokenAnything: false, token: 0 };
+
+  function esc(s) { return typeof escapeHtmlTT === "function" ? escapeHtmlTT(s) : String(s || ""); }
+  function lsGet(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+  // ---------- DOM（初回に作る） ----------
+  function ensureDom() {
+    if (document.getElementById("tnOverlay")) return;
+    const css = document.createElement("style");
+    css.textContent = `
+      #tnOverlay { display:none; position:fixed; inset:0; z-index:10002; background:#000; color:#fff;
+        font-family:"Hiragino Sans","Meiryo",sans-serif; user-select:none; -webkit-user-select:none; }
+      #tnOverlay.show { display:flex; }
+      #tnOverlay .tn-main { flex:1; display:flex; min-width:0; }
+      #tnOverlay .tn-left { flex:1; display:flex; flex-direction:column; min-width:0; }
+      #tnOverlay .tn-type { flex:1; background:#000; display:flex; align-items:center; justify-content:center;
+        font-weight:bold; font-size:min(18vw,26vh); line-height:1; white-space:nowrap; position:relative; overflow:hidden; }
+      #tnOverlay .tn-bound { position:absolute; left:10px; bottom:6px; font-size:min(4vw,6vh); font-weight:normal; color:#bbb; }
+      #tnOverlay .tn-next { flex:1; background:#fff; color:#000; display:flex; align-items:center; justify-content:center;
+        font-weight:bold; font-size:min(15vw,22vh); line-height:1.05; text-align:center; position:relative; padding:0 8px; overflow:hidden; }
+      #tnOverlay .tn-next small { position:absolute; left:10px; top:4px; font-size:min(3.6vw,5.5vh); font-weight:normal; color:#555; }
+      #tnOverlay .tn-next.fit { font-size:min(10vw,16vh); }
+      #tnOverlay .tn-num { width:30%; background:#ffec1a; color:#000; display:flex; flex-direction:column; align-items:center;
+        justify-content:space-around; padding:6px 0; }
+      #tnOverlay .tn-num .no { font-size:min(6vw,9vh); }
+      #tnOverlay .tn-num .cars { font-size:min(22vw,38vh); font-weight:bold; line-height:1; cursor:pointer; }
+      #tnOverlay .tn-num .cars small { font-size:.28em; }
+      #tnOverlay .tn-side { width:92px; background:#cfcfcf; display:flex; flex-direction:column; gap:8px; padding:8px; }
+      #tnOverlay .tn-side button { border:none; border-radius:6px; color:#fff; font-weight:bold; font-size:14px; padding:12px 2px; cursor:pointer; }
+      #tnOverlay .tn-clock { color:#333; font-size:13px; text-align:center; font-variant-numeric:tabular-nums; }
+      #tnOverlay .b-voice { background:#5b8fd6; } #tnOverlay .b-voice.off { background:#888; }
+      #tnOverlay .tn-gpsmsg { color:#333; font-size:11px; text-align:center; line-height:1.3; }
+      #tnOverlay .tn-led { display:flex; justify-content:center; gap:6px; padding:4px 0; background:#000; }
+      #tnOverlay .tn-led i { width:22px; height:8px; background:#5a2a2a; display:block; }
+      #tnOverlay .tn-led.blink i { background:#e60012; animation:tnled .5s steps(1) infinite; }
+      #tnOverlay .tn-led.blink i:nth-child(even) { animation-delay:.25s; }
+      @keyframes tnled { 50% { background:#5a2a2a; } }
+      #tnOverlay .b-close { background:#c0392b; }
+      #tnOverlay .tn-stop-card { color:#000; }
+      #tnOverlay.brake .tn-type { background:#e60012; color:#fff; }
+      #tnOverlay.brake.flash .tn-type { background:#fff; color:#e60012; }
+      #tnOverlay.brake .tn-next, #tnOverlay.platform .tn-next { display:none; }
+      #tnOverlay.platform .tn-type { background:#fff; color:#1a237e; font-size:min(30vw,44vh); }
+      @media (orientation:portrait){ #tnOverlay .tn-main { flex-direction:column; } #tnOverlay .tn-num { width:auto; height:30%; flex-direction:row; }
+        #tnOverlay .tn-type { font-size:min(26vw,16vh);} #tnOverlay .tn-next { font-size:min(18vw,12vh);} #tnOverlay .tn-num .cars{font-size:min(24vw,20vh);}
+        #tnOverlay { flex-direction:column; } #tnOverlay .tn-side { width:auto; flex-direction:row; align-items:center; } #tnOverlay .tn-side button { flex:1; } }
+    `;
+    document.head.appendChild(css);
+    const d = document.createElement("div");
+    d.id = "tnOverlay";
+    d.innerHTML = `
+      <div class="tn-main">
+        <div class="tn-left">
+          <div class="tn-type" id="tnType"><span id="tnTypeTxt">普通</span><span class="tn-bound" id="tnBound"></span></div>
+          <div class="tn-next" id="tnNext"><small id="tnNextLbl">次は</small><span id="tnNextTxt"></span></div>
+          <div class="tn-led" id="tnLed"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        </div>
+        <div class="tn-num">
+          <div class="no" id="tnNo"></div>
+          <div class="cars" id="tnCars" title="タップで両数を設定"></div>
+        </div>
+      </div>
+      <div class="tn-side">
+        <button type="button" class="b-voice" id="tnVoiceBtn">🔊 音声</button>
+        <div class="tn-gpsmsg" id="tnGpsMsg"></div>
+        <div class="tn-clock" id="tnClock"></div>
+        <button type="button" class="b-close" id="tnCloseBtn">閉じる</button>
+      </div>`;
+    document.body.appendChild(d);
+    document.getElementById("tnVoiceBtn").onclick = () => { nv.voiceOn = !nv.voiceOn; lsSet(VOICE_KEY, nv.voiceOn ? "1" : "0"); renderBtns(); if (!nv.voiceOn) cancelSpeech(); else unlockAudio(); };
+    document.getElementById("tnCloseBtn").onclick = closeNavi;
+    document.getElementById("tnCars").onclick = () => {
+      const v = prompt("編成両数を入力（数字のみ。空欄で未設定）", nv.cars || "");
+      if (v === null) return;
+      nv.cars = String(v).replace(/[^0-9]/g, "").slice(0, 2);
+      lsSet(CAR_KEY, nv.cars);
+      renderCars();
+    };
+  }
+  function renderBtns() {
+    const v = document.getElementById("tnVoiceBtn"); v.classList.toggle("off", !nv.voiceOn); v.textContent = nv.voiceOn ? "🔊 音声" : "🔇 音声";
+  }
+  function renderCars() {
+    document.getElementById("tnCars").innerHTML = nv.cars ? `${esc(nv.cars)}<small>両</small>` : `<small>両数<br>タップ</small>`;
+  }
+
+  // ---------- 音声（合成音声・女声） ----------
+  function pickVoice() {
+    if (!window.speechSynthesis) return null;
+    const vs = speechSynthesis.getVoices().filter(v => /^ja/i.test(v.lang));
+    if (!vs.length) return null;
+    const male = /Ichiro|Otoya|Ken\b|Hattori|Takumi|Keita|Male|男/i;
+    const female = /Kyoko|O-?Ren|Haruka|Ayumi|Nanami|Mizuki|Sayaka|Google 日本語|Female|女|Hikari|Shiori|Mayu/i;
+    return vs.find(v => female.test(v.name) && !male.test(v.name)) || vs.find(v => !male.test(v.name)) || vs[0];
+  }
+  function unlockAudio() {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC && !nv.audio) nv.audio = new AC();
+      if (nv.audio && nv.audio.state === "suspended") nv.audio.resume();
+    } catch (e) {}
+    try { if (window.speechSynthesis) { speechSynthesis.getVoices(); const u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u); } } catch (e) {}
+  }
+  function cancelSpeech() { try { window.speechSynthesis && speechSynthesis.cancel(); } catch (e) {} }
+  function say(text) {
+    if (!nv.voiceOn || !window.speechSynthesis) return;
+    try {
+      cancelSpeech();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "ja-JP"; u.pitch = 1.2; u.rate = 1.0; u.volume = 1;
+      const v = pickVoice(); if (v) u.voice = v;
+      nv.speaking = true; nv.spokenAnything = true;
+      u.onend = u.onerror = () => { nv.speaking = false; };
+      speechSynthesis.speak(u);
+    } catch (e) { nv.speaking = false; }
+  }
+
+  // ---------- 時刻列（停車する駅だけ） ----------
+  function buildEvents(stops) {
+    const ev = []; let prev = -1;
+    stops.forEach((s, i) => {
+      const last = i === stops.length - 1;
+      if (!last && i > 0 && (s.pass === true || (!s.type && !s.bound && s.pass !== false))) return; // 通過
+      const a0 = ttToSec(s.arr || s.dep, s.arr ? s.arrSec : s.depSec);
+      const d0 = ttToSec(s.dep || s.arr, s.dep ? s.depSec : s.arrSec);
+      if (a0 === null) return;
+      let a = a0, d = d0;
+      while (a < prev) a += 86400;
+      while (d < a) d += 86400;
+      prev = d;
+      ev.push({ a, d: last ? a : d, i, name: s.station });
+    });
+    return ev;
+  }
+
+  // 位置：{kind:"wait"|"stop"|"run", k, E, R, dur}
+  function locate(nowSec, ev) {
+    if (!ev.length) return null;
+    for (const n of [nowSec, nowSec + 86400]) {
+      for (let k = 0; k < ev.length; k++) {
+        const e = ev[k], nx = ev[k + 1];
+        const stopEnd = nx ? Math.max(e.d, e.a + 20) : e.a + 180;
+        if (n >= e.a && n <= stopEnd) return { kind: "stop", k };
+        if (nx && n > stopEnd && n < nx.a) return { kind: "run", k, E: n - stopEnd, R: nx.a - n, dur: nx.a - stopEnd };
+      }
+      if (n < ev[0].a && n > ev[0].a - 600) return { kind: "wait", k: 0 };
+    }
+    return null;
+  }
+
+  function nowSec() { const d = new Date(); return (d.getHours() * 60 + d.getMinutes()) * 60 + d.getSeconds(); }
+
+  // ---------- GPS（常にGPSで動かす。測位できない間（地下など）は時刻で代わりに判定） ----------
+  const coordCache = new Map(); // 正規化した駅名 → [{lat,lon}...]（同名駅の候補）
+  function dist(a, b) {
+    const R = 6371000, rad = x => x * Math.PI / 180;
+    const dLat = rad(b.lat - a.lat), dLon = rad(b.lon - a.lon);
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+  function normName(n) { return typeof ttNormStation === "function" ? ttNormStation(n) : String(n || "").replace(/駅$/, ""); }
+
+  // 駅の座標を取る（HeartRails：現在地検索と同じAPI）。同名の駅が複数あれば、基準の位置に一番近いものを選ぶ
+  function fetchCoords(name) {
+    const key = normName(name);
+    if (coordCache.has(key)) return Promise.resolve(coordCache.get(key));
+    const q = encodeURIComponent(String(name).replace(/駅$/, ""));
+    return fetch(`https://express.heartrails.com/api/json?method=getStations&name=${q}`)
+      .then(r => r.json())
+      .then(d => {
+        const list = ((d.response && d.response.station) || []).map(x => ({ lat: Number(x.y), lon: Number(x.x) })).filter(c => isFinite(c.lat) && isFinite(c.lon));
+        coordCache.set(key, list);
+        return list;
+      })
+      .catch(() => { coordCache.set(key, []); return []; });
+  }
+  // 手前の駅の座標（または現在地）に一番近い候補を、その停車駅の座標に決める
+  function resolveCoords() {
+    const ev = nv.ev; if (!ev) return;
+    let ref = nv.pos ? { lat: nv.pos.lat, lon: nv.pos.lon } : null;
+    for (let k = 0; k < ev.length; k++) {
+      const cands = coordCache.get(normName(ev[k].name));
+      if (!cands) { ev[k].c = null; continue; }
+      if (!cands.length) { ev[k].c = null; continue; }
+      const c = ref ? cands.reduce((b, x) => dist(ref, x) < dist(ref, b) ? x : b, cands[0]) : cands[0];
+      ev[k].c = c; ref = c;
+    }
+  }
+  async function loadCoords(token) {
+    for (const e of nv.ev) {
+      if (nv.token !== token) return;
+      if (!coordCache.has(normName(e.name))) { await fetchCoords(e.name); resolveCoords(); }
+    }
+    resolveCoords();
+  }
+  function startGps() {
+    stopGps();
+    nv.pos = null; nv.speed = null; nv.fixAt = 0; nv.acc = 9999;
+    if (!navigator.geolocation) { setGpsMsg("この端末ではGPSが使えません（時刻で判定）"); return; }
+    setGpsMsg("GPS測位中…");
+    nv.watchId = navigator.geolocation.watchPosition(p => onFix(p.coords, p.timestamp || Date.now()),
+      err => setGpsMsg(err && err.code === 1 ? "位置情報が許可されていません（時刻で判定）" : "GPSを取得できません（時刻で判定）"),
+      { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 });
+  }
+  function stopGps() {
+    if (nv.watchId != null && navigator.geolocation) navigator.geolocation.clearWatch(nv.watchId);
+    nv.watchId = null;
+  }
+  function setGpsMsg(m) { const e = document.getElementById("tnGpsMsg"); if (e) e.textContent = m; }
+  function onFix(c, t) {
+    const cur = { lat: c.latitude, lon: c.longitude };
+    let speed = (typeof c.speed === "number" && !isNaN(c.speed)) ? c.speed : null;
+    if (speed === null && nv.pos && t > nv.fixAt) speed = dist(nv.pos, cur) / ((t - nv.fixAt) / 1000);
+    nv.pos = cur; nv.speed = speed == null ? 0 : speed; nv.fixAt = Date.now(); nv.acc = c.accuracy || 0;
+    if (!nv.coordsResolvedWithPos) { nv.coordsResolvedWithPos = true; resolveCoords(); }
+    tick();
+  }
+  function gpsFresh() { return nv.pos && Date.now() - nv.fixAt < 20000 && nv.acc <= 150; }
+
+  // ---------- 位置の判定 ----------
+  // 返り値：{kind:"wait"|"stop"|"run"|"end", k, D(次の停車駅までの距離m or null), R(時刻での残り秒 or null), t(発車からの秒), v, src}
+  function timeLocate(n, ev) {
+    if (!ev.length) return null;
+    for (const nn of [n, n + 86400]) {
+      for (let k = 0; k < ev.length; k++) {
+        const e = ev[k], nx = ev[k + 1];
+        const stopEnd = nx ? Math.max(e.d, e.a + 20) : e.a + 180;
+        if (nn >= e.a && nn <= stopEnd) return { kind: "stop", k };
+        if (nx && nn > stopEnd && nn < nx.a) return { kind: "run", k, t: nn - stopEnd, R: nx.a - nn, dur: nx.a - stopEnd };
+      }
+      if (nn < ev[0].a && nn > ev[0].a - 600) return { kind: "wait", k: 0 };
+    }
+    return null;
+  }
+
+  function locate() {
+    const ev = nv.ev, n = nowSec();
+    const tl = timeLocate(n, ev);
+    nv.src = "time";
+    if (!ev.length) return null;
+    // GPSが使えない時（地下・未許可）は時刻のみ
+    if (!gpsFresh()) return tl;
+    resolveCoords();
+    // 初期位置：最初は時刻の判定を採用
+    if (nv.seg == null) nv.seg = tl && tl.k != null ? { k: tl.k, atStop: !tl.kind || tl.kind !== "run", depAt: Date.now() } : { k: 0, atStop: true, depAt: Date.now() };
+    const seg = nv.seg, v = nv.speed || 0;
+    // どこかの停車駅の近くで止まっていれば、そこにいると確定する（折り返し・遅延で時刻と食い違った時の補正）
+    for (let j = 0; j < ev.length; j++) {
+      if (ev[j].c && dist(nv.pos, ev[j].c) < 200 && v < 2 && (Math.abs(j - seg.k) <= 3)) {
+        if (!(seg.k === j && seg.atStop)) { nv.seg = { k: j, atStop: true, depAt: Date.now() }; nv.spoken = new Set(); nv.lastMid = 0; }
+        break;
+      }
+    }
+    const sg = nv.seg;
+    const cur = ev[sg.k], nxt = ev[sg.k + 1];
+    if (!nxt && sg.atStop) { nv.src = "gps"; return { kind: "stop", k: sg.k, src: "gps" }; }
+    if (sg.atStop) {
+      if (cur.c && dist(nv.pos, cur.c) > 200) { nv.seg = { k: sg.k, atStop: false, depAt: Date.now() }; }
+      else { nv.src = "gps"; return { kind: "stop", k: sg.k, src: "gps" }; }
+    }
+    const sg2 = nv.seg;
+    const nn = ev[sg2.k + 1];
+    if (!nn) return tl;
+    if (!nn.c) return tl; // 次の駅の座標が取れていない間は時刻で代用
+    const D = dist(nv.pos, nn.c);
+    nv.src = "gps";
+    return { kind: "run", k: sg2.k, D, v, t: (Date.now() - sg2.depAt) / 1000, src: "gps" };
+  }
+
+  function phaseOf(loc) {
+    if (!loc) return "idle";
+    if (loc.kind === "wait") return "wait";
+    if (loc.kind === "stop") return loc.k === nv.ev.length - 1 ? "end" : "stopped";
+    const spokenDepart = nv.spoken.has("depart:" + loc.k);
+    if (loc.src === "gps") {
+      const v = loc.v || 0;
+      const brakeD = Math.min(900, Math.max(250, v * v / 1.8 + 150));
+      if (loc.D <= 45) return "mid";
+      if (loc.D <= 130) return "pfend";
+      if (!spokenDepart && loc.t <= 30) return "depart";
+      if (loc.D <= brakeD) return "brake";
+      return loc.t <= 30 ? "depart" : "cruise";
+    }
+    const brakeAt = Math.min(30, loc.dur * 0.4), pfAt = Math.min(12, loc.dur * 0.2), midAt = Math.min(5, loc.dur * 0.08);
+    if (loc.R <= midAt) return "mid";
+    if (loc.R <= pfAt) return "pfend";
+    if (!spokenDepart && loc.t <= 25) return "depart";
+    if (loc.R <= brakeAt) return "brake";
+    return loc.t <= 25 ? "depart" : "cruise";
+  }
+
+  // ---------- 周期処理 ----------
+  function tick() {
+    if (!nv.stops) return;
+    const p2 = n => String(n).padStart(2, "0"), d = new Date();
+    document.getElementById("tnClock").textContent = `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+    render(locate());
+  }
+
+  function render(loc) {
+    const ov = document.getElementById("tnOverlay");
+    const ev = nv.ev;
+    const phase = phaseOf(loc);
+    const typeTxt = nv.meta.type || "普通";
+    const nextIdx = loc ? Math.min(loc.k + 1, ev.length - 1) : 0;
+    const nextName = ev[nextIdx] ? ev[nextIdx].name : "";
+    const endName = ev[ev.length - 1] ? ev[ev.length - 1].name : "";
+
+    const warn = phase === "brake", pf = phase === "pfend" || phase === "mid";
+    ov.classList.toggle("brake", warn);
+    ov.classList.toggle("platform", pf);
+    ov.classList.toggle("flash", (warn || phase === "pfend") && nv.flash);
+    const typeEl = document.getElementById("tnTypeTxt");
+    if (warn) typeEl.textContent = "停車";
+    else if (pf) typeEl.textContent = nv.cars ? `${nv.cars}両` : "停車";
+    else if (phase === "end") typeEl.textContent = "終点";
+    else typeEl.textContent = typeTxt;
+    document.getElementById("tnBound").textContent = (warn || pf || phase === "end" || !nv.meta.bound) ? "" : `${nv.meta.bound}行き`;
+    document.getElementById("tnNextLbl").textContent = phase === "end" ? "" : "次は";
+    const shown = phase === "end" ? endName : nextName;
+    document.getElementById("tnNextTxt").textContent = shown;
+    document.getElementById("tnNext").classList.toggle("fit", shown.length > 5);
+    document.getElementById("tnLed").classList.toggle("blink", warn || pf);
+    setGpsMsg(nv.src === "gps" && gpsFresh() ? "📍 GPSで判定中" : (nv.watchId != null ? "GPS待ち（時刻で判定中）" : "時刻で判定中"));
+
+    // 音声
+    const k = loc ? loc.k : -1;
+    const once = key => { if (nv.spoken.has(key)) return false; nv.spoken.add(key); return true; };
+    const cars = nv.cars;
+    if (phase === "depart" && nextName) { if (once("depart:" + k)) say(`次は、${nextName}、停車。`); }
+    else if (phase === "brake") { if (once("brake:" + k)) say("停車、停車、停車。"); }
+    else if (phase === "pfend") { if (once("pfend:" + k)) say(cars ? `${cars}両、停車。${cars}両、停車。` : "停車。停車。"); }
+    else if (phase === "mid") {
+      // 停まるまで繰り返す（前の発声が終わってから）
+      const now = Date.now();
+      if (!nv.speaking && now - (nv.lastMid || 0) > 2500) { nv.lastMid = now; say(cars ? `${cars}両、${cars}両。` : "停車、停車。"); }
+    } else if (phase === "stopped" || phase === "end") {
+      if (nv.spokenAnything) { cancelSpeech(); nv.spokenAnything = false; }
+    }
+    nv.lastPhase = phase;
+  }
+
+  // ---------- 開閉 ----------
+  function open(entry) {
+    if (!entry || !entry.stops || !entry.stops.length) return;
+    ensureDom();
+    nv.stops = entry.stops;
+    nv.ev = buildEvents(entry.stops);
+    nv.meta = { type: entry.type || "", bound: entry.bound || "" };
+    nv.spoken = new Set(); nv.lastPhase = ""; nv.seg = null; nv.lastMid = 0; nv.speaking = false; nv.coordsResolvedWithPos = false; nv.token++;
+    nv.voiceOn = lsGet(VOICE_KEY, "1") !== "0";
+    nv.cars = lsGet(CAR_KEY, "") || (window.__cars||"");
+    document.getElementById("tnNo").textContent = entry.trainNumber || (entry.unban ? `運番${entry.unban}` : "");
+    renderBtns(); renderCars();
+    startGps(); loadCoords(nv.token);
+    clearInterval(nv.flashTimer); nv.flashTimer = setInterval(() => { nv.flash = !nv.flash; const o = document.getElementById("tnOverlay"); if (o) o.classList.toggle("flash", nv.flash && (o.classList.contains("brake") || o.classList.contains("platform"))); }, 500);
+    document.getElementById("tnOverlay").classList.add("show");
+    unlockAudio();
+    clearInterval(nv.timer);
+    tick();
+    nv.timer = setInterval(tick, 1000);
+    try { if (navigator.wakeLock) navigator.wakeLock.request("screen").then(l => { nv.wake = l; }).catch(() => {}); } catch (e) {}
+  }
+  function closeNavi() {
+    clearInterval(nv.timer); nv.timer = null;
+    cancelSpeech();
+    const ov = document.getElementById("tnOverlay"); if (ov) ov.classList.remove("show", "brake", "platform");
+    stopGps(); clearInterval(nv.flashTimer); nv.token++;
+    try { nv.wake && nv.wake.release(); nv.wake = null; } catch (e) {}
+    nv.stops = null;
+  }
+
+  window.ttShowNavi = function (idx) { open(ttTrainDetailRegistry[idx]); };
+  window.TrainNavi = { open, close: closeNavi, _buildEvents: buildEvents, _onFix: onFix, _state: nv, _coordCache: coordCache };
+})();
