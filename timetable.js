@@ -1,5 +1,8 @@
 // timetable.js
-// version: 1.11.1
+// version: 1.12.0
+// 1.12.0: 「終点駅の行が無くてもいい」仕組みをやめた。同じ列車番号のまとまりの最後の行は、時刻が1個だけなら
+//         到着時刻のみ（発車なし）。行先から終点駅を補って足すのもやめ、スタフ・到着時刻の画面はスプシに
+//         書いてある最後の駅までを表示する
 // 1.11.1: 駅ごとの時刻表で、ダイヤに時刻があっても「種別」「行先」が両方とも空の行は通過とみなして載せないようにした
 // 1.11.0: 列車の詳細（各駅の到着時刻）＋スタフ表示を、他ページ（linemap.html の列車位置）からも
 //         開けるようにした。ttOpenTrainDetail(entry) を追加。駅名入力欄が無いページに
@@ -302,9 +305,8 @@ function ttParseGroupTimes(group) {
     const found = [...String(r["発車時刻"] || "").matchAll(/(\d{1,2}):(\d{2})(?::(\d{2}))?/g)]
       .map(m => ({ hm: `${m[1]}:${m[2]}`, sec: m[3] !== undefined ? Number(m[3]) : null }));
     const isLast = i === group.length - 1;
-    // 運用シートに終点駅の行が無いことも多いので、最終行でも「その駅が行先と一致する」場合だけ終着駅扱い
-    const bounds = String(r["行先"] || "").split("/").map(x => x.trim()).filter(Boolean);
-    const isTerminus = isLast && bounds.includes(String(r["駅名"] || "").trim());
+    // 同じ列車番号のまとまりの最後の行は終着駅（スプシに書いてある最後の駅）。時刻が1個だけなら到着時刻のみ
+    const isTerminus = isLast;
     let dep = null;
     if (found.length >= 2) dep = found[1];
     else if (found.length === 1) dep = isTerminus ? null : found[0];
@@ -449,11 +451,6 @@ async function ttCollectStationEntries(stationName, routeVal) {
             type: String(r2["種別"] || "").split("/").map(s => s.trim()).filter(Boolean)[0] || "",
             bound: String(r2["行先"] || "").split("/").map(s => s.trim()).filter(Boolean)[0] || ""
           }));
-        // 運用シート自体に終点駅の行が無い場合（行先の駅が最後の停車駅として登録されて
-        // いない）は、行先データから終点駅を補って末尾に足す
-        if (bound && (!stops.length || stops[stops.length - 1].station !== bound)) {
-          stops.push({ station: bound, time: "", arr: "", dep: "", arrSec: null, depSec: null, type: "", bound: "" });
-        }
 
         pushEntry(sign, {
           hour: Number(hm[1]), minute: Number(hm[2]), bound, type, dayType, isExtra, source: "diagram",

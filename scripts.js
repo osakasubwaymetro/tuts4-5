@@ -1,4 +1,5 @@
-// version: 1.35.1
+// version: 1.35.2
+// 1.35.2: 「行先と一致する駅だけ終着駅扱い」の仕組みをやめた。同じ列車番号のまとまりの最後の行は、時刻が1個だけなら到着時刻のみ（発車なし）として扱う
 // 1.35.1: ダイヤ候補で、時刻が書いてあっても「種別」「行先」が両方とも空の行は「通過」とみなして候補に出さないようにした
 // 1.34.5: 投稿ボタンを押しても「送信中」も出ず無反応になる不具合への対策。原因候補は、送信前の未送信キュー
 //         (setPendingPosts)がlocalStorageの容量いっぱいで例外を投げ、upload()が途中で止まること。
@@ -1659,10 +1660,9 @@ function parseDiagramTimes(rows) {
   out.forEach((o, i) => {
     const next = out[i + 1];
     const isLastOfTrain = !next || next.row["列車番号"] !== o.row["列車番号"];
-    // 運用シートに終点駅の行が無いことも多いので、最終行でも「その駅が行先と一致する」場合だけ
-    // 終着駅として扱う（一致しなければ途中駅の最後の行＝1個の時刻は到着=発車）
-    const bounds = String(o.row["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
-    const isTerminus = isLastOfTrain && bounds.includes(String(o.row["駅名"] || "").trim());
+    // 同じ列車番号のまとまりの最後に書いてある行は、その列車の終着（スプシに書いてある最後の駅）として
+    // 扱う。時刻が1個だけならそれは「到着時刻」で、発車は無し（行先の駅と一致するかは見ない）
+    const isTerminus = isLastOfTrain;
     if (o.found.length >= 2) o.dep = o.found[1];
     else if (o.found.length === 1) o.dep = isTerminus ? null : o.found[0];
   });

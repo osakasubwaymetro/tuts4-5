@@ -1,4 +1,8 @@
-// trainpos.js v1.3.0
+// trainpos.js v1.4.0
+// 1.4.0: ・終点駅の行が無くてもいい仕組みをやめた（最後に書いてある行は終着＝時刻1個なら到着のみ）。列車の詳細の終点補足も廃止
+//        ・路線の境界駅が通過（時刻が書いていない）でも、列車が消えないようにした。時刻の無い行は前後の時刻から
+//          按分して推定し、行が無い場合は、他路線と共通の駅（境界駅）を探して、駅数の比で推定する
+//        ・路線マスタの「並走」で並走している路線の列車も、この路線の図に出す（この路線の駅に2駅以上かかる列車だけ）
 // 1.3.0: 1.2.1 の変更（乗車記録を毎回取り直す・件数表示）を元に戻した（1.2.0 相当）。そのうえで、
 //        ダイヤに無い乗車記録は「その日の分」ではなく、「路線マスタのダイヤ改正日より後の全ての日の記録のうち、
 //        表示している日と同じ区分（平日／土休日）の記録」を使うようにした。記録の発車時刻が HH:MM なら、
@@ -119,7 +123,7 @@
   }
 
   // 運用シートの行 → 列車（同じ列車番号が続くまとまり）ごとの停車情報。時刻は秒、日跨ぎは+24hで連続化
-  function compactSheet(rows, listRow) {
+  function compactSheet(rows, listRow, viaParallel) {
     const dayRaw = String(listRow["曜日区分"] || "").trim();
     const dayType = dayRaw ? (dayRaw.includes("土") || dayRaw.includes("休") ? "holiday" : "weekday") : "both";
     const groups = [];
@@ -138,7 +142,7 @@
         const found = [...String(r["発車時刻"] || "").matchAll(/(\d{1,2}):(\d{2})(?::(\d{2}))?/g)]
           .map(m => Number(m[1]) * 3600 + Number(m[2]) * 60 + (m[3] ? Number(m[3]) : 0));
         const bounds = splitSlash(r["行先"]);
-        const isTerminus = i === group.length - 1 && bounds.includes(String(r["駅名"] || "").trim());
+        const isTerminus = i === group.length - 1; // 最後に書いてある行は終着（時刻1個なら到着のみ）
         let a = found.length ? found[0] : null;
         let d = found.length >= 2 ? found[1] : (found.length === 1 ? (isTerminus ? null : found[0]) : null);
         // 日跨ぎの連続化
@@ -161,38 +165,51 @@
         trainNumber: group[0]["列車番号"] || "",
         dayType, isExtra: isTrue(listRow["臨時"]),
         sheetKey: `${listRow["ID"] || ""}_${listRow["運番"] || ""}_${dayType}`, // 同じ運用（＝同じ編成が走り続ける）の目印
-        bounds: [...bounds], stops
+        bounds: [...bounds], stops,
+        viaParallel: !!viaParallel // 並走路線のダイヤ一覧から取った列車（この路線のダイヤ一覧には無い）
       });
     });
     return out;
   }
 
   async function loadRouteTrains(ctx, onProgress) {
-    const cacheKey = "tp_trains2_" + ctx.company + "_" + ctx.routeVal;
+    const par = (ctx.parallelRoutes || []).filter(p => p.route && p.route !== ctx.routeVal);
+    const cacheKey = "tp_trains3_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
     if (idb()) {
       const c = await idb().get(cacheKey);
       if (c && Array.isArray(c.trains) && Date.now() - c.fetchedAt < TRAINS_TTL_MS) return c.trains;
     }
     const list = await getDiagramList();
-    const rawMatches = list.filter(d =>
-      (!ctx.company || d["会社"] === ctx.company) &&
-      String(d["路線"] || "").split(",").map(s => s.trim()).includes(ctx.routeVal));
-    const matches = filterLatestRevision(rawMatches);
+    const pick = (route, company) => filterLatestRevision(list.filter(d =>
+      (!company || d["会社"] === company) &&
+      String(d["路線"] || "").split(",").map(x => x.trim()).includes(route)));
+
+    // この路線のダイヤ＋並走路線のダイヤ（同じ運用シートが両方に載っていたら1回だけ読む）
+    const jobs = [];
+    const seen = new Set();
+    const add = (d, viaParallel) => {
+      const k = `${d["ID"] || ""}_${d["運番"] || ""}_${d["曜日区分"] || ""}_${d["適用開始日"] || ""}`;
+      if (seen.has(k)) return;
+      seen.add(k);
+      jobs.push({ d, viaParallel });
+    };
+    pick(ctx.routeVal, ctx.company).forEach(d => add(d, false));
+    par.forEach(p => pick(p.route, p.company).forEach(d => add(d, true)));
 
     const trains = [];
     let done = 0, idx = 0;
     const worker = async () => {
-      while (idx < matches.length) {
-        const d = matches[idx++];
+      while (idx < jobs.length) {
+        const { d, viaParallel } = jobs[idx++];
         try {
           const rows = await fetchSheet(d["ID"], d["運番"], d["最終更新"]);
-          compactSheet(rows, d).forEach(t => trains.push(t));
+          compactSheet(rows, d, viaParallel).forEach(t => trains.push(t));
         } catch (e) { /* この運番はスキップ */ }
         done++;
-        if (onProgress) onProgress(done, matches.length);
+        if (onProgress) onProgress(done, jobs.length);
       }
     };
-    await Promise.all(Array.from({ length: Math.min(6, matches.length) }, worker));
+    await Promise.all(Array.from({ length: Math.min(6, jobs.length) }, worker));
     if (idb()) idb().set(cacheKey, { trains, fetchedAt: Date.now() });
     return trains;
   }
@@ -429,18 +446,113 @@
 
   /* ---------- 位置計算 ---------- */
   // t: 秒（サービス日の0時起点）。戻り値 { row0, row1, frac, sign, atStation }（rowは描画行の番号）
-  function locate(train, t, ctx) {
-    const N = ctx.stationsOnRoute.length;
+  // ===== この路線の図での「通る駅と時刻」を作る =====
+  // 1) 時刻の書いていない行（通過）は、前後の時刻のある行の間で行の並びに応じて按分して推定する
+  // 2) 時刻のある駅からこの路線の外の駅へ出る（または外から入る）時に、境界駅の行が無ければ、他路線と共通の駅を
+  //    探して、「駅数の比」で境界駅を通る時刻を推定して差し込む（これで境界駅までと境界駅から先の位置が消えない）
+  function routeInfo(ctx) {
+    if (ctx._ri && ctx._riRoute === ctx.routeVal) return ctx._ri;
     const idxOf = new Map();
     ctx.stationsOnRoute.forEach((n, i) => { if (!idxOf.has(n)) idxOf.set(n, i); });
-    const on = [];
-    train.stops.forEach(s => {
-      const i = idxOf.get(s.s);
-      if (i == null) return;
-      const a = s.a != null ? s.a : s.d, d = s.d != null ? s.d : s.a;
-      if (a == null) return;
-      on.push({ i, a, d, pass: !!s.pass });
+    const byRoute = new Map(); // 路線名 → 駅名の並び（via_を除く）
+    (ctx.stationData || []).forEach(r => {
+      const n = String(r["駅名"] || "");
+      if (!n || n.startsWith("via_")) return;
+      const k = r["路線"];
+      if (!byRoute.has(k)) byRoute.set(k, []);
+      byRoute.get(k).push(n);
     });
+    const routesOf = new Map(); // 駅名 → その駅がある路線のSet
+    byRoute.forEach((names, rt) => names.forEach(n => {
+      if (!routesOf.has(n)) routesOf.set(n, new Set());
+      routesOf.get(n).add(rt);
+    }));
+    ctx._ri = { idxOf, byRoute, routesOf }; ctx._riRoute = ctx.routeVal;
+    return ctx._ri;
+  }
+
+  // other（この路線に無い駅）から見た、この路線との境界駅 { C, dOther(境界駅までの駅数 on T), T }
+  function findJunction(ctx, other) {
+    const { idxOf, byRoute, routesOf } = routeInfo(ctx);
+    const rts = routesOf.get(other);
+    if (!rts) return null;
+    let best = null;
+    rts.forEach(T => {
+      if (T === ctx.routeVal) return;
+      const names = byRoute.get(T) || [];
+      const io = names.indexOf(other);
+      if (io < 0) return;
+      names.forEach((n, j) => {
+        if (!idxOf.has(n)) return;
+        const dist = Math.abs(j - io);
+        if (!best || dist < best.dOther) best = { C: n, dOther: dist, T };
+      });
+    });
+    return best;
+  }
+
+  function buildOnRoute(train, ctx) {
+    if (train._onRoute === ctx.routeVal && train._on) return train._on;
+    const { idxOf } = routeInfo(ctx);
+    const seq = train.stops.map(sp => ({
+      s: sp.s,
+      a: sp.a != null ? sp.a : sp.d,
+      d: sp.d != null ? sp.d : sp.a,
+      pass: !!sp.pass
+    }));
+    // 1) 時刻の無い行を、前後の時刻から行の並びで按分
+    const timed = [];
+    seq.forEach((x, i) => { if (x.a != null) timed.push(i); });
+    for (let k = 0; k + 1 < timed.length; k++) {
+      const i0 = timed[k], i1 = timed[k + 1];
+      for (let j = i0 + 1; j < i1; j++) {
+        const f = (j - i0) / (i1 - i0);
+        const t = seq[i0].d + (seq[i1].a - seq[i0].d) * f;
+        seq[j].a = seq[j].d = t;
+        seq[j].pass = true;
+      }
+    }
+    const ent = seq.filter(x => x.a != null);
+
+    // 2) 路線の出入り口（境界駅）を補う
+    const out = [];
+    for (let k = 0; k < ent.length; k++) {
+      const P = ent[k], Q = ent[k + 1];
+      out.push(P);
+      if (!Q) break;
+      const pOn = idxOf.has(P.s), qOn = idxOf.has(Q.s);
+      if (pOn === qOn) continue;
+      const names = ctx.stationsOnRoute;
+      if (pOn && !qOn) {
+        const j = findJunction(ctx, Q.s);
+        if (j && j.C !== P.s) {
+          const dR = Math.abs(idxOf.get(j.C) - idxOf.get(P.s));
+          const dT = j.dOther;
+          const f = (dR + dT) ? dR / (dR + dT) : 0.5;
+          const t = P.d + (Q.a - P.d) * f;
+          out.push({ s: j.C, a: t, d: t, pass: true });
+        }
+      } else {
+        const j = findJunction(ctx, P.s);
+        if (j && j.C !== Q.s) {
+          const dR = Math.abs(idxOf.get(j.C) - idxOf.get(Q.s));
+          const dT = j.dOther;
+          const f = (dR + dT) ? dT / (dR + dT) : 0.5;
+          const t = P.d + (Q.a - P.d) * f;
+          out.push({ s: j.C, a: t, d: t, pass: true });
+        }
+      }
+    }
+    const on = out.filter(x => idxOf.has(x.s)).map(x => ({ i: idxOf.get(x.s), a: x.a, d: x.d, pass: x.pass }));
+    train._on = on; train._onRoute = ctx.routeVal;
+    return on;
+  }
+
+  function locate(train, t, ctx) {
+    const N = ctx.stationsOnRoute.length;
+    const on = buildOnRoute(train, ctx);
+    // 並走路線の列車は、この路線の駅に2駅以上かかる場合だけ出す（乗換駅に停まるだけの列車は出さない）
+    if (train.viaParallel && on.length < 2) return null;
     if (!on.length) return null;
     if (t < on[0].a || t > on[on.length - 1].d) return null;
 
@@ -505,10 +617,6 @@
     });
     const first = train.stops.find(s => s.bound) || train.stops[0] || {};
     const bound = first.bound || "";
-    // 運用シートに終点駅の行が無い場合は、行先から終点駅を補う（時刻表ページと同じ）
-    if (bound && (!stops.length || stops[stops.length - 1].station !== bound)) {
-      stops.push({ station: bound, time: "", arr: "", dep: "", arrSec: null, depSec: null, type: "", bound: "" });
-    }
     window.ttOpenTrainDetail({
       unban: train.unban, trainNumber: train.trainNumber,
       type: first.type || "", bound, stops

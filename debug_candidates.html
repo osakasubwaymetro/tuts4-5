@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>候補デバッグツール</title>
-<!-- version: 1.0.4 -->
+<!-- version: 1.0.5 -->
 <!-- 1.0.3: ダイヤ由来の候補にも方面フィルタを掛けるようにした(scripts.js v1.34.3と同じ) -->
 <!-- 1.0.2: 終着駅の判定を「最終行かつ駅名=行先」に修正(scripts.js v1.34.2と同じ) -->
 <!-- 1.0.1: scripts.js v1.34.1に合わせ、ダイヤの時刻セルの「到着/発車」の読み方(2個=到着・発車、1個=同じ、終着駅の1個=到着のみ)を反映 -->
@@ -323,10 +323,9 @@ function parseDiagramTimes(rows) {
   out.forEach((o, i) => {
     const next = out[i + 1];
     const isLastOfTrain = !next || next.row["列車番号"] !== o.row["列車番号"];
-    // 運用シートに終点駅の行が無いことも多いので、最終行でも「その駅が行先と一致する」場合だけ
-    // 終着駅として扱う（一致しなければ途中駅の最後の行＝1個の時刻は到着=発車）
-    const bounds = String(o.row["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
-    const isTerminus = isLastOfTrain && bounds.includes(String(o.row["駅名"] || "").trim());
+    // 同じ列車番号のまとまりの最後に書いてある行は、その列車の終着（スプシに書いてある最後の駅）として
+    // 扱う。時刻が1個だけならそれは「到着時刻」で、発車は無し（行先の駅と一致するかは見ない）
+    const isTerminus = isLastOfTrain;
     if (o.found.length >= 2) o.dep = o.found[1];
     else if (o.found.length === 1) o.dep = isTerminus ? null : o.found[0];
   });
