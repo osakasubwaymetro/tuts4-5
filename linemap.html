@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.13.0 -->
+<!-- version: 1.13.1 -->
+<!-- 1.13.1: 同じ駅から直通先が2つ以上に分かれる時の描画を、横並び（路線名が長いと吹き出しが重なる）から、1段ずつ縦に並べる形に変更 -->
 <!-- 1.13.0: 列車位置の「乗車記録だけの列車」を、その日の記録ではなく、ダイヤ改正日より後の全日程の記録（表示日と同じ平日／土休日）から出すように変更 -->
 <!-- 1.12.0: 列車位置に、ダイヤに無い乗車記録（その日の記録の発車時刻 HH:MM の00〜59秒の間だけ乗車駅に表示。バッジは発車時刻、タップ不可）も表示 -->
 <!-- 1.11.0: 列車位置の列車をタップすると、時刻表で時刻を押した時と同じ「列車の詳細（各駅の到着時刻）」と「スタフ表示」が開く（timetable.js を共用） -->
@@ -286,11 +287,13 @@
     align-self: flex-start;
   }
   .via-fork svg { display: block; }
-  .via-fork-pills {
-    display: flex;
-    justify-content: flex-start;
-    gap: 8px;
-    padding-left: 4px;
+  .via-fork-svg { position: absolute; left: 0; top: 0; }
+  .via-fork-stack { display: flex; flex-direction: column; }
+  .via-fork-row { display: flex; align-items: center; }
+  /* 路線名が長くても段をはみ出さないよう、2行まで折り返す */
+  .via-pill.via-pill-fork {
+    white-space: normal; text-align: left; line-height: 1.15; font-size: 11px;
+    padding: 3px 10px; max-width: calc(50vw - 56px); width: max-content;
   }
   .via-branch-mid svg { flex-shrink: 0; display: block; }
   /* 列車位置（trainpos.js） */
@@ -1497,34 +1500,39 @@ function renderMap() {
     return `<div class="pictogram-row"><div class="pictogram-passline" style="background:${passColor};"></div>${parallelLinesHere}${renderFork(vias)}</div>`;
   }
 
+  // 2つ以上の直通先が同じ駅から分かれる時：1本の幹線から、直通先ごとに別の段を作って縦に並べる。
+  // （以前は横並びで、路線名が長いと吹き出しが重なって読めなかった）
+  // 各段で、幹線から右へ曲がる線＋路線名ピルを出す。線の色は直通先ごと。
   function renderFork(vias) {
     const side = vias[0].side;
     const n = vias.length;
-    const branchGap = 60;
-    const svgWidth = 20 + n * branchGap;
-    const svgHeight = 24;
-    const trunkX = 2; // 行のpadding-left:50%の位置＝中心線に合わせる（単一分岐の時と同じ起点）
-    const trunkY = side === "above" ? svgHeight : 0; // 端まで伸ばして駅の行と隙間なく繋げる
-    const branchY = side === "above" ? 2 : svgHeight - 2;
-    const midY = (trunkY + branchY) / 2;
+    const H = 36;          // 1段の高さ
+    const W = 30;          // 曲がり線を描く幅
+    const total = n * H;
+    const trunkX = 2;      // 行のpadding-left:50%の位置＝中心線に合わせる（単一分岐の時と同じ起点）
 
+    // 幹線は駅に近い側から伸びる。長い線（駅から遠い段）を先に描き、駅に近い段の色が幹の上に来るようにする
+    const order = vias.map((v, i) => i);
+    const drawOrder = side === "above" ? order : order.slice().reverse();
     let paths = "";
-    vias.forEach((v, i) => {
-      const color = colorForRoute(v.route);
-      const targetX = trunkX + branchGap * (i + 0.7);
-      // 3次ベジェにして、早めに分かれるはっきりしたフォーク形状にする
-      paths += `<path d="M${trunkX},${trunkY} C${trunkX},${midY} ${targetX},${midY} ${targetX},${branchY}" stroke="${color}" stroke-width="5" fill="none"/>`;
+    drawOrder.forEach(i => {
+      const color = colorForRoute(vias[i].route);
+      const yc = i * H + H / 2;
+      const d = side === "above"
+        ? `M${trunkX},${total} L${trunkX},${yc + 12} Q${trunkX},${yc} ${W - 4},${yc}`
+        : `M${trunkX},0 L${trunkX},${yc - 12} Q${trunkX},${yc} ${W - 4},${yc}`;
+      paths += `<path d="${d}" stroke="${color}" stroke-width="5" fill="none"/>`;
     });
 
-    const pills = vias.map((v, i) => {
+    const rows = vias.map(v => {
       const color = colorForRoute(v.route);
-      return `<button type="button" class="via-pill" style="background:${color};" data-route="${escAttr(v.route)}">${v.route}</button>`;
+      return `<div class="via-fork-row" style="height:${H}px;"><button type="button" class="via-pill via-pill-fork" style="background:${color};" data-route="${escAttr(v.route)}">${v.route}</button></div>`;
     }).join("");
 
-    const svgEl = `<svg width="${svgWidth}" height="24" viewBox="0 0 ${svgWidth} 24">${paths}</svg>`;
-    const pillsEl = `<div class="via-fork-pills" style="width:${svgWidth}px;">${pills}</div>`;
-
-    return `<div class="via-fork">${side === "above" ? pillsEl + svgEl : svgEl + pillsEl}</div>`;
+    return `<div class="via-fork" style="height:${total}px;">
+      <svg class="via-fork-svg" width="${W}" height="${total}" viewBox="0 0 ${W} ${total}">${paths}</svg>
+      <div class="via-fork-stack" style="margin-left:${W + 2}px;">${rows}</div>
+    </div>`;
   }
 
   stationsOnRoute.forEach((name, i) => {
