@@ -1,4 +1,5 @@
-// trainnavi.js v1.3.0
+// trainnavi.js v1.3.1
+// 1.3.1: iPhoneで小窓にできなかったのを修正（動画を先に用意してボタンを押した直後に小窓を要求／iPhone独自方式を先に試す／失敗した理由を表示）
 // 1.3.0: ピクチャ・イン・ピクチャ（📺 小窓）を追加。画面をcanvasに描いてvideoにして小窓表示するので、他のアプリを開いても小さく出したままにできる。停止制動の位置を駅の500m手前に固定
 // 1.2.0: 家でデバッグできるように「🛠 デバッグ」を追加（GPSなしのシミュレーション：自動走行／倍速／駅間スライダー／速度指定／駅の前後移動／判定の数値表示）
 // Train Navi表示：運転台のモニター風の画面（列車種別／次駅／列車番号／両数）を出し、
@@ -491,37 +492,57 @@
     // LED
     if (v.led) { for (let i = 0; i < 6; i++) { g.fillStyle = ((i + (nv.flash ? 1 : 0)) % 2) ? "#e60012" : "#5a2a2a"; g.fillRect(40 + i * 60, H - 14, 44, 8); } }
   }
-  async function togglePip() {
-    const btn = document.getElementById("tnPipBtn");
-    try {
-      if (nv.pipOn) { await closePip(); return; }
-      if (!nv.pipCanvas) { nv.pipCanvas = document.createElement("canvas"); nv.pipCanvas.width = 640; nv.pipCanvas.height = 360; }
-      if (!nv.pipVideo) {
-        const vd = document.createElement("video");
-        vd.muted = true; vd.playsInline = true; vd.setAttribute("playsinline", ""); vd.setAttribute("webkit-playsinline", "");
-        vd.style.cssText = "position:fixed;left:-9999px;width:2px;height:2px;opacity:0;pointer-events:none";
-        document.body.appendChild(vd);
-        vd.addEventListener("leavepictureinpicture", () => { nv.pipOn = false; clearInterval(nv.pipTimer); btn.textContent = "📺 小窓"; });
-        nv.pipVideo = vd;
-      }
-      nv.pipOn = true; drawPip();
-      const vd = nv.pipVideo;
-      if (!vd.srcObject) vd.srcObject = nv.pipCanvas.captureStream(5);
-      await vd.play();
-      clearInterval(nv.pipTimer); nv.pipTimer = setInterval(() => { if (nv.stops) { tick(); } }, 1000); // 小窓の間も位置の判定と描画を続ける
-      if (document.pictureInPictureEnabled && vd.requestPictureInPicture) await vd.requestPictureInPicture();
-      else if (vd.webkitSetPresentationMode) vd.webkitSetPresentationMode("picture-in-picture");
-      else throw new Error("unsupported");
-      btn.textContent = "📺 小窓 ON";
-    } catch (e) {
-      nv.pipOn = false; clearInterval(nv.pipTimer);
-      btn.textContent = "📺 小窓";
-      alert("この端末・ブラウザでは小窓（ピクチャ・イン・ピクチャ）が使えません。");
+  // 動画（canvasの映像）を先に用意しておく。小窓ボタンを押した時は、すぐに小窓を要求するだけにする
+  // （iPhoneは、ボタンを押した操作の直後でないと小窓にできないため）
+  function preparePip() {
+    if (!nv.pipCanvas) { nv.pipCanvas = document.createElement("canvas"); nv.pipCanvas.width = 640; nv.pipCanvas.height = 360; }
+    if (!nv.pipVideo) {
+      const vd = document.createElement("video");
+      vd.muted = true; vd.defaultMuted = true; vd.loop = true; vd.autoplay = true;
+      vd.playsInline = true; vd.setAttribute("playsinline", ""); vd.setAttribute("webkit-playsinline", "");
+      vd.style.cssText = "position:fixed;left:6px;bottom:6px;width:96px;height:54px;z-index:10003;border:1px solid #888;border-radius:4px;background:#000";
+      document.getElementById("tnOverlay").appendChild(vd);
+      const onLeave = () => { nv.pipOn = false; clearInterval(nv.pipTimer); const b = document.getElementById("tnPipBtn"); if (b) b.textContent = "📺 小窓"; };
+      vd.addEventListener("leavepictureinpicture", onLeave);
+      vd.addEventListener("webkitpresentationmodechanged", () => { if (vd.webkitPresentationMode !== "picture-in-picture") onLeave(); });
+      nv.pipVideo = vd;
     }
+    const vd = nv.pipVideo;
+    if (!vd.srcObject) {
+      try { vd.srcObject = nv.pipCanvas.captureStream(5); } catch (e) { nv.pipErr = "captureStream: " + (e && e.message); return; }
+    }
+    drawPip();
+    const pr = vd.play(); if (pr && pr.catch) pr.catch(e => { nv.pipErr = "play: " + (e && e.name); });
   }
-  async function closePip() {
+  function togglePip() {
+    const btn = document.getElementById("tnPipBtn");
+    if (nv.pipOn) { closePip(); return; }
+    const vd = nv.pipVideo;
+    const fail = why => {
+      nv.pipOn = false; clearInterval(nv.pipTimer); btn.textContent = "📺 小窓";
+      alert("小窓にできませんでした。\n" + why + (nv.pipErr ? "\n（" + nv.pipErr + "）" : "") + "\nSafariで開いているか、iOSを最新にしているか確認してな。");
+    };
+    if (!vd) return fail("準備ができていません");
+    nv.pipOn = true; drawPip();
+    clearInterval(nv.pipTimer); nv.pipTimer = setInterval(() => { if (nv.stops) tick(); }, 1000);
+    const done = () => { btn.textContent = "📺 小窓 ON"; };
+    try {
+      // iPhoneのSafariは、独自の方式（webkitSetPresentationMode）を先に試す
+      if (vd.webkitSupportsPresentationMode && vd.webkitSupportsPresentationMode("picture-in-picture")) {
+        vd.webkitSetPresentationMode("picture-in-picture");
+        setTimeout(() => { if (vd.webkitPresentationMode === "picture-in-picture") done(); else fail("webkitPresentationMode=" + vd.webkitPresentationMode); }, 700);
+        return;
+      }
+      if (document.pictureInPictureEnabled && vd.requestPictureInPicture) {
+        vd.requestPictureInPicture().then(done).catch(e => fail((e && e.name) + ": " + (e && e.message)));
+        return;
+      }
+      fail("このブラウザは小窓に対応していません（pictureInPictureEnabled=" + document.pictureInPictureEnabled + "）");
+    } catch (e) { fail((e && e.name) + ": " + (e && e.message)); }
+  }
+  function closePip() {
     nv.pipOn = false; clearInterval(nv.pipTimer);
-    try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); else if (nv.pipVideo && nv.pipVideo.webkitSetPresentationMode) nv.pipVideo.webkitSetPresentationMode("inline"); } catch (e) {}
+    try { if (document.pictureInPictureElement) document.exitPictureInPicture(); if (nv.pipVideo && nv.pipVideo.webkitSetPresentationMode && nv.pipVideo.webkitPresentationMode === "picture-in-picture") nv.pipVideo.webkitSetPresentationMode("inline"); } catch (e) {}
     const b = document.getElementById("tnPipBtn"); if (b) b.textContent = "📺 小窓";
   }
 
@@ -538,6 +559,7 @@
     document.getElementById("tnNo").textContent = entry.trainNumber || (entry.unban ? `運番${entry.unban}` : "");
     renderBtns(); renderCars();
     startGps(); loadCoords(nv.token);
+    nv.pipErr = ""; preparePip();
     clearInterval(nv.flashTimer); nv.flashTimer = setInterval(() => { nv.flash = !nv.flash; const o = document.getElementById("tnOverlay"); if (o) o.classList.toggle("flash", nv.flash && (o.classList.contains("brake") || o.classList.contains("platform"))); if (nv.pipOn) { if (nv.view && nv.view.mode.startsWith("brake")) nv.view.mode = nv.flash ? "brakeB" : "brakeA"; drawPip(); } }, 500);
     document.getElementById("tnOverlay").classList.add("show");
     unlockAudio();
