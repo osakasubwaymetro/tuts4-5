@@ -1,4 +1,5 @@
-// trainnavi.js v1.2.0
+// trainnavi.js v1.3.0
+// 1.3.0: ピクチャ・イン・ピクチャ（📺 小窓）を追加。画面をcanvasに描いてvideoにして小窓表示するので、他のアプリを開いても小さく出したままにできる。停止制動の位置を駅の500m手前に固定
 // 1.2.0: 家でデバッグできるように「🛠 デバッグ」を追加（GPSなしのシミュレーション：自動走行／倍速／駅間スライダー／速度指定／駅の前後移動／判定の数値表示）
 // Train Navi表示：運転台のモニター風の画面（列車種別／次駅／列車番号／両数）を出し、
 // GPSで現在位置を判定して、合成音声（女声）で停車駅ごとに4回注意喚起する。
@@ -59,6 +60,7 @@
       #tnDbg .info { font-family:monospace; color:#9fe29f; white-space:pre-wrap; }
       @keyframes tnled { 50% { background:#5a2a2a; } }
       #tnOverlay .b-close { background:#c0392b; }
+      #tnOverlay .b-pip { background:#1e8a8a; }
       #tnOverlay .tn-stop-card { color:#000; }
       #tnOverlay.brake .tn-type { background:#e60012; color:#fff; }
       #tnOverlay.brake.flash .tn-type { background:#fff; color:#e60012; }
@@ -88,11 +90,13 @@
         <div class="tn-gpsmsg" id="tnGpsMsg"></div>
         <button type="button" class="b-dbg" id="tnDbgBtn">🛠 デバッグ</button>
         <div class="tn-clock" id="tnClock"></div>
+        <button type="button" class="b-pip" id="tnPipBtn">📺 小窓</button>
         <button type="button" class="b-close" id="tnCloseBtn">閉じる</button>
       </div>`;
     document.body.appendChild(d);
     document.getElementById("tnVoiceBtn").onclick = () => { nv.voiceOn = !nv.voiceOn; lsSet(VOICE_KEY, nv.voiceOn ? "1" : "0"); renderBtns(); if (!nv.voiceOn) cancelSpeech(); else unlockAudio(); };
     document.getElementById("tnCloseBtn").onclick = closeNavi;
+    document.getElementById("tnPipBtn").onclick = togglePip;
     // デバッグパネル
     const dbg = document.createElement("div");
     dbg.id = "tnDbg";
@@ -192,6 +196,7 @@
     return null;
   }
 
+  const BRAKE_DIST = 500;
   function nowSec() { const d = new Date(); return (d.getHours() * 60 + d.getMinutes()) * 60 + d.getSeconds(); }
 
   // ---------- GPS（常にGPSで動かす。測位できない間（地下など）は時刻で代わりに判定） ----------
@@ -374,7 +379,7 @@
     const spokenDepart = nv.spoken.has("depart:" + loc.k);
     if (loc.src === "gps") {
       const v = loc.v || 0;
-      const brakeD = Math.min(900, Math.max(250, v * v / 1.8 + 150));
+      const brakeD = BRAKE_DIST; // 停止制動の開始位置：駅の500m手前
       if (loc.D <= 45) return "mid";
       if (loc.D <= 130) return "pfend";
       if (!spokenDepart && loc.t <= 30) return "depart";
@@ -438,6 +443,12 @@
       if (nv.spokenAnything) { cancelSpeech(); nv.spokenAnything = false; }
     }
     nv.lastPhase = phase;
+    nv.view = {
+      typeTxt: typeEl.textContent, mode: warn ? (nv.flash ? "brakeB" : "brakeA") : pf ? "pf" : "norm",
+      bound: document.getElementById("tnBound").textContent, nextLbl: document.getElementById("tnNextLbl").textContent,
+      nextTxt: shown, no: document.getElementById("tnNo").textContent, cars: nv.cars, led: warn || pf
+    };
+    if (nv.pipOn) drawPip();
     const info = document.getElementById("dbgInfo");
     if (info && document.getElementById("tnDbg").classList.contains("show")) {
       info.textContent = `phase=${phase}  判定元=${nv.sim.on ? "シミュレーション" : nv.src}\n` +
@@ -446,6 +457,72 @@
         `駅座標: ${nv.ev.map(e => e.name + (e.c ? "○" : "×")).join(" ")}\n` +
         `最後の発声: ${nv.lastSaid || "-"}`;
     }
+  }
+
+  // ---------- ピクチャ・イン・ピクチャ（小窓） ----------
+  // 画面をcanvasに描き、それをvideoにして小窓に出す。他のアプリを開いても、小窓は前面に残る。
+  function drawPip() {
+    const cv = nv.pipCanvas, v = nv.view; if (!cv || !v) return;
+    const g = cv.getContext("2d"), W = cv.width, H = cv.height;
+    const pw = Math.round(W * 0.7), ph = H / 2;
+    const font = (px, bold) => `${bold ? "bold " : ""}${px}px "Hiragino Sans","Meiryo",sans-serif`;
+    const fit = (txt, px, max, bold) => { let p = px; g.font = font(p, bold); while (g.measureText(txt).width > max && p > 16) { p -= 4; g.font = font(p, bold); } };
+    // 上：種別
+    let bg = "#000", fg = "#fff";
+    if (v.mode === "brakeA") { bg = "#e60012"; fg = "#fff"; } else if (v.mode === "brakeB") { bg = "#fff"; fg = "#e60012"; } else if (v.mode === "pf") { bg = "#fff"; fg = "#1a237e"; }
+    g.fillStyle = bg; g.fillRect(0, 0, pw, v.mode === "pf" || v.mode.startsWith("brake") ? H : ph);
+    g.textAlign = "center"; g.textBaseline = "middle"; g.fillStyle = fg;
+    const big = v.mode === "pf" || v.mode.startsWith("brake");
+    fit(v.typeTxt, big ? 210 : 120, pw - 30, true);
+    g.fillText(v.typeTxt, pw / 2, big ? H / 2 : ph / 2);
+    if (!big) {
+      if (v.bound) { g.font = font(22); g.fillStyle = "#bbb"; g.textAlign = "left"; g.fillText(v.bound, 12, ph - 18); g.textAlign = "center"; }
+      // 下：次駅
+      g.fillStyle = "#fff"; g.fillRect(0, ph, pw, ph);
+      g.fillStyle = "#000"; fit(v.nextTxt, 100, pw - 30, true); g.fillText(v.nextTxt, pw / 2, ph + ph / 2 + 6);
+      if (v.nextLbl) { g.font = font(20); g.fillStyle = "#555"; g.textAlign = "left"; g.fillText(v.nextLbl, 12, ph + 22); g.textAlign = "center"; }
+    }
+    // 右：黄色（列車番号・両数）
+    g.fillStyle = "#ffec1a"; g.fillRect(pw, 0, W - pw, H);
+    g.fillStyle = "#000"; g.font = font(30); g.fillText(v.no || "", pw + (W - pw) / 2, 44);
+    const c = v.cars ? v.cars : "";
+    g.font = font(c.length > 1 ? 120 : 170, true); g.fillText(c, pw + (W - pw) / 2 - (c ? 14 : 0), H / 2 + 20);
+    if (c) { g.font = font(40, true); g.fillText("両", pw + (W - pw) / 2 + (c.length > 1 ? 74 : 56), H / 2 + 62); }
+    // LED
+    if (v.led) { for (let i = 0; i < 6; i++) { g.fillStyle = ((i + (nv.flash ? 1 : 0)) % 2) ? "#e60012" : "#5a2a2a"; g.fillRect(40 + i * 60, H - 14, 44, 8); } }
+  }
+  async function togglePip() {
+    const btn = document.getElementById("tnPipBtn");
+    try {
+      if (nv.pipOn) { await closePip(); return; }
+      if (!nv.pipCanvas) { nv.pipCanvas = document.createElement("canvas"); nv.pipCanvas.width = 640; nv.pipCanvas.height = 360; }
+      if (!nv.pipVideo) {
+        const vd = document.createElement("video");
+        vd.muted = true; vd.playsInline = true; vd.setAttribute("playsinline", ""); vd.setAttribute("webkit-playsinline", "");
+        vd.style.cssText = "position:fixed;left:-9999px;width:2px;height:2px;opacity:0;pointer-events:none";
+        document.body.appendChild(vd);
+        vd.addEventListener("leavepictureinpicture", () => { nv.pipOn = false; clearInterval(nv.pipTimer); btn.textContent = "📺 小窓"; });
+        nv.pipVideo = vd;
+      }
+      nv.pipOn = true; drawPip();
+      const vd = nv.pipVideo;
+      if (!vd.srcObject) vd.srcObject = nv.pipCanvas.captureStream(5);
+      await vd.play();
+      clearInterval(nv.pipTimer); nv.pipTimer = setInterval(() => { if (nv.stops) { tick(); } }, 1000); // 小窓の間も位置の判定と描画を続ける
+      if (document.pictureInPictureEnabled && vd.requestPictureInPicture) await vd.requestPictureInPicture();
+      else if (vd.webkitSetPresentationMode) vd.webkitSetPresentationMode("picture-in-picture");
+      else throw new Error("unsupported");
+      btn.textContent = "📺 小窓 ON";
+    } catch (e) {
+      nv.pipOn = false; clearInterval(nv.pipTimer);
+      btn.textContent = "📺 小窓";
+      alert("この端末・ブラウザでは小窓（ピクチャ・イン・ピクチャ）が使えません。");
+    }
+  }
+  async function closePip() {
+    nv.pipOn = false; clearInterval(nv.pipTimer);
+    try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); else if (nv.pipVideo && nv.pipVideo.webkitSetPresentationMode) nv.pipVideo.webkitSetPresentationMode("inline"); } catch (e) {}
+    const b = document.getElementById("tnPipBtn"); if (b) b.textContent = "📺 小窓";
   }
 
   // ---------- 開閉 ----------
@@ -461,7 +538,7 @@
     document.getElementById("tnNo").textContent = entry.trainNumber || (entry.unban ? `運番${entry.unban}` : "");
     renderBtns(); renderCars();
     startGps(); loadCoords(nv.token);
-    clearInterval(nv.flashTimer); nv.flashTimer = setInterval(() => { nv.flash = !nv.flash; const o = document.getElementById("tnOverlay"); if (o) o.classList.toggle("flash", nv.flash && (o.classList.contains("brake") || o.classList.contains("platform"))); }, 500);
+    clearInterval(nv.flashTimer); nv.flashTimer = setInterval(() => { nv.flash = !nv.flash; const o = document.getElementById("tnOverlay"); if (o) o.classList.toggle("flash", nv.flash && (o.classList.contains("brake") || o.classList.contains("platform"))); if (nv.pipOn) { if (nv.view && nv.view.mode.startsWith("brake")) nv.view.mode = nv.flash ? "brakeB" : "brakeA"; drawPip(); } }, 500);
     document.getElementById("tnOverlay").classList.add("show");
     unlockAudio();
     clearInterval(nv.timer);
@@ -473,11 +550,11 @@
     clearInterval(nv.timer); nv.timer = null;
     cancelSpeech();
     const ov = document.getElementById("tnOverlay"); if (ov) ov.classList.remove("show", "brake", "platform");
-    stopGps(); clearInterval(nv.flashTimer); nv.token++; simSetOn(false);
+    stopGps(); clearInterval(nv.flashTimer); nv.token++; simSetOn(false); closePip();
     try { nv.wake && nv.wake.release(); nv.wake = null; } catch (e) {}
     nv.stops = null;
   }
 
   window.ttShowNavi = function (idx) { open(ttTrainDetailRegistry[idx]); };
-  window.TrainNavi = { open, close: closeNavi, _buildEvents: buildEvents, _onFix: onFix, _state: nv, _sim: () => nv.sim, _coordCache: coordCache };
+  window.TrainNavi = { open, close: closeNavi, _buildEvents: buildEvents, _onFix: onFix, _state: nv, _drawPip: drawPip, _sim: () => nv.sim, _coordCache: coordCache };
 })();
