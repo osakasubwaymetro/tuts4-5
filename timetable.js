@@ -1,5 +1,13 @@
 // timetable.js
-// version: 1.13.0
+// version: 1.14.0
+// 1.14.0: 時刻表の表示を高速化（キャッシュに頼らず、取得のしかたを改善）
+//         ①運番シートの取得を「1枚ずつ順番」から「同時にまとめて（16本）」に変更（これが一番の遅さの原因だった）
+//         ②取れたシートから順に時刻表を描き直す（全部待たずに途中経過を表示。「読み込み中 12/48」を表示）
+//         ③路線を選んだ時点で、その路線のシートを先に取りに行く（方向を選ぶ頃には取れている）。直近60秒以内に
+//           取ったものは使い回すが、それより古ければ必ず取り直すので最新性は落ちない
+//         ④1枚が遅い・失敗しても止まらないよう、シートごとに20秒のタイムアウトを付けた
+//         ⑤ダイヤ一覧の保持時間を1時間→1分にして、追加・変更がほぼすぐ反映されるようにした
+//         ⑥結果の並びが毎回同じになるよう、取れた順ではなくダイヤ一覧の順で統合する
 // 1.13.0: 列車の詳細に「Train Navi表示」ボタンを追加（trainnavi.js）
 // 1.12.0: 「終点駅の行が無くてもいい」仕組みをやめた。同じ列車番号のまとまりの最後の行は、時刻が1個だけなら
 //         到着時刻のみ（発車なし）。行先から終点駅を補って足すのもやめ、スタフ・到着時刻の画面はスプシに
@@ -101,7 +109,10 @@ function ttFetchCachedMaster(cacheKey, url, handler) {
 
 /* ---------- ダイヤデータ（scripts.jsのDIAGRAM系と同じキャッシュ規約） ---------- */
 const TT_DIAGRAM_CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
-const TT_DIAGRAM_LIST_CACHE_TTL_MS = 60 * 60 * 1000;
+const TT_DIAGRAM_LIST_CACHE_TTL_MS = 60 * 1000;
+const TT_FETCH_CONCURRENCY = 16;      // 運番シートを同時に取る本数
+const TT_SHEET_TIMEOUT_MS = 20000;    // 1枚あたりのタイムアウト
+const TT_SHEET_MEMO_MS = 60 * 1000;   // 取ったシートをこの間だけ使い回す（先読みと本検索で重複して取らない）
 
 function ttReadDiagramCache(key, ttlMs) {
   try {
@@ -142,7 +153,38 @@ async function ttGetDiagramList() {
   return stale || [];
 }
 
-async function ttFetchDiagramSheet(id, unban, listRowLastUpdated) {
+// 同時に動かす本数を制限して、items を fn で処理する
+async function ttRunPool(items, limit, fn) {
+  let idx = 0;
+  const worker = async () => {
+    while (idx < items.length) {
+      const i = idx++;
+      try { await fn(items[i], i); } catch (e) { /* 1件の失敗で止めない */ }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
+function ttFetchJsonWithTimeout(url, ms) {
+  const ctl = typeof AbortController === "function" ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), ms) : null;
+  return fetch(url, ctl ? { signal: ctl.signal } : undefined)
+    .then(r => r.json())
+    .finally(() => { if (timer) clearTimeout(timer); });
+}
+
+// 同じシートを60秒以内に取っていれば、その結果（または取得中の通信）を使い回す
+const ttSheetMemo = new Map(); // sheetName -> { t, promise }
+function ttFetchDiagramSheet(id, unban, listRowLastUpdated) {
+  const sheetName = `${id}_${unban}`;
+  const m = ttSheetMemo.get(sheetName);
+  if (m && Date.now() - m.t < TT_SHEET_MEMO_MS) return m.promise;
+  const promise = ttFetchDiagramSheetRaw(id, unban, listRowLastUpdated);
+  ttSheetMemo.set(sheetName, { t: Date.now(), promise });
+  return promise;
+}
+
+async function ttFetchDiagramSheetRaw(id, unban, listRowLastUpdated) {
   const sheetName = `${id}_${unban}`;
   const CACHE_KEY = "tuts4_diagram_sheet_" + sheetName;
 
@@ -159,8 +201,7 @@ async function ttFetchDiagramSheet(id, unban, listRowLastUpdated) {
 
   const url = `https://opensheet.elk.sh/${TT_DIAGRAM_SHEET_ID}/${encodeURIComponent(sheetName)}`;
   try {
-    const res = await fetch(url);
-    const data = await res.json();
+    const data = await ttFetchJsonWithTimeout(url, TT_SHEET_TIMEOUT_MS);
     if (Array.isArray(data)) { ttWriteDiagramCache(CACHE_KEY, data); return data; }
   } catch (e) { /* ignore */ }
   const stale = ttReadStaleDiagramCache(CACHE_KEY);
@@ -377,98 +418,99 @@ function ttCircularDirLabel(routeVal, sign) {
 }
 
 /* ---------- 選んだ駅・路線について、ダイヤ上のその駅の全出現行を、方向ごとに集める ---------- */
-async function ttCollectStationEntries(stationName, routeVal) {
+// この路線で使うダイヤ一覧の行（ダイヤ改正前の古い登録は除く）
+async function ttGetRouteDiagramRows(routeVal) {
   const routeRow = ttRouteRow(routeVal);
   const companyVal = routeRow ? routeRow["会社"] : "";
-  const orderList = ttRouteStationOrder(routeVal);
-
   const list = await ttGetDiagramList();
   const rawMatches = list.filter(d => d["会社"] === companyVal && ttDiagramRowMatchesRoute(d, routeVal));
-  const matches = ttFilterLatestRevision(rawMatches);
+  return ttFilterLatestRevision(rawMatches);
+}
 
-  // entries[sign] = [{ hour, minute, bound, dayType, isExtra, source, unban, trainNumber, stops }]
-  const entries = { 1: [], "-1": [] };
-
-  // ダイヤと乗車記録で同じ時刻（分単位）が重複したら、ダイヤ側を優先して片方だけ残す
-  function pushEntry(sign, entry) {
-    const dup = entries[sign].some(e =>
-      e.hour === entry.hour && e.minute === entry.minute &&
-      (e.dayType === "both" || entry.dayType === "both" || e.dayType === entry.dayType)
-    );
-    if (dup) return;
-    entries[sign].push(entry);
-  }
-
-  for (const d of matches) {
-    const rows = await ttFetchDiagramSheet(d["ID"], d["運番"], d["最終更新"]);
-    const isExtra = ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(d["臨時"] || "").trim());
-    const dayTypeRaw = String(d["曜日区分"] || "").trim();
-    const dayType = dayTypeRaw ? (dayTypeRaw.includes("土") || dayTypeRaw.includes("休") ? "holiday" : "weekday") : "both";
-
-    const groups = ttGroupByTrainNumber(rows);
-    groups.forEach(group => {
-      const groupTimes = ttParseGroupTimes(group);
-      group.forEach((row, idx) => {
-        if (row["駅名"] !== stationName) return;
-        // 駅ごとの時刻表は「発車時刻」を載せる（終着駅は発車が無いので載せない）
-        const hm = groupTimes[idx].dep ? groupTimes[idx].dep.match(/^(\d{1,2}):(\d{2})$/) : null;
-        if (!hm) return;
-
-        // 時刻があっても、種別・行先が両方とも書いてない行は「通過」なので時刻表に載せない
-        if (!splitTT(row["種別"]).length && !splitTT(row["行先"]).length) return;
-
-        // 直通運転で複数路線にまたがる運用の場合、すぐ隣の停車駅がこの路線の駅マスタに
-        // 無い（＝他路線の駅）ことがあるので、隣1駅だけでなく、この路線の駅マスタ上に
-        // 見つかる駅が出てくるまで前後を辿って方向を判定する
-        let sign = null;
-        for (let j = idx + 1; j < group.length && sign === null; j++) {
-          sign = ttDirectionSign(routeVal, orderList, stationName, group[j]["駅名"]);
-        }
-        if (sign === null) {
-          for (let j = idx - 1; j >= 0 && sign === null; j--) {
-            const back = ttDirectionSign(routeVal, orderList, group[j]["駅名"], stationName);
-            if (back !== null) sign = back;
-          }
-        }
-        if (sign === null) return; // どちら向きか判定できない場合は表に出さない
-
-        const bounds = String(row["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
-        const bound = bounds[0] || "";
-        const types = String(row["種別"] || "").split("/").map(s => s.trim()).filter(Boolean);
-        const type = types[0] || "";
-
-        // クリックした時に各駅の発車時刻・種別・行先を出せるよう、この列車（同じ列車番号の
-        // グループ）の停車駅を丸ごと持たせておく。終点駅は発車時刻が入っていないことが
-        // 多いので、時刻の有無では絞り込まず駅名があれば全部残す
-        const stops = group
-          .map((r2, k) => ({ r2, arr: groupTimes[k].arr, dep: groupTimes[k].dep, arrSec: groupTimes[k].arrSec, depSec: groupTimes[k].depSec }))
-          .filter(({ r2 }) => r2["駅名"])
-          .map(({ r2, arr, dep, arrSec, depSec }) => ({
-            station: r2["駅名"],
-            time: arr || "", // 列車詳細には「到着時刻」を載せる
-            arr: arr || "",
-            dep: dep || "", // スタフ表示用（終着駅は発車無し）
-            arrSec: arrSec, depSec: depSec,
-            type: String(r2["種別"] || "").split("/").map(s => s.trim()).filter(Boolean)[0] || "",
-            bound: String(r2["行先"] || "").split("/").map(s => s.trim()).filter(Boolean)[0] || ""
-          }));
-
-        pushEntry(sign, {
-          hour: Number(hm[1]), minute: Number(hm[2]), bound, type, dayType, isExtra, source: "diagram",
-          unban: d["運番"] || "", trainNumber: row["列車番号"] || "", stops
-        });
-      });
+// 路線を選んだ時点で、その路線の運番シートを先に取りに行く（方向を選ぶ頃には取れている）
+let ttPrefetchRoute_ = "";
+async function ttPrefetchRoute(routeVal) {
+  if (!routeVal) return;
+  ttPrefetchRoute_ = routeVal;
+  try {
+    const matches = await ttGetRouteDiagramRows(routeVal);
+    await ttRunPool(matches, TT_FETCH_CONCURRENCY, d => {
+      if (ttPrefetchRoute_ !== routeVal) return; // 別の路線に切り替わったら止める
+      return ttFetchDiagramSheet(d["ID"], d["運番"], d["最終更新"]);
     });
-  }
+  } catch (e) { /* 先読みの失敗は無視（本検索でもう一度取る） */ }
+}
 
-  // ここから乗車記録（全ユーザー分）も、ダイヤに無い時刻を補う形で混ぜる。
-  // scripts.js（loadAndShowHistoryPopup）と同じ「route シートの『ダイヤ改正日』より前の
-  // 記録は除外する」既存の仕組みをそのまま使う（新規の列は追加しない）
+// 1枚の運用シートから、選んだ駅の出現を [{sign, entry}] で取り出す
+function ttExtractFromSheet(d, rows, stationName, routeVal, orderList) {
+  const out = [];
+  const isExtra = ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(d["臨時"] || "").trim());
+  const dayTypeRaw = String(d["曜日区分"] || "").trim();
+  const dayType = dayTypeRaw ? (dayTypeRaw.includes("土") || dayTypeRaw.includes("休") ? "holiday" : "weekday") : "both";
+
+  const groups = ttGroupByTrainNumber(rows);
+  groups.forEach(group => {
+    // この列車にその駅が無ければ、時刻の解析などを丸ごと飛ばす
+    if (!group.some(r => r["駅名"] === stationName)) return;
+    const groupTimes = ttParseGroupTimes(group);
+    group.forEach((row, idx) => {
+      if (row["駅名"] !== stationName) return;
+      // 駅ごとの時刻表は「発車時刻」を載せる（終着駅は載せない）
+      const hm = groupTimes[idx].dep ? groupTimes[idx].dep.match(/^(\d{1,2}):(\d{2})$/) : null;
+      if (!hm) return;
+
+      // 時刻があっても、種別・行先が両方とも書いてない行は「通過」なので時刻表に載せない
+      if (!splitTT(row["種別"]).length && !splitTT(row["行先"]).length) return;
+
+      // 直通運転で複数路線にまたがる運用の場合、すぐ隣の停車駅がこの路線の駅マスタに
+      // 無い（＝他路線の駅）ことがあるので、この路線の駅が出てくるまで前後を辿って方向を判定する
+      let sign = null;
+      for (let j = idx + 1; j < group.length && sign === null; j++) {
+        sign = ttDirectionSign(routeVal, orderList, stationName, group[j]["駅名"]);
+      }
+      if (sign === null) {
+        for (let j = idx - 1; j >= 0 && sign === null; j--) {
+          const back = ttDirectionSign(routeVal, orderList, group[j]["駅名"], stationName);
+          if (back !== null) sign = back;
+        }
+      }
+      if (sign === null) return; // どちら向きか判定できない場合は表に出さない
+
+      const bounds = String(row["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
+      const bound = bounds[0] || "";
+      const types = String(row["種別"] || "").split("/").map(s => s.trim()).filter(Boolean);
+      const type = types[0] || "";
+
+      // クリックした時に各駅の時刻を出せるよう、この列車（同じ列車番号のグループ）の停車駅を丸ごと持たせる
+      const stops = group
+        .map((r2, k) => ({ r2, arr: groupTimes[k].arr, dep: groupTimes[k].dep, arrSec: groupTimes[k].arrSec, depSec: groupTimes[k].depSec }))
+        .filter(({ r2 }) => r2["駅名"])
+        .map(({ r2, arr, dep, arrSec, depSec }) => ({
+          station: r2["駅名"],
+          time: arr || "", // 列車詳細には「到着時刻」を載せる
+          arr: arr || "",
+          dep: dep || "", // スタフ表示用（終着駅は発車無し）
+          arrSec: arrSec, depSec: depSec,
+          type: String(r2["種別"] || "").split("/").map(s => s.trim()).filter(Boolean)[0] || "",
+          bound: String(r2["行先"] || "").split("/").map(s => s.trim()).filter(Boolean)[0] || ""
+        }));
+
+      out.push({ sign, entry: {
+        hour: Number(hm[1]), minute: Number(hm[2]), bound, type, dayType, isExtra, source: "diagram",
+        unban: d["運番"] || "", trainNumber: row["列車番号"] || "", stops
+      } });
+    });
+  });
+  return out;
+}
+
+// 乗車記録（全ユーザー分）から、選んだ駅の出現を [{sign, entry}] で取り出す
+function ttExtractFromRides(allRides, holidaySet, stationName, routeVal, orderList, companyVal, routeRow) {
+  const out = [];
   const rawOrder = ttRouteRawOrder(routeVal);
   const revisionRaw = routeRow ? routeRow["ダイヤ改正日"] : "";
   const revisionDate = revisionRaw ? new Date(revisionRaw) : null;
   const hasValidRevisionDate = revisionDate && !isNaN(revisionDate);
-  const [allRides, holidaySet] = await Promise.all([ttGetAllRides(), ttGetHolidaySet()]);
   allRides.forEach(r => {
     if (r["路線"] !== routeVal || r["乗車駅"] !== stationName) return;
     if (companyVal && r["会社"] && r["会社"] !== companyVal) return;
@@ -485,11 +527,60 @@ async function ttCollectStationEntries(stationName, routeVal) {
     const type = String(r["種別"] || "").split("/")[0].trim();
     const dayType = ttIsHolidayType(d, holidaySet) ? "holiday" : "weekday";
     const isExtra = ttIsFlaggedExtra(r["臨時"]);
-
-    pushEntry(sign, { hour: d.getHours(), minute: d.getMinutes(), bound, type, dayType, isExtra, source: "ride" });
+    out.push({ sign, entry: { hour: d.getHours(), minute: d.getMinutes(), bound, type, dayType, isExtra, source: "ride" } });
   });
+  return out;
+}
 
+// 取れた分（シートの順番どおり）を統合して、方向ごとの entries を作る。
+// ダイヤと乗車記録で同じ時刻（分単位）が重複したら、ダイヤ側を優先して片方だけ残す
+function ttMergeEntries(partials, ridePartial) {
+  const entries = { 1: [], "-1": [] };
+  function pushEntry(sign, entry) {
+    const dup = entries[sign].some(e =>
+      e.hour === entry.hour && e.minute === entry.minute &&
+      (e.dayType === "both" || entry.dayType === "both" || e.dayType === entry.dayType)
+    );
+    if (dup) return;
+    entries[sign].push(entry);
+  }
+  partials.forEach(p => { if (p) p.forEach(x => pushEntry(x.sign, x.entry)); });
+  if (ridePartial) ridePartial.forEach(x => pushEntry(x.sign, x.entry));
   return entries;
+}
+
+// onProgress(entries, done, total) は、シートが取れるたびに（間引いて）呼ばれる。isCancelled() が true になったら中断
+async function ttCollectStationEntries(stationName, routeVal, onProgress, isCancelled) {
+  const routeRow = ttRouteRow(routeVal);
+  const companyVal = routeRow ? routeRow["会社"] : "";
+  const orderList = ttRouteStationOrder(routeVal);
+  const matches = await ttGetRouteDiagramRows(routeVal);
+
+  // 乗車記録は、シートの取得と同時に取りに行く
+  let ridePartial = null;
+  const ridesPromise = Promise.all([ttGetAllRides(), ttGetHolidaySet()]).then(([rides, hol]) => {
+    ridePartial = ttExtractFromRides(rides, hol, stationName, routeVal, orderList, companyVal, routeRow);
+  }).catch(() => { ridePartial = []; });
+
+  const partials = new Array(matches.length).fill(null);
+  let done = 0, lastEmit = 0;
+  const emit = force => {
+    if (!onProgress) return;
+    const now = Date.now();
+    if (!force && now - lastEmit < 350) return;
+    lastEmit = now;
+    onProgress(ttMergeEntries(partials, ridePartial), done, matches.length);
+  };
+
+  await ttRunPool(matches, TT_FETCH_CONCURRENCY, async (d, i) => {
+    if (isCancelled && isCancelled()) return;
+    const rows = await ttFetchDiagramSheet(d["ID"], d["運番"], d["最終更新"]);
+    partials[i] = ttExtractFromSheet(d, rows, stationName, routeVal, orderList);
+    done++;
+    emit(false);
+  });
+  await ridesPromise;
+  return ttMergeEntries(partials, ridePartial);
 }
 
 /* ---------- マーク（行先の頭文字）割り当て ---------- */
@@ -877,23 +968,26 @@ function ttCloseTrainDetail() {
   document.getElementById("ttTrainDetailOverlay").classList.remove("show");
 }
 
+let ttRenderToken = 0;
 async function ttRenderTimetable(stationName, routeVal, sign) {
   const statusEl = document.getElementById("ttStatus");
   const resultEl = document.getElementById("ttResult");
+  const token = ++ttRenderToken;
+  const cancelled = () => token !== ttRenderToken; // 別の駅・路線・方向を選び直したら、古い検索は捨てる
   resultEl.innerHTML = "";
   statusEl.classList.remove("error");
   statusEl.textContent = "読み込み中...";
-  ttTrainDetailRegistry = [];
 
-  try {
-    const allEntries = await ttCollectStationEntries(stationName, routeVal);
+  // 今ある分で時刻表を描く（取れたシートから順に描き直すので、全部待たずに途中経過が見える）
+  function draw(allEntries, loadingText) {
+    if (cancelled()) return false;
     const entries = allEntries[sign] || [];
-
     if (!entries.length) {
-      statusEl.textContent = "この駅・方向のダイヤ登録が見つかりませんでした。";
-      return;
+      resultEl.innerHTML = "";
+      statusEl.textContent = loadingText || "この駅・方向のダイヤ登録が見つかりませんでした。";
+      return false;
     }
-
+    ttTrainDetailRegistry = [];
     const marks = ttAssignMarks(entries);
     const typeMarks = ttAssignTypeMarks(entries);
     const weekday = entries.filter(e => e.dayType === "weekday" || e.dayType === "both");
@@ -907,7 +1001,7 @@ async function ttRenderTimetable(stationName, routeVal, sign) {
           return `${terminal || ""}方面`;
         })();
 
-    statusEl.textContent = "";
+    statusEl.textContent = loadingText || "";
     resultEl.innerHTML = `
       <div class="tt-block">
         <div class="tt-block-title">${escapeHtmlTT(stationName)}（${escapeHtmlTT(routeVal)}）<span class="sub">${escapeHtmlTT(dirLabel)}</span></div>
@@ -915,7 +1009,16 @@ async function ttRenderTimetable(stationName, routeVal, sign) {
         ${ttRenderDaytypeTable(holiday, marks, typeMarks, "holiday", "土曜・休日 Saturdays/Sundays/Holidays")}
       </div>
     `;
+    return true;
+  }
+
+  try {
+    const finalEntries = await ttCollectStationEntries(stationName, routeVal,
+      (partial, done, total) => draw(partial, `読み込み中… ${done}/${total}`), cancelled);
+    if (cancelled()) return;
+    draw(finalEntries, "");
   } catch (e) {
+    if (cancelled()) return;
     console.error(e);
     statusEl.classList.add("error");
     statusEl.textContent = "時刻表の取得に失敗しました。時間をおいて再度お試しください。";
@@ -1068,6 +1171,7 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     ttPopulateDirSelect(name, routeVal);
+    ttPrefetchRoute(routeVal); // 方向を選ぶ前に、この路線のダイヤを先に取りに行く
   });
 
   dirSel.addEventListener("change", () => {
