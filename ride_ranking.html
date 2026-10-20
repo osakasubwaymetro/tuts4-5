@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車回数ランキング</title>
-<!-- version: 1.0.3 -->
+<!-- version: 1.0.4 -->
+<!-- 1.0.4: ダイヤ照合の運番シート取得を、1枚ずつ順番から16本同時に変更 -->
 <!-- 1.0.2: 終着駅の判定を「最終行かつ駅名=行先」に修正(scripts.js v1.34.2と同じ) -->
 <!-- 1.0.1: ダイヤの時刻セルの「到着/発車」の読み方(2個=到着・発車、1個=同じ、終着駅の1個=到着のみ)に対応 -->
 <!-- 1.0.0: 新規作成。運営用。路線を選んで、コミュニティの過去乗車記録（ダイヤ/運用シートではなく、
@@ -349,11 +350,17 @@ function parseDiagramTimes(rows) {
   });
   return out;
 }
+// 運番シートを同時に（16本ずつ）取る。1件の失敗で止めない
+async function runPool(items, limit, fn) {
+  let idx = 0;
+  const worker = async () => { while (idx < items.length) { const i = idx++; try { await fn(items[i], i); } catch (e) {} } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
 async function buildDiagramKeySet(routeVal, companyVal) {
   const list = await getDiagramList();
   const matches = list.filter(d => d["会社"] === companyVal && diagramRowMatchesRoute(d, routeVal));
   const set = new Set();
-  for (const d of matches) {
+  await runPool(matches, 16, async d => {
     const rows = await fetchDiagramSheet(d["ID"], d["運番"]);
     const dayType = String(d["曜日区分"] || "").trim();
     const isHolidayRow = dayType.includes("土") || dayType.includes("休");
@@ -369,7 +376,7 @@ async function buildDiagramKeySet(routeVal, companyVal) {
         dayLabels.forEach(dl => set.add([station, type, b, hm, dl].join("|")));
       });
     });
-  }
+  });
   return set;
 }
 

@@ -1,4 +1,8 @@
-// trainpos.js v1.4.1
+// trainpos.js v1.6.0
+// 1.6.0: 路線の列車データの読み込みを高速化。運番シートの取得を6本→16本同時に、1枚20秒のタイムアウトを付け、
+//        列車データ（最新）と乗車記録・祝日・車両マスタの取得を同時に走らせる（今までは列車を全部読み終えてから順に取っていた）。
+//        ダイヤ一覧の保持時間を1時間→1分にして、変更がほぼすぐ反映されるようにした。結果の並びはダイヤ一覧の順で毎回同じにした
+// 1.5.0: 平日／休日ダイヤの切り替えを0:00→3:00にした。0:00〜2:59は前日の運行日の続きとして扱い、始発駅の発車が0:00〜2:59の列車は前日のダイヤ（24:13扱い）に入れる。日跨ぎ列車の仕組みはそのまま
 // 1.4.0: ・終点駅の行が無くてもいい仕組みをやめた（最後に書いてある行は終着＝時刻1個なら到着のみ）。列車の詳細の終点補足も廃止
 //        ・路線の境界駅が通過（時刻が書いていない）でも、列車が消えないようにした。時刻の無い行は前後の時刻から
 //          按分して推定し、行が無い場合は、他路線と共通の駅（境界駅）を探して、駅数の比で推定する
@@ -28,6 +32,9 @@
   const DIAGRAM_SHEET_ID = "1JzY1wIGbj2Z83ItsMnMrz1xQ-cviEv50P0mOHiyi70A";
   const RIDES_URL = "https://script.google.com/macros/s/AKfycbyWTr6ejDZKkaw9owEM8yLcl6-6w5pHeyk2hWdX6Lw1INNg5ZxuhvCx7PPfOmxWHC17/exec";
   const FALLBACK_TRAIN_IMAGE = "https://img.elesite-next.com/hatena.webp";
+  const DAY_START = 3 * 3600;                // 運行日の切り替え時刻（3:00）
+  const FETCH_CONCURRENCY = 16;              // 運番シートを同時に取る本数
+  const SHEET_TIMEOUT_MS = 20000;            // 1枚あたりのタイムアウト
   const TRAINS_TTL_MS = 30 * 60 * 1000;      // 路線ごとの列車データ（IndexedDB）
   const RIDES_REFRESH_MS = 3 * 60 * 1000;    // 乗車記録の取り直し間隔
   const TICK_MS = 5000;
@@ -78,7 +85,7 @@
   }
 
   async function getDiagramList() {
-    const c = readLsCache("tuts4_diagram_list_cache", 60 * 60 * 1000);
+    const c = readLsCache("tuts4_diagram_list_cache", 60 * 1000); // 1分（変更がほぼすぐ反映される）
     if (c) return c.data;
     try {
       const res = await fetch(`https://opensheet.elk.sh/${DIAGRAM_SHEET_ID}/${encodeURIComponent("ダイヤ一覧")}`);
@@ -100,8 +107,13 @@
     }
     if (meta && !force) return meta.data;
     try {
-      const res = await fetch(`https://opensheet.elk.sh/${DIAGRAM_SHEET_ID}/${encodeURIComponent(name)}`);
-      const data = await res.json();
+      const ctl = typeof AbortController === "function" ? new AbortController() : null;
+      const timer = ctl ? setTimeout(() => ctl.abort(), SHEET_TIMEOUT_MS) : null;
+      let data;
+      try {
+        const res = await fetch(`https://opensheet.elk.sh/${DIAGRAM_SHEET_ID}/${encodeURIComponent(name)}`, ctl ? { signal: ctl.signal } : undefined);
+        data = await res.json();
+      } finally { if (timer) clearTimeout(timer); }
       if (Array.isArray(data)) return data;
     } catch (e) { /* ignore */ }
     const stale = readLsCache(key, 0);
@@ -158,6 +170,12 @@
         stops.push({ s: String(r["駅名"]).trim(), a, d, type: type0, bound: bounds[0] || "", pass: !type0 && !bounds.length });
       });
       if (!stops.length) return;
+      // 始発駅の発車が0:00〜2:59の列車は「前日の運行日の続き」（24:13のような扱い）にする。
+      // 運行日の切り替えは3:00なので、前日の平日／休日のダイヤで、深夜0時台も走ってるように見える
+      const firstT = stops[0].d != null ? stops[0].d : stops[0].a;
+      if (firstT != null && firstT < DAY_START) {
+        stops.forEach(sp => { if (sp.a != null) sp.a += 86400; if (sp.d != null) sp.d += 86400; });
+      }
       const bounds = new Set();
       group.forEach(r => splitSlash(r["行先"]).forEach(b => bounds.add(b)));
       out.push({
@@ -174,7 +192,7 @@
 
   async function loadRouteTrains(ctx, onProgress) {
     const par = (ctx.parallelRoutes || []).filter(p => p.route && p.route !== ctx.routeVal);
-    const cacheKey = "tp_trains3_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
+    const cacheKey = "tp_trains4_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
     if (idb()) {
       const c = await idb().get(cacheKey);
       if (c && Array.isArray(c.trains) && Date.now() - c.fetchedAt < TRAINS_TTL_MS) return c.trains;
@@ -196,20 +214,23 @@
     pick(ctx.routeVal, ctx.company).forEach(d => add(d, false));
     par.forEach(p => pick(p.route, p.company).forEach(d => add(d, true)));
 
-    const trains = [];
+    // シートを同時に取る。列車は取れた順ではなく、ダイヤ一覧の順に並べる（毎回同じ並びになる）
+    const perJob = new Array(jobs.length).fill(null);
     let done = 0, idx = 0;
     const worker = async () => {
       while (idx < jobs.length) {
-        const { d, viaParallel } = jobs[idx++];
+        const i = idx++;
+        const { d, viaParallel } = jobs[i];
         try {
           const rows = await fetchSheet(d["ID"], d["運番"], d["最終更新"]);
-          compactSheet(rows, d, viaParallel).forEach(t => trains.push(t));
+          perJob[i] = compactSheet(rows, d, viaParallel);
         } catch (e) { /* この運番はスキップ */ }
         done++;
         if (onProgress) onProgress(done, jobs.length);
       }
     };
-    await Promise.all(Array.from({ length: Math.min(6, jobs.length) }, worker));
+    await Promise.all(Array.from({ length: Math.min(FETCH_CONCURRENCY, jobs.length) }, worker));
+    const trains = perJob.flat().filter(Boolean);
     if (idb()) idb().set(cacheKey, { trains, fetchedAt: Date.now() });
     return trains;
   }
@@ -624,10 +645,13 @@
   }
 
   /* ---------- 描画 ---------- */
+  // 運行日は3:00で切り替える（0:00〜2:59は前日の運行日の続き＝時刻に24時間足す）
   function currentNow() {
     const now = new Date();
-    if (st.live || st.manualSec == null) return { date: now, sec: now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds() };
-    return { date: now, sec: st.manualSec };
+    let sec = (st.live || st.manualSec == null) ? now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds() : st.manualSec;
+    let date = now;
+    if (sec < DAY_START) { date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1); sec += 86400; }
+    return { date, sec };
   }
 
   function renderLayer() {
@@ -793,11 +817,18 @@
       st.loading = true;
       st.trains = []; st.trainsRoute = "";
       if (status) status.textContent = "ダイヤを読み込み中…";
+      // 乗車記録・祝日・車両マスタは、列車の読み込みと同時に取りに行く（順番待ちしない）
+      const others = Promise.all([getHolidaySet(), loadRides(false), loadMasters()]);
       const trains = await loadRouteTrains(ctx, (d, n) => {
         if (seq === st.loadSeq && status) status.textContent = `ダイヤを読み込み中… ${d}/${n}`;
       });
       if (seq !== st.loadSeq) return; // 路線が切り替わっていたら捨てる
-      st.trains = trains; st.trainsRoute = ctx.routeVal; st.loading = false;
+      st.trains = trains; st.trainsRoute = ctx.routeVal;
+      if (status) status.textContent = "乗車記録を確認中…";
+      await others;
+      if (seq !== st.loadSeq) return;
+      st.loading = false;
+      return;
     }
     if (status) status.textContent = "乗車記録を確認中…";
     await Promise.all([getHolidaySet(), loadRides(false), loadMasters()]);

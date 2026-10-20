@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>候補デバッグツール</title>
-<!-- version: 1.0.5 -->
+<!-- version: 1.0.6 -->
+<!-- 1.0.6: ダイヤ候補の運番シート取得を、1枚ずつ順番から16本同時に変更（scripts.js v1.36.0と同じ） -->
 <!-- 1.0.3: ダイヤ由来の候補にも方面フィルタを掛けるようにした(scripts.js v1.34.3と同じ) -->
 <!-- 1.0.2: 終着駅の判定を「最終行かつ駅名=行先」に修正(scripts.js v1.34.2と同じ) -->
 <!-- 1.0.1: scripts.js v1.34.1に合わせ、ダイヤの時刻セルの「到着/発車」の読み方(2個=到着・発車、1個=同じ、終着駅の1個=到着のみ)を反映 -->
@@ -331,6 +332,12 @@ function parseDiagramTimes(rows) {
   });
   return out;
 }
+// 運番シートを同時に（16本ずつ）取る。1件の失敗で止めない
+async function runPool(items, limit, fn) {
+  let idx = 0;
+  const worker = async () => { while (idx < items.length) { const i = idx++; try { await fn(items[i], i); } catch (e) {} } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
 async function getDiagramCandidates(routeVal, boardingStation, companyVal, todayIsWeekendType) {
   const list = await getDiagramList();
   const matches = list.filter(d => {
@@ -340,8 +347,9 @@ async function getDiagramCandidates(routeVal, boardingStation, companyVal, today
     const isHolidayRow = dayType.includes("土") || dayType.includes("休");
     return isHolidayRow === todayIsWeekendType;
   });
-  const results = [];
-  for (const d of matches) {
+  const perSheet = new Array(matches.length).fill(null);
+  await runPool(matches, 16, async (d, di) => {
+    const results = [];
     const rows = await fetchDiagramSheet(d["ID"], d["運番"]);
     const isExtra = isFlaggedExtra(d["臨時"]);
     parseDiagramTimes(rows).forEach(({ row: r, dep }) => {
@@ -360,8 +368,9 @@ async function getDiagramCandidates(routeVal, boardingStation, companyVal, today
         results.push({ isDiagram: true, time, unban: d["運番"], trainNumber, isExtra, type: "", bound: "" });
       }
     });
-  }
-  return results;
+    perSheet[di] = results;
+  });
+  return perSheet.flat().filter(Boolean);
 }
 
 /* ===================== ステージ描画 ===================== */
