@@ -1,4 +1,5 @@
-// trainpos.js v1.8.2
+// trainpos.js v1.9.0
+// 1.9.0: 列車の始発駅の発車（到着）10分前から、始発駅に在線表示する。同じ運用の前の列車がまだ走行中（全区間の時刻で判定）なら、在線表示は出さず前の列車を引き続き出す
 // 1.8.2: 「所定形式」の複数画像は、列車ごとに順番ではなく、1秒ごとに 1,2,3,1,2,3… と切り替えて表示する
 // 1.8.1: 「所定形式」に改行区切りでURLを複数入れると、その運用の列車に順番に 1,2,3,1,2,3… と割り当てて表示する
 // 1.8.0: ダイヤ一覧の「所定形式」列に画像URLを入れると、その運用の編成が乗車記録で分かるまで、汎用アイコンの代わりにその画像を表示する。乗車記録があればそちらを優先（今まで通り）
@@ -44,6 +45,7 @@
   const TRAINS_TTL_MS = 30 * 60 * 1000;      // 路線ごとの列車データ（IndexedDB）
   const RIDES_REFRESH_MS = 3 * 60 * 1000;    // 乗車記録の取り直し間隔
   const TICK_MS = 5000;
+  const WAIT_SEC = 10 * 60;                  // 始発駅の発車の何秒前から在線表示するか（10分）
   const LS_ON = "tuts4_trainpos_on";
 
   const st = {
@@ -584,7 +586,18 @@
     // 並走路線の列車は、この路線の駅に2駅以上かかる場合だけ出す（乗換駅に停まるだけの列車は出さない）
     if (train.viaParallel && on.length < 2) return null;
     if (!on.length) return null;
-    if (t < on[0].a || t > on[on.length - 1].d) return null;
+    // 始発駅の発車（到着）の10分前から、始発駅に在線表示する（この路線に始発駅がある列車だけ）
+    if (t < on[0].a) {
+      const f0 = train.stops[0], idx0 = routeInfo(ctx).idxOf.get(f0.s);
+      if (idx0 === on[0].i && (f0.a != null || f0.d != null) && t >= on[0].a - WAIT_SEC) {
+        const nx = on[1];
+        let sign = nx ? Math.sign(nx.i - on[0].i) : 1;
+        if (ctx.isLoop && nx && Math.abs(nx.i - on[0].i) > N / 2) sign = -sign;
+        return { row0: on[0].i, row1: on[0].i, frac: 0, sign: sign || 1, atStation: true, waiting: true };
+      }
+      return null;
+    }
+    if (t > on[on.length - 1].d) return null;
 
     for (let k = 0; k < on.length; k++) {
       const cur = on[k];
@@ -609,6 +622,29 @@
     return null;
   }
 
+  // 同じ運用（sheetKey）の他の列車が、全区間の時刻でいま走行中か
+  function trainRange(tr) {
+    if (tr._rng) return tr._rng;
+    let lo = null, hi = null;
+    tr.stops.forEach(sp => [sp.a, sp.d].forEach(v => { if (v == null) return; if (lo == null || v < lo) lo = v; if (hi == null || v > hi) hi = v; }));
+    return (tr._rng = [lo, hi]);
+  }
+  function prevStillRunning(tr, t) {
+    if (st._bkFor !== st.trains) {
+      const m = new Map();
+      st.trains.forEach(x => { if (!x.sheetKey) return; if (!m.has(x.sheetKey)) m.set(x.sheetKey, []); m.get(x.sheetKey).push(x); });
+      st._bk = m; st._bkFor = st.trains;
+    }
+    const list = st._bk.get(tr.sheetKey);
+    if (!list || list.length < 2) return false;
+    const myLo = trainRange(tr)[0];
+    return list.some(o => {
+      if (o === tr) return false;
+      const [lo, hi] = trainRange(o);
+      return lo != null && lo < myLo && lo <= t && t <= hi;
+    });
+  }
+
   function computeActive(ctx, nowSec, baseDate) {
     const out = [];
     const holidayNow = isHoliday(baseDate);
@@ -619,7 +655,10 @@
       st.trains.forEach(tr => {
         if (tr.dayType !== "both" && tr.dayType !== (hol ? "holiday" : "weekday")) return;
         const pos = locate(tr, t, ctx);
-        if (pos) out.push({ train: tr, pos, serviceDate: sd });
+        if (!pos) return;
+        // 在線表示は、同じ運用の前の列車がまだ走行中なら出さない（前の列車を引き続き出す）
+        if (pos.waiting && prevStillRunning(tr, t)) return;
+        out.push({ train: tr, pos, serviceDate: sd });
       });
     });
     return out;
