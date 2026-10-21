@@ -1,4 +1,5 @@
-// trainpos.js v1.7.1
+// trainpos.js v1.7.2
+// 1.7.2: 一度広げた駅間の高さは、リロードするまで路線ごとにそのまま維持する（列車が動くたびに高さが変わってスクロールが戻されるのを防ぐ）。広げる方向にだけ変わる
 // 1.7.1: 同じ側で横に並ぶのは2本までOK。3本目（3列目）になる時に駅間を広げる判定にした
 // 1.7.0: 駅間が長く列車が密な路線（東海道新幹線など）で、列車が枠の横からはみ出しそうな時は全区間の駅間の高さを均等に広げる。
 // 1.6.0: 路線の列車データの読み込みを高速化。運番シートの取得を6本→16本同時に、1枚20秒のタイムアウトを付け、
@@ -667,7 +668,10 @@
     if (!st.on || !ctx || !scroll || st.trainsRoute !== ctx.routeVal) return;
 
     const rows = [...scroll.querySelectorAll(".rt-row")];
-    rows.forEach(r => { r.style.minHeight = ""; }); // 前回の広げ分をリセット
+    // 一度広げた高さは、リロードするまで路線ごとに維持する（縮めない＝スクロール位置が戻されない）
+    st.rowH = st.rowH || {};
+    const keptH = st.rowH[ctx.routeVal] || 0;
+    rows.forEach(r => { r.style.minHeight = keptH ? keptH + "px" : ""; });
     const getCenters = () => rows.map(r => r.offsetTop + r.offsetHeight / 2);
     if (!rows.length) return;
 
@@ -712,8 +716,7 @@
     if (!centers.length) return;
     let built = build(centers);
     if (W && maxStack(built.all) > kMax) {
-      const base = Math.max(46, ...rows.map(r => r.offsetHeight));
-      let h = base;
+      let h = Math.max(46, keptH, ...rows.map(r => r.offsetHeight));
       for (let i = 0; i < 14; i++) {
         h = Math.ceil(h * 1.25);
         rows.forEach(r => { r.style.minHeight = h + "px"; });
@@ -721,6 +724,7 @@
         built = build(centers);
         if (maxStack(built.all) <= kMax) break;
       }
+      st.rowH[ctx.routeVal] = h;
     }
     const { placed, rideOnly, all } = built;
 
