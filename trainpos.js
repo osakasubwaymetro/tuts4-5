@@ -1,4 +1,5 @@
-// trainpos.js v1.8.1
+// trainpos.js v1.8.2
+// 1.8.2: 「所定形式」の複数画像は、列車ごとに順番ではなく、1秒ごとに 1,2,3,1,2,3… と切り替えて表示する
 // 1.8.1: 「所定形式」に改行区切りでURLを複数入れると、その運用の列車に順番に 1,2,3,1,2,3… と割り当てて表示する
 // 1.8.0: ダイヤ一覧の「所定形式」列に画像URLを入れると、その運用の編成が乗車記録で分かるまで、汎用アイコンの代わりにその画像を表示する。乗車記録があればそちらを優先（今まで通り）
 // 1.7.2: 一度広げた駅間の高さは、リロードするまで路線ごとにそのまま維持する（列車が動くたびに高さが変わってスクロールが戻されるのを防ぐ）。広げる方向にだけ変わる
@@ -152,9 +153,9 @@
     });
 
     const out = [];
-    // 「所定形式」は改行区切りで画像URLを複数書ける。この運用の列車を順に 1,2,3,1,2,3… と割り当てる
+    // 「所定形式」は改行区切りで画像URLを複数書ける。1秒ごとに 1,2,3,1,2,3… と切り替えて表示する
     const icons = String(listRow["所定形式"] || "").split(/[\r\n]+/).map(x => toDisplayableImageUrl(x)).filter(Boolean);
-    groups.forEach((group, gi) => {
+    groups.forEach(group => {
       let prev = null; // 直前の時刻（秒）。24時間を跨いだら+86400して連続させる
       const stops = [];
       group.forEach((r, i) => {
@@ -191,7 +192,7 @@
         dayType, isExtra: isTrue(listRow["臨時"]),
         sheetKey: `${listRow["ID"] || ""}_${listRow["運番"] || ""}_${dayType}`, // 同じ運用（＝同じ編成が走り続ける）の目印
         bounds: [...bounds], stops,
-        defaultIcon: icons.length ? icons[gi % icons.length] : "", // ダイヤ一覧の「所定形式」列の画像URL（編成の記録が無い時に使う）
+        defaultIcons: icons, // 画像URLの一覧（複数なら1秒ごとに切り替え） // ダイヤ一覧の「所定形式」列の画像URL（編成の記録が無い時に使う）
         viaParallel: !!viaParallel // 並走路線のダイヤ一覧から取った列車（この路線のダイヤ一覧には無い）
       });
     });
@@ -200,7 +201,7 @@
 
   async function loadRouteTrains(ctx, onProgress) {
     const par = (ctx.parallelRoutes || []).filter(p => p.route && p.route !== ctx.routeVal);
-    const cacheKey = "tp_trains6_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
+    const cacheKey = "tp_trains7_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
     if (idb()) {
       const c = await idb().get(cacheKey);
       if (c && Array.isArray(c.trains) && Date.now() - c.fetchedAt < TRAINS_TTL_MS) return c.trains;
@@ -772,12 +773,13 @@
       const type = stopOnNow.type || "";
       const bound = stopOnNow.bound || (last ? last.s : "");
       const label = `${type}${bound}`;
-      const icon = fm ? resolveIcon(fm.model, fm.number) : (p.a.train.defaultIcon || FALLBACK_TRAIN_IMAGE);
+      const defIcons = (!fm && p.a.train.defaultIcons) || [];
+      const icon = fm ? resolveIcon(fm.model, fm.number) : (defIcons.length ? defIcons[iconIdx(defIcons.length)] : FALLBACK_TRAIN_IMAGE);
       const badge = p.a.train.trainNumber || (p.a.train.unban ? "運" + p.a.train.unban : "");
       el.className = "tp-train tp-" + side + (p.a.pos.atStation ? " tp-stop" : "");
       el.innerHTML = `
         <div class="tp-badge">${esc(badge)}</div>
-        <div class="tp-icon"><img src="${esc(icon)}" alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';"></div>
+        <div class="tp-icon"><img src="${esc(icon)}" ${defIcons.length > 1 ? `data-icons="${esc(defIcons.join("\n"))}"` : ""} alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';"></div>
         <div class="tp-label">${esc(label)}</div>
         ${fm && fm.number ? `<div class="tp-num">${esc(cleanNum(fm.number))}</div>` : ""}`;
       el.onclick = () => openDetail(p.a.train);
@@ -786,6 +788,17 @@
 
     const status = document.getElementById("tpStatus");
     if (status && !st.loading) status.textContent = `運行中 ${placed.length}本` + (rideOnly.length ? `（乗車記録のみ ${rideOnly.length}本）` : "");
+  }
+
+  // 複数の所定形式画像は1秒ごとに切り替える
+  const iconIdx = n => Math.floor(Date.now() / 1000) % n;
+  function cycleIcons() {
+    document.querySelectorAll("#tpLayer img[data-icons]").forEach(im => {
+      const list = im.dataset.icons.split("\n").filter(Boolean);
+      if (list.length < 2) return;
+      const u = list[iconIdx(list.length)];
+      if (im.getAttribute("src") !== u) { im.onerror = () => { im.onerror = null; im.src = FALLBACK_TRAIN_IMAGE; }; im.src = u; }
+    });
   }
 
   function updateClock() {
@@ -833,6 +846,7 @@
     const opts = document.getElementById("tpOpts");
     if (opts) opts.style.display = st.on ? "inline" : "none";
     if (st.timer) { clearInterval(st.timer); st.timer = null; }
+    if (st.iconTimer) { clearInterval(st.iconTimer); st.iconTimer = null; }
     if (!st.on) {
       renderLayer();
       const s = document.getElementById("tpStatus"); if (s) s.textContent = "";
@@ -840,6 +854,7 @@
     }
     await ensureData();
     renderLayer();
+    st.iconTimer = setInterval(cycleIcons, 1000);
     st.timer = setInterval(async () => {
       if (st.live) {
         if (Date.now() - st.ridesFetchedAt > RIDES_REFRESH_MS) { await loadRides(true); }
