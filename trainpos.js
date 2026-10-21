@@ -1,4 +1,5 @@
-// trainpos.js v1.7.2
+// trainpos.js v1.8.0
+// 1.8.0: ダイヤ一覧の「所定形式」列に画像URLを入れると、その運用の編成が乗車記録で分かるまで、汎用アイコンの代わりにその画像を表示する。乗車記録があればそちらを優先（今まで通り）
 // 1.7.2: 一度広げた駅間の高さは、リロードするまで路線ごとにそのまま維持する（列車が動くたびに高さが変わってスクロールが戻されるのを防ぐ）。広げる方向にだけ変わる
 // 1.7.1: 同じ側で横に並ぶのは2本までOK。3本目（3列目）になる時に駅間を広げる判定にした
 // 1.7.0: 駅間が長く列車が密な路線（東海道新幹線など）で、列車が枠の横からはみ出しそうな時は全区間の駅間の高さを均等に広げる。
@@ -187,6 +188,7 @@
         dayType, isExtra: isTrue(listRow["臨時"]),
         sheetKey: `${listRow["ID"] || ""}_${listRow["運番"] || ""}_${dayType}`, // 同じ運用（＝同じ編成が走り続ける）の目印
         bounds: [...bounds], stops,
+        defaultIcon: toDisplayableImageUrl(listRow["所定形式"]), // ダイヤ一覧の「所定形式」列の画像URL（編成の記録が無い時に使う）
         viaParallel: !!viaParallel // 並走路線のダイヤ一覧から取った列車（この路線のダイヤ一覧には無い）
       });
     });
@@ -195,7 +197,7 @@
 
   async function loadRouteTrains(ctx, onProgress) {
     const par = (ctx.parallelRoutes || []).filter(p => p.route && p.route !== ctx.routeVal);
-    const cacheKey = "tp_trains4_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
+    const cacheKey = "tp_trains5_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
     if (idb()) {
       const c = await idb().get(cacheKey);
       if (c && Array.isArray(c.trains) && Date.now() - c.fetchedAt < TRAINS_TTL_MS) return c.trains;
@@ -767,7 +769,7 @@
       const type = stopOnNow.type || "";
       const bound = stopOnNow.bound || (last ? last.s : "");
       const label = `${type}${bound}`;
-      const icon = fm ? resolveIcon(fm.model, fm.number) : FALLBACK_TRAIN_IMAGE;
+      const icon = fm ? resolveIcon(fm.model, fm.number) : (p.a.train.defaultIcon || FALLBACK_TRAIN_IMAGE);
       const badge = p.a.train.trainNumber || (p.a.train.unban ? "運" + p.a.train.unban : "");
       el.className = "tp-train tp-" + side + (p.a.pos.atStation ? " tp-stop" : "");
       el.innerHTML = `
