@@ -1,4 +1,5 @@
-// trainpos.js v1.8.0
+// trainpos.js v1.8.1
+// 1.8.1: 「所定形式」に改行区切りでURLを複数入れると、その運用の列車に順番に 1,2,3,1,2,3… と割り当てて表示する
 // 1.8.0: ダイヤ一覧の「所定形式」列に画像URLを入れると、その運用の編成が乗車記録で分かるまで、汎用アイコンの代わりにその画像を表示する。乗車記録があればそちらを優先（今まで通り）
 // 1.7.2: 一度広げた駅間の高さは、リロードするまで路線ごとにそのまま維持する（列車が動くたびに高さが変わってスクロールが戻されるのを防ぐ）。広げる方向にだけ変わる
 // 1.7.1: 同じ側で横に並ぶのは2本までOK。3本目（3列目）になる時に駅間を広げる判定にした
@@ -151,7 +152,9 @@
     });
 
     const out = [];
-    groups.forEach(group => {
+    // 「所定形式」は改行区切りで画像URLを複数書ける。この運用の列車を順に 1,2,3,1,2,3… と割り当てる
+    const icons = String(listRow["所定形式"] || "").split(/[\r\n]+/).map(x => toDisplayableImageUrl(x)).filter(Boolean);
+    groups.forEach((group, gi) => {
       let prev = null; // 直前の時刻（秒）。24時間を跨いだら+86400して連続させる
       const stops = [];
       group.forEach((r, i) => {
@@ -188,7 +191,7 @@
         dayType, isExtra: isTrue(listRow["臨時"]),
         sheetKey: `${listRow["ID"] || ""}_${listRow["運番"] || ""}_${dayType}`, // 同じ運用（＝同じ編成が走り続ける）の目印
         bounds: [...bounds], stops,
-        defaultIcon: toDisplayableImageUrl(listRow["所定形式"]), // ダイヤ一覧の「所定形式」列の画像URL（編成の記録が無い時に使う）
+        defaultIcon: icons.length ? icons[gi % icons.length] : "", // ダイヤ一覧の「所定形式」列の画像URL（編成の記録が無い時に使う）
         viaParallel: !!viaParallel // 並走路線のダイヤ一覧から取った列車（この路線のダイヤ一覧には無い）
       });
     });
@@ -197,7 +200,7 @@
 
   async function loadRouteTrains(ctx, onProgress) {
     const par = (ctx.parallelRoutes || []).filter(p => p.route && p.route !== ctx.routeVal);
-    const cacheKey = "tp_trains5_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
+    const cacheKey = "tp_trains6_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
     if (idb()) {
       const c = await idb().get(cacheKey);
       if (c && Array.isArray(c.trains) && Date.now() - c.fetchedAt < TRAINS_TTL_MS) return c.trains;
