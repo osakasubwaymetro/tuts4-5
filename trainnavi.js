@@ -1,4 +1,5 @@
-// trainnavi.js v1.3.1
+// trainnavi.js v1.4.0
+// 1.4.0: ④「n両、n両」の開始を速度検知型に変更。駅の手前200m以内で、速度が25km/h以下になり、かつ③（ホーム進入の「n両、停車。」）を言い終えたら始める（一度始めたら停車まで続ける）。速度が取れない時は従来どおり45mで開始
 // 1.3.1: iPhoneで小窓にできなかったのを修正（動画を先に用意してボタンを押した直後に小窓を要求／iPhone独自方式を先に試す／失敗した理由を表示）
 // 1.3.0: ピクチャ・イン・ピクチャ（📺 小窓）を追加。画面をcanvasに描いてvideoにして小窓表示するので、他のアプリを開いても小さく出したままにできる。停止制動の位置を駅の500m手前に固定
 // 1.2.0: 家でデバッグできるように「🛠 デバッグ」を追加（GPSなしのシミュレーション：自動走行／倍速／駅間スライダー／速度指定／駅の前後移動／判定の数値表示）
@@ -7,14 +8,14 @@
 //   ① 発車直後          ：種別＋次駅を表示、「次は、○○、停車。」
 //   ② 停止制動の開始位置：「停車」を赤白点滅、「停車、停車、停車。」
 //   ③ 入駅（ホーム端）  ：「N両」を表示、「N両、停車。N両、停車。」
-//   ④ ホーム中間付近    ：「N両」を表示、「N両、N両。」を停車まで繰り返す
+//   ④ ホーム中間付近    ：速度が25km/h以下になったら「N両」を表示、「N両、N両。」を停車まで繰り返す
 // GPSが取れない間（地下など）は、ダイヤの時刻で代わりに判定する。
 // timetable.js の ttTrainDetailRegistry / ttToSec / escapeHtmlTT / ttNormStation を共用する。
 (function () {
   "use strict";
   const CAR_KEY = "tuts4_navi_cars";
   const VOICE_KEY = "tuts4_navi_voice";
-  const nv = { stops: null, ev: null, timer: null, voiceOn: true, cars: "", spoken: new Set(), audio: null, lastPhase: "", flash: false, flashTimer: null, watchId: null, pos: null, speed: 0, fixAt: 0, acc: 9999, seg: null, src: "time", sim: { on: false, run: false, k: 0, mode: "stop", D: 0, v: 0, dwell: 0, mult: 1, t: 0, kmh: 72, timer: null }, speaking: false, lastMid: 0, spokenAnything: false, token: 0 };
+  const nv = { stops: null, ev: null, timer: null, voiceOn: true, cars: "", spoken: new Set(), audio: null, lastPhase: "", flash: false, flashTimer: null, watchId: null, pos: null, speed: 0, fixAt: 0, acc: 9999, seg: null, src: "time", sim: { on: false, run: false, k: 0, mode: "stop", D: 0, v: 0, dwell: 0, mult: 1, t: 0, kmh: 72, timer: null }, speaking: false, lastMid: 0, midK: -1, spokenAnything: false, token: 0 };
 
   function esc(s) { return typeof escapeHtmlTT === "function" ? escapeHtmlTT(s) : String(s || ""); }
   function lsGet(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } }
@@ -198,6 +199,8 @@
   }
 
   const BRAKE_DIST = 500;
+  const MID_DIST = 200; // ④の判定に入る距離（m）
+  const MID_KMH = 25;   // ④を始める速度（km/h以下）
   function nowSec() { const d = new Date(); return (d.getHours() * 60 + d.getMinutes()) * 60 + d.getSeconds(); }
 
   // ---------- GPS（常にGPSで動かす。測位できない間（地下など）は時刻で代わりに判定） ----------
@@ -272,12 +275,12 @@
     const a = nv.ev[k], b = nv.ev[k + 1];
     return a && b && a.c && b.c ? Math.max(300, Math.round(dist(a.c, b.c))) : 1500;
   }
-  function simClearSpoken(k) { [...nv.spoken].forEach(x => { if (x.endsWith(":" + k)) nv.spoken.delete(x); }); }
+  function simClearSpoken(k) { [...nv.spoken].forEach(x => { if (x.endsWith(":" + k)) nv.spoken.delete(x); }); if (nv.midK === k) nv.midK = -1; }
   function simSetOn(on) {
     const m = nv.sim;
     m.on = on; clearInterval(m.timer); m.timer = null;
     if (on) {
-      nv.spoken = new Set(); nv.lastMid = 0;
+      nv.spoken = new Set(); nv.lastMid = 0; nv.midK = -1;
       m.k = 0; m.mode = "stop"; m.dwell = 0; m.run = false; m.L = segLen(0); m.D = m.L; m.v = 0;
       m.timer = setInterval(simStep, 200);
     }
@@ -353,7 +356,7 @@
     // どこかの停車駅の近くで止まっていれば、そこにいると確定する（折り返し・遅延で時刻と食い違った時の補正）
     for (let j = 0; j < ev.length; j++) {
       if (ev[j].c && dist(nv.pos, ev[j].c) < 200 && v < 2 && (Math.abs(j - seg.k) <= 3)) {
-        if (!(seg.k === j && seg.atStop)) { nv.seg = { k: j, atStop: true, depAt: Date.now() }; nv.spoken = new Set(); nv.lastMid = 0; }
+        if (!(seg.k === j && seg.atStop)) { nv.seg = { k: j, atStop: true, depAt: Date.now() }; nv.spoken = new Set(); nv.lastMid = 0; nv.midK = -1; }
         break;
       }
     }
@@ -381,7 +384,10 @@
     if (loc.src === "gps") {
       const v = loc.v || 0;
       const brakeD = BRAKE_DIST; // 停止制動の開始位置：駅の500m手前
-      if (loc.D <= 45) return "mid";
+      // ④ホーム中間：駅の手前200m以内で、速度が25km/h以下、かつ③を言い終えた後。一度始めたら停車まで続ける
+      if (nv.midK === loc.k) return "mid";
+      const slow = v * 3.6 <= MID_KMH;
+      if (loc.D <= 45 || (loc.D <= MID_DIST && slow && nv.spoken.has("pfend:" + loc.k) && !nv.speaking)) { nv.midK = loc.k; return "mid"; }
       if (loc.D <= 130) return "pfend";
       if (!spokenDepart && loc.t <= 30) return "depart";
       if (loc.D <= brakeD) return "brake";
@@ -553,7 +559,7 @@
     nv.stops = entry.stops;
     nv.ev = buildEvents(entry.stops);
     nv.meta = { type: entry.type || "", bound: entry.bound || "" };
-    nv.spoken = new Set(); nv.lastPhase = ""; nv.seg = null; nv.lastMid = 0; nv.speaking = false; nv.coordsResolvedWithPos = false; nv.token++;
+    nv.spoken = new Set(); nv.lastPhase = ""; nv.seg = null; nv.lastMid = 0; nv.midK = -1; nv.speaking = false; nv.coordsResolvedWithPos = false; nv.token++;
     nv.voiceOn = lsGet(VOICE_KEY, "1") !== "0";
     nv.cars = lsGet(CAR_KEY, "") || (window.__cars||"");
     document.getElementById("tnNo").textContent = entry.trainNumber || (entry.unban ? `運番${entry.unban}` : "");

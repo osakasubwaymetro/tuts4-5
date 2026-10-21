@@ -1,4 +1,5 @@
-// trainpos.js v1.6.0
+// trainpos.js v1.7.0
+// 1.7.0: 駅間が長く列車が密な路線（東海道新幹線など）で、列車が枠の横からはみ出しそうな時は全区間の駅間の高さを均等に広げる。
 // 1.6.0: 路線の列車データの読み込みを高速化。運番シートの取得を6本→16本同時に、1枚20秒のタイムアウトを付け、
 //        列車データ（最新）と乗車記録・祝日・車両マスタの取得を同時に走らせる（今までは列車を全部読み終えてから順に取っていた）。
 //        ダイヤ一覧の保持時間を1時間→1分にして、変更がほぼすぐ反映されるようにした。結果の並びはダイヤ一覧の順で毎回同じにした
@@ -665,12 +666,61 @@
     if (!st.on || !ctx || !scroll || st.trainsRoute !== ctx.routeVal) return;
 
     const rows = [...scroll.querySelectorAll(".rt-row")];
-    const centers = rows.map(r => r.offsetTop + r.offsetHeight / 2);
-    if (!centers.length) return;
+    rows.forEach(r => { r.style.minHeight = ""; }); // 前回の広げ分をリセット
+    const getCenters = () => rows.map(r => r.offsetTop + r.offsetHeight / 2);
+    if (!rows.length) return;
 
     const { date, sec } = currentNow();
     const active = computeActive(ctx, sec, date);
     const ridesIdx = indexRides(st.rides);
+    const rideOnlyList = computeRideOnly(ctx, sec, date);
+
+    // 現在の行位置から、配置する列車一覧を作る
+    const build = (centers) => {
+      const placed = active.map(a => {
+        const y0 = centers[a.pos.row0], y1 = centers[a.pos.row1];
+        if (y0 == null || y1 == null) return null;
+        return { kind: "dia", a, sign: a.pos.sign, y: y0 + (y1 - y0) * a.pos.frac };
+      }).filter(Boolean);
+      const rideOnly = rideOnlyList.map(r => {
+        const y = centers[r.row];
+        return y == null ? null : { kind: "ride", r, sign: r.sign, y };
+      }).filter(Boolean);
+      const all = placed.concat(rideOnly).sort((p, q) => p.y - q.y);
+      return { placed, rideOnly, all };
+    };
+    // 同じ側で近い列車を横に積んだ時の最大段数(k)
+    const maxStack = (all) => {
+      const sl = { left: [], right: [] };
+      let mk = 0;
+      all.forEach(p => {
+        const side = p.sign < 0 ? "left" : "right";
+        let k = 0;
+        while (sl[side].some(s => s.k === k && Math.abs(s.y - p.y) < 74)) k++;
+        sl[side].push({ y: p.y, k });
+        if (k > mk) mk = k;
+      });
+      return mk;
+    };
+
+    // 枠からはみ出す段数なら、全区間の行の高さを均等に広げる
+    const W = scroll.clientWidth || 0;
+    const kMax = W ? Math.max(0, Math.floor((W / 2 - 18 - 64 - 4) / 66)) : 99;
+    let centers = getCenters();
+    if (!centers.length) return;
+    let built = build(centers);
+    if (W && maxStack(built.all) > kMax) {
+      const base = Math.max(46, ...rows.map(r => r.offsetHeight));
+      let h = base;
+      for (let i = 0; i < 14; i++) {
+        h = Math.ceil(h * 1.25);
+        rows.forEach(r => { r.style.minHeight = h + "px"; });
+        centers = getCenters();
+        built = build(centers);
+        if (maxStack(built.all) <= kMax) break;
+      }
+    }
+    const { placed, rideOnly, all } = built;
 
     const layer = document.createElement("div");
     layer.id = "tpLayer";
@@ -678,17 +728,6 @@
 
     const fmMemo = new Map();
     const slots = { left: [], right: [] }; // 同じ側で近い列車を横にずらすための記録
-    const placed = active.map(a => {
-      const y0 = centers[a.pos.row0], y1 = centers[a.pos.row1];
-      if (y0 == null || y1 == null) return null;
-      return { kind: "dia", a, sign: a.pos.sign, y: y0 + (y1 - y0) * a.pos.frac };
-    }).filter(Boolean);
-    // ダイヤに無い乗車記録（その分の間だけ乗車駅に表示）
-    const rideOnly = computeRideOnly(ctx, sec, date).map(r => {
-      const y = centers[r.row];
-      return y == null ? null : { kind: "ride", r, sign: r.sign, y };
-    }).filter(Boolean);
-    const all = placed.concat(rideOnly).sort((p, q) => p.y - q.y);
 
     all.forEach(p => {
       const side = p.sign < 0 ? "left" : "right";
