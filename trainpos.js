@@ -1,4 +1,5 @@
-// trainpos.js v1.9.0
+// trainpos.js v1.10.0
+// 1.10.0: ダイヤ一覧の「曜日区分」の細かい指定（曜日／特定の日／期間／除外。dayrule.js）に対応。運行日（0:00〜2:59は前日）ごとに、その日に運転する列車だけ表示する
 // 1.9.0: 列車の始発駅の発車（到着）10分前から、始発駅に在線表示する。同じ運用の前の列車がまだ走行中（全区間の時刻で判定）なら、在線表示は出さず前の列車を引き続き出す
 // 1.8.2: 「所定形式」の複数画像は、列車ごとに順番ではなく、1秒ごとに 1,2,3,1,2,3… と切り替えて表示する
 // 1.8.1: 「所定形式」に改行区切りでURLを複数入れると、その運用の列車に順番に 1,2,3,1,2,3… と割り当てて表示する
@@ -145,7 +146,7 @@
   // 運用シートの行 → 列車（同じ列車番号が続くまとまり）ごとの停車情報。時刻は秒、日跨ぎは+24hで連続化
   function compactSheet(rows, listRow, viaParallel) {
     const dayRaw = String(listRow["曜日区分"] || "").trim();
-    const dayType = dayRaw ? (dayRaw.includes("土") || dayRaw.includes("休") ? "holiday" : "weekday") : "both";
+    const dayType = dayRaw ? (dayRaw.includes("土") || dayRaw.includes("休") ? "holiday" : "weekday") : "both"; // dayrule.js が無い時の判定
     const groups = [];
     let cur = null, curNum = null;
     rows.forEach(r => {
@@ -191,8 +192,8 @@
       out.push({
         unban: listRow["運番"] || "",
         trainNumber: group[0]["列車番号"] || "",
-        dayType, isExtra: isTrue(listRow["臨時"]),
-        sheetKey: `${listRow["ID"] || ""}_${listRow["運番"] || ""}_${dayType}`, // 同じ運用（＝同じ編成が走り続ける）の目印
+        dayType, dayRaw, isExtra: isTrue(listRow["臨時"]),
+        sheetKey: `${listRow["ID"] || ""}_${listRow["運番"] || ""}_${dayRaw || dayType}`, // 同じ運用（＝同じ編成が走り続ける）の目印
         bounds: [...bounds], stops,
         defaultIcons: icons, // 画像URLの一覧（複数なら1秒ごとに切り替え） // ダイヤ一覧の「所定形式」列の画像URL（編成の記録が無い時に使う）
         viaParallel: !!viaParallel // 並走路線のダイヤ一覧から取った列車（この路線のダイヤ一覧には無い）
@@ -203,7 +204,7 @@
 
   async function loadRouteTrains(ctx, onProgress) {
     const par = (ctx.parallelRoutes || []).filter(p => p.route && p.route !== ctx.routeVal);
-    const cacheKey = "tp_trains7_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
+    const cacheKey = "tp_trains8_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
     if (idb()) {
       const c = await idb().get(cacheKey);
       if (c && Array.isArray(c.trains) && Date.now() - c.fetchedAt < TRAINS_TTL_MS) return c.trains;
@@ -448,7 +449,7 @@
       return `${station}|${pad(Math.floor(day / 3600))}:${pad(Math.floor((day % 3600) / 60))}`;
     };
     st.trains.forEach(tr => {
-      if (tr.dayType !== "both" && tr.dayType !== dtype) return;
+      if (!runsOn(tr, date, hol)) return;
       tr.stops.forEach(sp => {
         [sp.a, sp.d].forEach(t => {
           if (t == null) return;
@@ -622,6 +623,11 @@
     return null;
   }
 
+  // その運行日（sd）にこの列車が運転するか。曜日区分の細かい指定は dayrule.js、無い時は平日／土休日だけで判定
+  function runsOn(tr, sd, hol) {
+    if (window.DayRule && tr.dayRaw) return DayRule.matches(tr.dayRaw, sd, st.holidaySet || new Set());
+    return tr.dayType === "both" || tr.dayType === (hol ? "holiday" : "weekday");
+  }
   // 同じ運用（sheetKey）の他の列車が、全区間の時刻でいま走行中か
   function trainRange(tr) {
     if (tr._rng) return tr._rng;
@@ -653,7 +659,7 @@
     // 今日のダイヤ（t=現在秒）と、昨日のダイヤの日跨ぎ分（t=現在秒+24h）の両方を見る
     [[baseDate, nowSec, holidayNow], [yesterday, nowSec + 86400, holidayYest]].forEach(([sd, t, hol]) => {
       st.trains.forEach(tr => {
-        if (tr.dayType !== "both" && tr.dayType !== (hol ? "holiday" : "weekday")) return;
+        if (!runsOn(tr, sd, hol)) return;
         const pos = locate(tr, t, ctx);
         if (!pos) return;
         // 在線表示は、同じ運用の前の列車がまだ走行中なら出さない（前の列車を引き続き出す）

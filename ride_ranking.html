@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車回数ランキング</title>
-<!-- version: 1.0.4 -->
+<!-- version: 1.0.5 -->
+<!-- 1.0.5: 曜日区分の細かい指定に対応。平日ダイヤの日／休日ダイヤの日のどちらに運転するかを前後1年で調べて、平／休のキーを作る（dayrule.js を使用） -->
 <!-- 1.0.4: ダイヤ照合の運番シート取得を、1枚ずつ順番から16本同時に変更 -->
 <!-- 1.0.2: 終着駅の判定を「最終行かつ駅名=行先」に修正(scripts.js v1.34.2と同じ) -->
 <!-- 1.0.1: ダイヤの時刻セルの「到着/発車」の読み方(2個=到着・発車、1個=同じ、終着駅の1個=到着のみ)に対応 -->
@@ -128,6 +129,7 @@
 
 <script src="nav.js"></script>
 <script src="logs.js?v=1.2.1"></script>
+<script src="dayrule.js?v=1.0.0"></script>
 <script>initNav("乗車回数ランキング");</script>
 <script>
 const ADMIN_USERS = ["運営"];
@@ -364,7 +366,11 @@ async function buildDiagramKeySet(routeVal, companyVal) {
     const rows = await fetchDiagramSheet(d["ID"], d["運番"]);
     const dayType = String(d["曜日区分"] || "").trim();
     const isHolidayRow = dayType.includes("土") || dayType.includes("休");
-    const dayLabels = dayType ? [isHolidayRow ? "休" : "平"] : ["平", "休"]; // 空欄=両方の曜日に適用
+    let dayLabels = dayType ? [isHolidayRow ? "休" : "平"] : ["平", "休"]; // 空欄=両方の曜日に適用
+    if (window.DayRule && dayType) {
+      const lb = DayRule.labels(dayType, holidaySet);
+      dayLabels = [lb.weekday ? "平" : null, lb.holiday ? "休" : null].filter(Boolean);
+    }
     parseDiagramTimes(rows).forEach(({ row: r, dep }) => {
       const station = r["駅名"];
       if (!station || !dep) return; // 終着駅(発車無し)は対象外

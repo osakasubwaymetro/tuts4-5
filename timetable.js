@@ -1,5 +1,6 @@
 // timetable.js
-// version: 1.14.0
+// version: 1.15.0
+// 1.15.0: ダイヤ一覧の「曜日区分」の細かい指定（曜日／特定の日／期間／除外）に対応。時刻表の平日／休日タブには、前後1年のうち運転する日の種類（平日の日／休日の日／両方）で振り分ける（dayrule.js を使用）
 // 1.14.0: 時刻表の表示を高速化（キャッシュに頼らず、取得のしかたを改善）
 //         ①運番シートの取得を「1枚ずつ順番」から「同時にまとめて（16本）」に変更（これが一番の遅さの原因だった）
 //         ②取れたシートから順に時刻表を描き直す（全部待たずに途中経過を表示。「読み込み中 12/48」を表示）
@@ -442,11 +443,18 @@ async function ttPrefetchRoute(routeVal) {
 }
 
 // 1枚の運用シートから、選んだ駅の出現を [{sign, entry}] で取り出す
+let _ttDayRuleHol = null; // 祝日セット（曜日区分の判定用。検索の最初に入れる）
 function ttExtractFromSheet(d, rows, stationName, routeVal, orderList) {
   const out = [];
   const isExtra = ["true", "TRUE", "1", "はい", "有", "✓"].includes(String(d["臨時"] || "").trim());
   const dayTypeRaw = String(d["曜日区分"] || "").trim();
-  const dayType = dayTypeRaw ? (dayTypeRaw.includes("土") || dayTypeRaw.includes("休") ? "holiday" : "weekday") : "both";
+  // 平日／土休日だけでなく、曜日・特定の日・期間などの指定は dayrule.js で、平日ダイヤの日／休日ダイヤの日のどちらに運転するかに直す
+  let dayType = dayTypeRaw ? (dayTypeRaw.includes("土") || dayTypeRaw.includes("休") ? "holiday" : "weekday") : "both";
+  if (window.DayRule && dayTypeRaw) {
+    const k = DayRule.kind(dayTypeRaw, _ttDayRuleHol);
+    if (k === "none") return out; // 前後1年に運転日が無い（過去の特定日など）
+    dayType = k;
+  }
 
   const groups = ttGroupByTrainNumber(rows);
   groups.forEach(group => {
@@ -555,6 +563,8 @@ async function ttCollectStationEntries(stationName, routeVal, onProgress, isCanc
   const companyVal = routeRow ? routeRow["会社"] : "";
   const orderList = ttRouteStationOrder(routeVal);
   const matches = await ttGetRouteDiagramRows(routeVal);
+
+  try { _ttDayRuleHol = await ttGetHolidaySet(); } catch (e) { _ttDayRuleHol = null; }
 
   // 乗車記録は、シートの取得と同時に取りに行く
   let ridePartial = null;

@@ -1,4 +1,5 @@
-// version: 1.36.0
+// version: 1.37.0
+// 1.37.0: ダイヤ一覧の「曜日区分」を細かく指定できるように対応（曜日／特定の日／期間／除外。dayrule.js を使用。無い時は今まで通り平日・土休日だけで判定）。運行日は3:00で切り替え（0:00〜2:59は前日扱い）
 // 1.36.0: ダイヤ候補（最寄り駅から選ぶ→ダイヤの時刻）の表示を高速化。運番シートを「1枚ずつ順番」から
 //         「16本ずつ同時」に取るように変更。先読み（prefetchDiagramDataForRoute）も同時本数を16に制限。
 //         シートごとに20秒のタイムアウトを付け、60秒以内に取った同じシートは使い回す（先読みと候補で二重に取らない）。
@@ -1705,13 +1706,14 @@ function isFlaggedExtraGeneric(v) {
 }
 // 今選んでいる会社・路線に該当する運用シートを全部見て、この駅を通る発車時刻を候補として集める
 // （同じ運用番号のシート内に同じ駅名が複数回出てきてもOK＝折り返しに対応）
-async function getDiagramCandidates(routeVal, boardingStation, todayIsWeekendType) {
+async function getDiagramCandidates(routeVal, boardingStation, todayIsWeekendType, svcDate, holidaySet) {
   const companyVal = document.getElementById("country")?.value || "";
   const list = await getDiagramList();
   const matches = list.filter(d => {
     if (d["会社"] !== companyVal || !diagramRowMatchesRoute(d, routeVal)) return false;
     const dayType = String(d["曜日区分"] || "").trim();
     if (!dayType) return true; // 未指定なら平日・土休日を問わず対象
+    if (window.DayRule && svcDate && holidaySet) return DayRule.matches(dayType, svcDate, holidaySet);
     const isHolidayRow = dayType.includes("土") || dayType.includes("休");
     return isHolidayRow === todayIsWeekendType;
   });
@@ -1854,7 +1856,8 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
   const hasValidRevisionDate = revisionDate && !isNaN(revisionDate);
 
   const holidaySet = await getHolidaySet();
-  const todayIsWeekendType = isWeekendType(getEffectiveNow(), holidaySet);
+  const svcDate = window.DayRule ? DayRule.serviceDate(getEffectiveNow()) : getEffectiveNow(); // 運行日（0:00〜2:59は前日）
+  const todayIsWeekendType = isWeekendType(svcDate, holidaySet);
 
   // 同じ路線・同じ乗車駅の記録のみを対象にする（ユーザーは問わない）。
   // 「臨時列車」フラグが立っている記録は、定期的な候補として出すのにふさわしくないので除外する
@@ -1964,7 +1967,7 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
     // 「本当に同じ列車」（発車時刻・行先が両方一致）の乗車記録が既にあれば、そちらは消して
     // 運番が分かるダイヤ側を優先する（行先まで見ずに時刻だけで判定すると、たまたま同じ分に
     // 発車する別方面の記録まで巻き込んで消してしまうことがあったため、行先一致も条件に追加）
-    const diagramRaw = await getDiagramCandidates(routeVal, boardingStation, todayIsWeekendType);
+    const diagramRaw = await getDiagramCandidates(routeVal, boardingStation, todayIsWeekendType, svcDate, holidaySet);
     if (myToken !== _historyPopupToken) return;
     diagramRaw
       // 選んだ方面と逆向きの列車は除外（過去の乗車記録側と同じ方向判定。時刻の窓・上位10件に

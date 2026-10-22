@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>候補デバッグツール</title>
-<!-- version: 1.0.6 -->
+<!-- version: 1.0.7 -->
+<!-- 1.0.7: 曜日区分の細かい指定（曜日／特定の日／期間／除外）に対応（scripts.js v1.37.0と同じ。dayrule.js を使用） -->
 <!-- 1.0.6: ダイヤ候補の運番シート取得を、1枚ずつ順番から16本同時に変更（scripts.js v1.36.0と同じ） -->
 <!-- 1.0.3: ダイヤ由来の候補にも方面フィルタを掛けるようにした(scripts.js v1.34.3と同じ) -->
 <!-- 1.0.2: 終着駅の判定を「最終行かつ駅名=行先」に修正(scripts.js v1.34.2と同じ) -->
@@ -134,6 +135,7 @@
 
 <div id="stages"></div>
 
+<script src="dayrule.js?v=1.0.0"></script>
 <script>
 /* ===================== マスタデータ読み込み ===================== */
 const SHEET_BASE = "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s";
@@ -338,12 +340,13 @@ async function runPool(items, limit, fn) {
   const worker = async () => { while (idx < items.length) { const i = idx++; try { await fn(items[i], i); } catch (e) {} } };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
-async function getDiagramCandidates(routeVal, boardingStation, companyVal, todayIsWeekendType) {
+async function getDiagramCandidates(routeVal, boardingStation, companyVal, todayIsWeekendType, svcDate, holidaySet) {
   const list = await getDiagramList();
   const matches = list.filter(d => {
     if (d["会社"] !== companyVal || !diagramRowMatchesRoute(d, routeVal)) return false;
     const dayType = String(d["曜日区分"] || "").trim();
     if (!dayType) return true;
+    if (window.DayRule && svcDate && holidaySet) return DayRule.matches(dayType, svcDate, holidaySet);
     const isHolidayRow = dayType.includes("土") || dayType.includes("休");
     return isHolidayRow === todayIsWeekendType;
   });
@@ -564,7 +567,8 @@ async function runDebug() {
 
   // --- STEP3: 行先ごとに分解し、方面が一致するものだけ ---
   const holidaySetLocal = holidaySet;
-  const todayIsWeekendType = isWeekendType(now, holidaySetLocal);
+  const svcDate = window.DayRule ? DayRule.serviceDate(now) : now;
+  const todayIsWeekendType = isWeekendType(svcDate, holidaySetLocal);
   const step3items = [];
   step2kept.forEach(x => {
     const bounds = String(x.raw["行先"] || "").split("/").map(s => s.trim()).filter(Boolean);
@@ -675,7 +679,7 @@ async function runDebug() {
   });
 
   // --- STEP7: ダイヤ側とマージ ---
-  const diagramRaw = await getDiagramCandidates(routeVal, boardingStation, companyVal, todayIsWeekendType);
+  const diagramRaw = await getDiagramCandidates(routeVal, boardingStation, companyVal, todayIsWeekendType, svcDate, holidaySetLocal);
   const diagramDirOk = diagramRaw.filter(c => !c.bound || computeMatchesDirection(indexOf(c.bound), c.bound).matchesDirection);
   const diagramWithDiff = diagramDirOk.map(c => ({ ...c, _diff: (timeOfDayMinutes(c.time) - refMin + 1440) % 1440 }));
   const diagramInWindow = diagramWithDiff.filter(c => max10Mode || c._diff <= WINDOW_MINUTES);
