@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車回数ランキング</title>
-<!-- version: 1.0.5 -->
+<!-- version: 1.0.6 -->
+<!-- 1.0.6: dayrule.js 1.1.0（曜日区分で「1/17,24,31 2/7,14」の書き方に対応） -->
 <!-- 1.0.5: 曜日区分の細かい指定に対応。平日ダイヤの日／休日ダイヤの日のどちらに運転するかを前後1年で調べて、平／休のキーを作る（dayrule.js を使用） -->
 <!-- 1.0.4: ダイヤ照合の運番シート取得を、1枚ずつ順番から16本同時に変更 -->
 <!-- 1.0.2: 終着駅の判定を「最終行かつ駅名=行先」に修正(scripts.js v1.34.2と同じ) -->
@@ -129,7 +130,7 @@
 
 <script src="nav.js"></script>
 <script src="logs.js?v=1.2.1"></script>
-<script src="dayrule.js?v=1.0.0"></script>
+<script src="dayrule.js?v=1.1.0"></script>
 <script>initNav("乗車回数ランキング");</script>
 <script>
 const ADMIN_USERS = ["運営"];

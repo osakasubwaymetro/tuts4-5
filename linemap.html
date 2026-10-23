@@ -7,7 +7,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.16.14 -->
+<!-- version: 1.16.17 -->
+<!-- 1.16.17: dayrule.js 1.1.0（曜日区分で「1/17,24,31 2/7,14」の書き方に対応） -->
+<!-- 1.16.16: timetable.js 1.17.0／trainpos.js 1.12.0（駅名の表記ゆれ対応） -->
+<!-- 1.16.15: trainpos.js 1.11.1 -->
 <!-- 1.16.14: trainpos.js 1.11.0（併結の縦表示） -->
 <!-- 1.16.13: timetable.js 1.16.0 -->
 <!-- 1.16.12: 曜日区分の細かい指定に対応（dayrule.js 1.0.0／timetable.js 1.15.0／trainpos.js 1.10.0） -->
@@ -543,10 +546,10 @@
 <script src="nav.js"></script>
 <script src="logs.js?v=1.2.1"></script>
 <script src="idbcache.js?v=1.0.0"></script>
-<script src="dayrule.js?v=1.0.0"></script>
-<script src="timetable.js?v=1.16.0"></script>
+<script src="dayrule.js?v=1.1.0"></script>
+<script src="timetable.js?v=1.17.0"></script>
 <script src="trainnavi.js?v=1.4.0"></script>
-<script src="trainpos.js?v=1.11.0"></script>
+<script src="trainpos.js?v=1.12.0"></script>
 <script>initNav("乗車路線マップ確認用");</script>
 <script>
 const username = checkLogin();

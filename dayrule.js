@@ -1,4 +1,5 @@
-// dayrule.js v1.0.0
+// dayrule.js v1.1.0
+// 1.1.0: 「1/17,24,31 2/7,14」のように、月日のあとに日だけを並べて書けるようにした（空白・カンマで区切る）。「1/17~24」のように範囲の終わりの月を省略するのもOK
 // ダイヤ一覧の「曜日区分」を細かく指定できるようにする共通の判定。
 // 書き方（カンマ「,」「、」か改行で区切って、どれか1つ当てはまれば運転）:
 //   空欄                 毎日
@@ -7,6 +8,7 @@
 //   金 / 月水金 / 金曜    その曜日だけ（祝日でもその曜日なら運転）
 //   祝                   祝日だけ
 //   10/25 / 2026-10-25   その日だけ（年なしは毎年）。10月25日 / 2026年10月25日 でも可
+//   1/17,24,31 2/7,14    1/17・1/24・1/31・2/7・2/14（月日のあとの数字だけは同じ月）
 //   10/25~11/3           その期間だけ（両端を含む。年なしは年またぎもOK。〜 ～ も可）
 //   !で始める            除外。例: 平日,!11/3 ＝平日だけど11/3は運休   金,!祝 ＝祝日の金曜は運休
 // 除外だけ書いた場合は「毎日から除外」の意味になる。読めない書き方は当てはまらない扱い。
@@ -34,7 +36,7 @@
       .replace(/[！]/g, "!").replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 65248))
       .replace(/[～〜]/g, "~").replace(/[／]/g, "/").replace(/[－‐―]/g, "-")
       .replace(/(\d{4})年/g, "$1/").replace(/(\d{1,2})月(\d{1,2})日?/g, "$1/$2")
-      .replace(/[ \t　]+/g, "");
+      .replace(/\s*~\s*/g, "~").replace(/[ \t　]+/g, ","); // 空白は区切り扱い（「1/17,24 2/7」のように書ける）
   }
   function parseDate(s) {
     const m = String(s).match(/^(?:(\d{4})[-\/])?(\d{1,2})[-\/](\d{1,2})$/);
@@ -45,8 +47,10 @@
     if (t.startsWith("!")) { neg = true; t = t.slice(1); }
     if (!t) return null;
     if (t.includes("~")) {
-      const [a, b] = t.split("~");
-      const s = parseDate(a), e = parseDate(b);
+      const [a, b0] = t.split("~");
+      const s = parseDate(a);
+      const b = s && /^\d{1,2}$/.test(b0) ? `${s.m}/${b0}` : b0; // 「1/17~24」のように終わりの月を省略できる
+      const e = parseDate(b);
       if (s && e) return { neg, kind: "range", s, e };
       return { neg, kind: "bad" };
     }
@@ -64,7 +68,16 @@
   function parseRule(rule) {
     const key = String(rule == null ? "" : rule);
     if (parsedCache.has(key)) return parsedCache.get(key);
-    const toks = normalize(key).split(/[,、，;；\n\r]+/).map(x => x.trim()).filter(Boolean).map(parseToken).filter(Boolean);
+    // 「1/17,24,31 2/7,14」のように、月日のあとに日だけ並べたら、直前の月日と同じ月（年）として読む
+    let ctxY = null, ctxM = null;
+    const raws = normalize(key).split(/[,、，;；\n\r]+/).map(x => x.trim()).filter(Boolean).map(x => {
+      const m = x.match(/^(!?)(\d{1,2})$/);
+      if (m && ctxM != null) return `${m[1]}${ctxY != null ? ctxY + "/" : ""}${ctxM}/${m[2]}`;
+      const d = parseDate(x.replace(/^!/, "").split("~").pop());
+      if (d) { ctxY = d.y; ctxM = d.m; }
+      return x;
+    });
+    const toks = raws.map(parseToken).filter(Boolean);
     parsedCache.set(key, toks);
     return toks;
   }
