@@ -1,4 +1,5 @@
-// trainpos.js v1.10.0
+// trainpos.js v1.11.0
+// 1.11.0: 併結列車（同じ位置を同じ方向に進む、種別・行先が違う列車）を1つにまとめ、アイコンを縦に並べて表示。バッジは列車番号を「+」でつなぎ、種別行先は1本ずつ2行、編成番号は「G11+」「U1」のように2行
 // 1.10.0: ダイヤ一覧の「曜日区分」の細かい指定（曜日／特定の日／期間／除外。dayrule.js）に対応。運行日（0:00〜2:59は前日）ごとに、その日に運転する列車だけ表示する
 // 1.9.0: 列車の始発駅の発車（到着）10分前から、始発駅に在線表示する。同じ運用の前の列車がまだ走行中（全区間の時刻で判定）なら、在線表示は出さず前の列車を引き続き出す
 // 1.8.2: 「所定形式」の複数画像は、列車ごとに順番ではなく、1秒ごとに 1,2,3,1,2,3… と切り替えて表示する
@@ -733,14 +734,26 @@
 
     // 現在の行位置から、配置する列車一覧を作る
     const build = (centers) => {
-      const placed = active.map(a => {
+      const placedRaw = active.map(a => {
         const y0 = centers[a.pos.row0], y1 = centers[a.pos.row1];
         if (y0 == null || y1 == null) return null;
-        return { kind: "dia", a, sign: a.pos.sign, y: y0 + (y1 - y0) * a.pos.frac };
+        return { kind: "dia", a, members: [a], sign: a.pos.sign, y: y0 + (y1 - y0) * a.pos.frac, h: 67 };
       }).filter(Boolean);
+      // 併結：同じ位置（同じ区間・同じ進み具合）を同じ方向に進む、種別・行先が違う列車は1つにまとめて縦に並べて表示する
+      const placed = [];
+      const gm = new Map();
+      placedRaw.forEach(p => {
+        const ps = p.a.pos;
+        const gk = [ps.row0, ps.row1, ps.frac.toFixed(4), ps.sign, ps.atStation ? 1 : 0].join("|");
+        const tb = tbKey(p.a);
+        const g = gm.get(gk);
+        if (g && !g.keys.has(tb)) { g.keys.add(tb); g.p.members.push(p.a); g.p.h = 67 + 55 * (g.p.members.length - 1); return; }
+        if (!g) gm.set(gk, { p, keys: new Set([tb]) });
+        placed.push(p);
+      });
       const rideOnly = rideOnlyList.map(r => {
         const y = centers[r.row];
-        return y == null ? null : { kind: "ride", r, sign: r.sign, y };
+        return y == null ? null : { kind: "ride", r, sign: r.sign, y, h: 67 };
       }).filter(Boolean);
       const all = placed.concat(rideOnly).sort((p, q) => p.y - q.y);
       return { placed, rideOnly, all };
@@ -752,8 +765,8 @@
       all.forEach(p => {
         const side = p.sign < 0 ? "left" : "right";
         let k = 0;
-        while (sl[side].some(s => s.k === k && Math.abs(s.y - p.y) < 74)) k++;
-        sl[side].push({ y: p.y, k });
+        while (sl[side].some(s => s.k === k && Math.abs(s.y - p.y) < (s.h + p.h) / 2 + 7)) k++;
+        sl[side].push({ y: p.y, k, h: p.h });
         if (k > mk) mk = k;
       });
       return mk;
@@ -789,8 +802,8 @@
     all.forEach(p => {
       const side = p.sign < 0 ? "left" : "right";
       let k = 0;
-      while (slots[side].some(s => s.k === k && Math.abs(s.y - p.y) < 74)) k++;
-      slots[side].push({ y: p.y, k });
+      while (slots[side].some(s => s.k === k && Math.abs(s.y - p.y) < (s.h + p.h) / 2 + 7)) k++;
+      slots[side].push({ y: p.y, k, h: p.h });
       const off = 18 + 66 * k; // 線から離す距離。同じ側が混む時は外側へずらす
       const el = document.createElement("div");
       el.style.top = p.y + "px";
@@ -812,28 +825,38 @@
         return;
       }
 
-      const fm = findFormationForSheet(p.a.train, p.a.serviceDate, ridesIdx, fmMemo);
-      const last = p.a.train.stops[p.a.train.stops.length - 1];
-      const stopOnNow = p.a.train.stops.find(s => s.bound) || {};
-      const type = stopOnNow.type || "";
-      const bound = stopOnNow.bound || (last ? last.s : "");
-      const label = `${type}${bound}`;
-      const defIcons = (!fm && p.a.train.defaultIcons) || [];
-      const icon = fm ? resolveIcon(fm.model, fm.number) : (defIcons.length ? defIcons[iconIdx(defIcons.length)] : FALLBACK_TRAIN_IMAGE);
-      const badge = p.a.train.trainNumber || (p.a.train.unban ? "運" + p.a.train.unban : "");
-      el.className = "tp-train tp-" + side + (p.a.pos.atStation ? " tp-stop" : "");
+      // 1本（または併結の複数本）ぶんの表示を作る。併結は、アイコンを縦に並べ、種別行先は2行（1本ずつ）、編成番号は「G11+」「U1」のように並べる
+      const views = p.members.map(a => {
+        const fm = findFormationForSheet(a.train, a.serviceDate, ridesIdx, fmMemo);
+        const tb = typeBound(a);
+        const defIcons = (!fm && a.train.defaultIcons) || [];
+        const icon = fm ? resolveIcon(fm.model, fm.number) : (defIcons.length ? defIcons[iconIdx(defIcons.length)] : FALLBACK_TRAIN_IMAGE);
+        const badge = a.train.trainNumber || (a.train.unban ? "運" + a.train.unban : "");
+        return { badge, icon, defIcons, label: `${tb.type}${tb.bound}`, num: fm && fm.number ? cleanNum(fm.number) : "" };
+      });
+      const multi = views.length > 1;
+      const nums = views.map(v => v.num);
+      el.className = "tp-train tp-" + side + (p.a.pos.atStation ? " tp-stop" : "") + (multi ? " tp-coupled" : "");
       el.innerHTML = `
-        <div class="tp-badge">${esc(badge)}</div>
-        <div class="tp-icon"><img src="${esc(icon)}" ${defIcons.length > 1 ? `data-icons="${esc(defIcons.join("\n"))}"` : ""} alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';"></div>
-        <div class="tp-label">${esc(label)}</div>
-        ${fm && fm.number ? `<div class="tp-num">${esc(cleanNum(fm.number))}</div>` : ""}`;
+        <div class="tp-badge">${esc(views.map(v => v.badge).filter(Boolean).join("+"))}</div>
+        ${views.map(v => `<div class="tp-icon"><img src="${esc(v.icon)}" ${v.defIcons.length > 1 ? `data-icons="${esc(v.defIcons.join("\n"))}"` : ""} alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';"></div>`).join("")}
+        ${views.map(v => `<div class="tp-label">${esc(v.label)}</div>`).join("")}
+        ${nums.some(Boolean) ? nums.map((n, i) => `<div class="tp-num">${esc(n)}${multi && i < nums.length - 1 ? "+" : ""}</div>`).join("") : ""}`;
       el.onclick = () => openDetail(p.a.train);
       layer.appendChild(el);
     });
 
     const status = document.getElementById("tpStatus");
-    if (status && !st.loading) status.textContent = `運行中 ${placed.length}本` + (rideOnly.length ? `（乗車記録のみ ${rideOnly.length}本）` : "");
+    if (status && !st.loading) status.textContent = `運行中 ${placed.reduce((n, p) => n + p.members.length, 0)}本` + (rideOnly.length ? `（乗車記録のみ ${rideOnly.length}本）` : "");
   }
+
+  // この列車のいまの種別・行先（併結のまとめ判定と表示で共通）
+  function typeBound(a) {
+    const last = a.train.stops[a.train.stops.length - 1];
+    const stopOnNow = a.train.stops.find(s => s.bound) || {};
+    return { type: stopOnNow.type || "", bound: stopOnNow.bound || (last ? last.s : "") };
+  }
+  const tbKey = a => { const t = typeBound(a); return t.type + "|" + t.bound; };
 
   // 複数の所定形式画像は1秒ごとに切り替える
   const iconIdx = n => Math.floor(Date.now() / 1000) % n;
