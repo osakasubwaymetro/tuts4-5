@@ -1,5 +1,6 @@
 // timetable.js
-// version: 1.15.0
+// version: 1.16.0
+// 1.16.0: 駅名を選んだ後に路線が1つだけなら自動で選び、路線を選んだ後に方向が1つだけなら自動で選ぶ
 // 1.15.0: ダイヤ一覧の「曜日区分」の細かい指定（曜日／特定の日／期間／除外）に対応。時刻表の平日／休日タブには、前後1年のうち運転する日の種類（平日の日／休日の日／両方）で振り分ける（dayrule.js を使用）
 // 1.14.0: 時刻表の表示を高速化（キャッシュに頼らず、取得のしかたを改善）
 //         ①運番シートの取得を「1枚ずつ順番」から「同時にまとめて（16本）」に変更（これが一番の遅さの原因だった）
@@ -1093,6 +1094,8 @@ function ttPopulateRouteSelect(stationName) {
   }
   routeSel.innerHTML = '<option value="">選択してください</option>' + routes.map(r => `<option value="${escapeHtmlTT(r)}">${escapeHtmlTT(r)}</option>`).join("");
   routeSel.disabled = false;
+  // 路線が1つだけなら、自動で選ぶ
+  if (routes.length === 1) { routeSel.value = routes[0]; routeSel.dispatchEvent(new Event("change")); }
 }
 
 // route シートの「環状方向限定」列（片方向のみ運行の環状線）。scripts.jsのgetCircularFixedDirectionと同じ
@@ -1142,6 +1145,8 @@ function ttPopulateDirSelect(stationName, routeVal) {
 
   dirSel.innerHTML = '<option value="">選択してください</option>' + opts.map(o => `<option value="${o.sign}">${escapeHtmlTT(o.label)}</option>`).join("");
   dirSel.disabled = false;
+  // 方向が1つだけなら、自動で選ぶ
+  if (opts.length === 1) { dirSel.value = String(opts[0].sign); dirSel.dispatchEvent(new Event("change")); }
 }
 
 // 他ページ（linemap.html の列車位置）から、時刻表と同じ「列車の詳細」を開く。

@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>候補デバッグツール</title>
-<!-- version: 1.0.7 -->
+<!-- version: 1.0.8 -->
+<!-- 1.0.8: 併結ダイヤのまとめ表示（scripts.js v1.38.0と同じ） -->
 <!-- 1.0.7: 曜日区分の細かい指定（曜日／特定の日／期間／除外）に対応（scripts.js v1.37.0と同じ。dayrule.js を使用） -->
 <!-- 1.0.6: ダイヤ候補の運番シート取得を、1枚ずつ順番から16本同時に変更（scripts.js v1.36.0と同じ） -->
 <!-- 1.0.3: ダイヤ由来の候補にも方面フィルタを掛けるようにした(scripts.js v1.34.3と同じ) -->
@@ -340,6 +341,39 @@ async function runPool(items, limit, fn) {
   const worker = async () => { while (idx < items.length) { const i = idx++; try { await fn(items[i], i); } catch (e) {} } };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
+// 同じ駅を同じ時刻（分）に同じ方向へ出るダイヤの候補のうち、種別・行先が違うものを「併結」として1件にまとめる。
+// （運番の違うシート同士でも、1つのセルの「/」区切りでも同じ。種別・行先が全く同じものは併結にせず別々のまま残す）
+// 併結の順番は、ダイヤ一覧・シートに出てくる順
+function mergeCoupledDiagram(list) {
+  const groups = new Map(); // HH:MM → [候補]
+  list.forEach(c => {
+    const k = formatHM(c.time);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(c);
+  });
+  const out = [];
+  groups.forEach(arr => {
+    const seenKey = new Set();
+    const members = [], rest = [];
+    arr.forEach(c => {
+      const key = c.type + "|" + c.bound;
+      if (c.bound && !seenKey.has(key)) { seenKey.add(key); members.push(c); } else rest.push(c);
+    });
+    if (members.length >= 2) {
+      const first = members[0];
+      out.push({
+        ...first,
+        isExtra: members.some(m => m.isExtra),
+        coupled: members.map(m => ({ type: m.type, bound: m.bound, unban: m.unban, trainNumber: m.trainNumber }))
+      });
+      rest.forEach(c => out.push(c));
+    } else {
+      arr.forEach(c => out.push(c));
+    }
+  });
+  return out;
+}
+
 async function getDiagramCandidates(routeVal, boardingStation, companyVal, todayIsWeekendType, svcDate, holidaySet) {
   const list = await getDiagramList();
   const matches = list.filter(d => {
@@ -426,7 +460,7 @@ function renderFinalList(candidates) {
       ${candidates.length ? `<div class="final-list">
         ${candidates.map(c => {
           const timeLabel = c.time ? formatHM(c.time) : (c.isShortcut && c.shortcutTime ? c.shortcutTime : "(時刻未設定)");
-          const dest = c.type ? `${c.type}${c.bound}行き` : `${c.bound}行き`;
+          const dest = c.coupled ? c.coupled.map(m => `${m.type || ""}${m.bound}行き`).join(" + ") : (c.type ? `${c.type}${c.bound}行き` : `${c.bound}行き`);
           const src = c.isDiagram ? `🚆 ダイヤ（運番${c.unban}）` : (c.isShortcut ? `📌 ショートカット（${c.shortcutName}）` : "📋 過去の乗車記録");
           return `<div class="final-item"><span>${timeLabel} ${dest}</span><span class="src">${src}</span></div>`;
         }).join("")}
@@ -680,7 +714,7 @@ async function runDebug() {
 
   // --- STEP7: ダイヤ側とマージ ---
   const diagramRaw = await getDiagramCandidates(routeVal, boardingStation, companyVal, todayIsWeekendType, svcDate, holidaySetLocal);
-  const diagramDirOk = diagramRaw.filter(c => !c.bound || computeMatchesDirection(indexOf(c.bound), c.bound).matchesDirection);
+  const diagramDirOk = mergeCoupledDiagram(diagramRaw.filter(c => !c.bound || computeMatchesDirection(indexOf(c.bound), c.bound).matchesDirection)); // 同じ時刻・同じ方向の種別／行先違いは併結としてまとめる
   const diagramWithDiff = diagramDirOk.map(c => ({ ...c, _diff: (timeOfDayMinutes(c.time) - refMin + 1440) % 1440 }));
   const diagramInWindow = diagramWithDiff.filter(c => max10Mode || c._diff <= WINDOW_MINUTES);
   const diagramPool = [...diagramInWindow].sort((a, b) => a._diff - b._diff).slice(0, 10);
@@ -691,14 +725,14 @@ async function runDebug() {
     const cHM = formatHM(c.time);
     let replaced = null;
     for (let i = candidates.length - 1; i >= 0; i--) {
-      if (!candidates[i].isDiagram && !candidates[i].isShortcut && formatHM(candidates[i].time) === cHM && candidates[i].bound === c.bound) {
+      if (!candidates[i].isDiagram && !candidates[i].isShortcut && formatHM(candidates[i].time) === cHM && (c.coupled ? c.coupled.map(m => m.bound) : [c.bound]).includes(candidates[i].bound)) {
         replaced = candidates[i];
         candidates.splice(i, 1);
       }
     }
     candidates.push(c);
     mergeRows.push({
-      time: cHM, type: `🚆 ${c.type}`, bound: c.bound, kept: true,
+      time: cHM, type: `🚆 ${c.coupled ? c.coupled.map(m => m.type).join(" + ") : c.type}`, bound: c.coupled ? c.coupled.map(m => m.bound).join(" + ") : c.bound, kept: true,
       reason: replaced ? `同じ列車の過去記録(${formatHM(replaced.time)} ${replaced.type}${replaced.bound}行き)をダイヤ側(運番${c.unban})に差し替え` : `ダイヤから新規追加（運番${c.unban}）`,
     });
   });

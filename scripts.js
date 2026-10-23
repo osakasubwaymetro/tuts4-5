@@ -1,4 +1,6 @@
-// version: 1.37.0
+// version: 1.38.0
+// 1.38.0: 併結ダイヤの考え方を変更。同じ駅を同じ時刻（分）に同じ方向へ出る別々の種別・行先のダイヤ（運番が違うシート同士、または1つのセルの「/」区切り）は、
+//         併結とみなして「○○:○○ はやぶさ新青森行き + こまち秋田行き」の1件にまとめて表示。押すと、併結のブロックを自動で増やして種別・行先を全部入れる
 // 1.37.0: ダイヤ一覧の「曜日区分」を細かく指定できるように対応（曜日／特定の日／期間／除外。dayrule.js を使用。無い時は今まで通り平日・土休日だけで判定）。運行日は3:00で切り替え（0:00〜2:59は前日扱い）
 // 1.36.0: ダイヤ候補（最寄り駅から選ぶ→ダイヤの時刻）の表示を高速化。運番シートを「1枚ずつ順番」から
 //         「16本ずつ同時」に取るように変更。先読み（prefetchDiagramDataForRoute）も同時本数を16に制限。
@@ -1969,10 +1971,9 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
     // 発車する別方面の記録まで巻き込んで消してしまうことがあったため、行先一致も条件に追加）
     const diagramRaw = await getDiagramCandidates(routeVal, boardingStation, todayIsWeekendType, svcDate, holidaySet);
     if (myToken !== _historyPopupToken) return;
-    diagramRaw
-      // 選んだ方面と逆向きの列車は除外（過去の乗車記録側と同じ方向判定。時刻の窓・上位10件に
-      // 絞る前にやらないと、逆方向の列車が枠を食ってしまう）
-      .filter(c => !c.bound || computeMatchesDirection(indexOf(c.bound), c.bound))
+    // 選んだ方面と逆向きの列車は除外（過去の乗車記録側と同じ方向判定。時刻の窓・上位10件に
+    // 絞る前にやらないと、逆方向の列車が枠を食ってしまう）。そのあと、同じ時刻・同じ方向で種別／行先が違うものは併結としてまとめる
+    mergeCoupledDiagram(diagramRaw.filter(c => !c.bound || computeMatchesDirection(indexOf(c.bound), c.bound)))
       .map(c => ({ ...c, _diff: (timeOfDayMinutes(c.time) - refMin + 1440) % 1440 }))
       .filter(c => max10Mode || c._diff <= WINDOW_MINUTES)
       .sort((a, b) => a._diff - b._diff)
@@ -1980,8 +1981,9 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
       .forEach(c => {
         const cHM = formatHM(c.time);
         for (let i = candidates.length - 1; i >= 0; i--) {
+          const cBounds = c.coupled ? c.coupled.map(m => m.bound) : [c.bound];
           if (!candidates[i].isDiagram && !candidates[i].isShortcut &&
-              formatHM(candidates[i].time) === cHM && candidates[i].bound === c.bound) {
+              formatHM(candidates[i].time) === cHM && cBounds.includes(candidates[i].bound)) {
             candidates.splice(i, 1);
           }
         }
@@ -2010,6 +2012,39 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
   await buildAndRender(fresh);
 }
 
+// 同じ駅を同じ時刻（分）に同じ方向へ出るダイヤの候補のうち、種別・行先が違うものを「併結」として1件にまとめる。
+// （運番の違うシート同士でも、1つのセルの「/」区切りでも同じ。種別・行先が全く同じものは併結にせず別々のまま残す）
+// 併結の順番は、ダイヤ一覧・シートに出てくる順
+function mergeCoupledDiagram(list) {
+  const groups = new Map(); // HH:MM → [候補]
+  list.forEach(c => {
+    const k = formatHM(c.time);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(c);
+  });
+  const out = [];
+  groups.forEach(arr => {
+    const seenKey = new Set();
+    const members = [], rest = [];
+    arr.forEach(c => {
+      const key = c.type + "|" + c.bound;
+      if (c.bound && !seenKey.has(key)) { seenKey.add(key); members.push(c); } else rest.push(c);
+    });
+    if (members.length >= 2) {
+      const first = members[0];
+      out.push({
+        ...first,
+        isExtra: members.some(m => m.isExtra),
+        coupled: members.map(m => ({ type: m.type, bound: m.bound, unban: m.unban, trainNumber: m.trainNumber }))
+      });
+      rest.forEach(c => out.push(c));
+    } else {
+      arr.forEach(c => out.push(c));
+    }
+  });
+  return out;
+}
+
 function renderHistoryPopupList(candidates, routeVal, boardingStation, dirVal) {
   const list = document.getElementById("historyModalList");
   list.innerHTML = "";
@@ -2023,7 +2058,9 @@ function renderHistoryPopupList(candidates, routeVal, boardingStation, dirVal) {
       const timeLabel = formatHM(c.time);
 
       if (c.isDiagram) {
-        const dest = c.bound ? `${c.type || ""}${c.bound}行き` : "";
+        const dest = c.coupled
+          ? c.coupled.map(m => `${m.type || ""}${m.bound}行き`).join(" + ")
+          : (c.bound ? `${c.type || ""}${c.bound}行き` : "");
         const mainLabel = `${c.isExtra ? "臨時 " : ""}${timeLabel} ${dest}`.trim();
         item.style.display = "flex";
         item.style.justifyContent = "space-between";
@@ -2031,7 +2068,7 @@ function renderHistoryPopupList(candidates, routeVal, boardingStation, dirVal) {
         item.style.gap = "8px";
         item.innerHTML = `
           <span>${mainLabel}</span>
-          <span style="color:#999; font-size:12px; white-space:nowrap;">${c.trainNumber ? `${c.trainNumber}(運番${c.unban})` : `運番${c.unban}`}</span>
+          <span style="color:#999; font-size:12px; white-space:nowrap;">${c.coupled ? c.coupled.map(m => `運番${m.unban}`).join(" + ") : (c.trainNumber ? `${c.trainNumber}(運番${c.unban})` : `運番${c.unban}`)}</span>
         `;
       } else {
         const dest = c.type ? `${c.type}${c.bound}行き` : `${c.bound}行き`;
@@ -2133,6 +2170,21 @@ function applyHistoryCandidate(c) {
     }
     const extraEl = document.getElementById("isExtraTrain");
     if (extraEl) extraEl.checked = !!c.isExtra;
+
+    // 併結：1号車ぶんを最初のブロックに、2つ目以降は併結のブロックを増やして入れる
+    if (c.coupled && c.coupled.length >= 2) {
+      resetRideBlocksToOne();
+      for (let i = 1; i < c.coupled.length; i++) addCoupling();
+      const blocks = document.querySelectorAll("#rideBlocks .ride-block");
+      c.coupled.forEach((m, i) => {
+        const blk = blocks[i]; if (!blk) return;
+        const ts = blk.querySelector(".sujitype-select"), bs = blk.querySelector(".bound-select");
+        if (ts) { ts.value = m.type || ""; ts.dispatchEvent(new Event("change", { bubbles: true })); }
+        if (bs) { bs.value = m.bound; bs.dispatchEvent(new Event("change", { bubbles: true })); }
+      });
+      closeHistoryModal();
+      return;
+    }
 
     const typeSel = document.querySelector(".sujitype-select");
     const boundSel = document.querySelector(".bound-select");
