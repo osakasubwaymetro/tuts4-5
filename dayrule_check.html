@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>運転日指定チェック</title>
+<!-- version: 1.0.0 -->
+<!-- 1.0.0: 新規作成。ダイヤ一覧の「曜日区分」に書く運転日の指定（dayrule.js）の書き方一覧と、書いた内容がどう読まれるか・どの日に運転するかをカレンダーで確認できる -->
+<style>
+  :root {
+    --bg: #f4f3ef; --fg: #262420; --muted: #827b6c; --card: #ffffff;
+    --border: #ddd6c7; --accent: #004C97; --ok: #2f7a4f; --ok-bg: #e7f3ea;
+    --ng: #b23b2e; --ng-bg: #fbeae6; --head: #efe9db; --run: #cfe6d6;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--fg); font-family: "Hiragino Sans","Noto Sans JP",system-ui,sans-serif; margin: 0; padding-bottom: 60px; font-size: 14px; }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.15rem; margin: 10px 0 4px; color: var(--accent); }
+  h2 { font-size: .95rem; margin: 0 0 8px; color: var(--accent); }
+  p.lead { color: var(--muted); margin: 0 0 16px; font-size: .85rem; }
+  .panel { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; }
+  textarea { width: 100%; min-height: 70px; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font-size: 1rem; font-family: inherit; resize: vertical; }
+  input[type=date], input[type=month] { padding: 7px 8px; border-radius: 7px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font-size: .9rem; }
+  label { font-size: .78rem; color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip { border: 1px solid var(--border); background: #fff; color: var(--accent); border-radius: 999px; padding: 4px 10px; font-size: .78rem; cursor: pointer; }
+  .chip:hover { background: #eef4ff; }
+  .tok { display: flex; align-items: baseline; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: .88rem; }
+  .tok:last-child { border-bottom: none; }
+  .tok code { background: var(--head); border-radius: 5px; padding: 1px 7px; font-size: .85rem; white-space: nowrap; }
+  .tok.bad code { background: var(--ng-bg); color: var(--ng); }
+  .tok .neg { color: var(--ng); font-weight: 700; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: .75rem; }
+  .badge.ok { background: var(--ok-bg); color: var(--ok); }
+  .badge.ng { background: var(--ng-bg); color: var(--ng); }
+  .summary { font-size: .88rem; line-height: 1.8; }
+  .months { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 12px; }
+  .month { border: 1px solid var(--border); border-radius: 10px; padding: 8px; background: #fff; }
+  .month h3 { margin: 0 0 4px; font-size: .82rem; text-align: center; color: var(--fg); }
+  .cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; font-size: .72rem; }
+  .cal .dow { color: var(--muted); padding-bottom: 2px; }
+  .cal .dow:first-child, .cal .d.sun { color: #c0392b; }
+  .cal .dow:nth-child(7), .cal .d.sat { color: #1d5fa8; }
+  .cal .d { padding: 4px 0; border-radius: 5px; border: 1px solid transparent; }
+  .cal .d.hol { color: #c0392b; font-weight: 700; }
+  .cal .d.run { background: var(--run); border-color: #8cc4a0; font-weight: 700; }
+  .cal .d.today { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .legend { font-size: .75rem; color: var(--muted); margin: 8px 0 0; display: flex; gap: 12px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 4px; }
+  table { border-collapse: collapse; width: 100%; font-size: .82rem; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; background: var(--head); }
+  td code { background: var(--head); border-radius: 5px; padding: 1px 6px; white-space: nowrap; }
+  .use { border: 1px solid var(--border); background: #fff; color: var(--accent); border-radius: 6px; padding: 2px 8px; font-size: .75rem; cursor: pointer; white-space: nowrap; }
+  .note { color: var(--muted); font-size: .78rem; line-height: 1.6; margin: 8px 0 0; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🗓 運転日指定チェック</h1>
+  <p class="lead">ダイヤ一覧の「曜日区分」に書く内容を入れると、どう読まれるかと、運転する日をカレンダーで確認できます（判定は本番と同じ dayrule.js）。</p>
+
+  <div class="panel">
+    <h2>① 曜日区分の内容</h2>
+    <textarea id="ruleInput" placeholder="例: 1/17,24,31 2/7,14,28" spellcheck="false"></textarea>
+    <div class="chips" id="exampleChips"></div>
+    <p class="note">カンマ「,」・空白・改行で区切ります。空欄は毎日です。</p>
+  </div>
+
+  <div class="panel">
+    <h2>② どう読まれたか</h2>
+    <div id="tokens"></div>
+    <div class="summary" id="summary" style="margin-top:10px;"></div>
+  </div>
+
+  <div class="panel">
+    <h2>③ 運転日カレンダー</h2>
+    <div class="row">
+      <label>開始月 <input type="month" id="startMonth"></label>
+      <button class="chip" id="prevBtn" type="button">◀ 前の3か月</button>
+      <button class="chip" id="nextBtn" type="button">次の3か月 ▶</button>
+      <button class="chip" id="thisBtn" type="button">今月</button>
+    </div>
+    <div class="months" id="months" style="margin-top:10px;"></div>
+    <div class="legend">
+      <span><i style="background:var(--run);border:1px solid #8cc4a0"></i>運転する日</span>
+      <span><span style="color:#c0392b;font-weight:700">赤字</span>＝日曜・祝日</span>
+      <span><span style="color:#1d5fa8">青字</span>＝土曜</span>
+    </div>
+    <p class="note" id="listNote"></p>
+  </div>
+
+  <div class="panel">
+    <h2>④ この日は運転する？</h2>
+    <div class="row">
+      <label>日付 <input type="date" id="checkDate"></label>
+      <label>時刻 <input type="time" id="checkTime" value="12:00"></label>
+    </div>
+    <div class="summary" id="dateResult" style="margin-top:8px;"></div>
+    <p class="note">運行日は3:00で切り替わります。0:00〜2:59は前日の運行日として判定されます（走行位置・最寄り駅の候補と同じ）。</p>
+  </div>
+
+  <div class="panel">
+    <h2>書き方一覧</h2>
+    <table>
+      <thead><tr><th>書き方</th><th>意味</th><th></th></tr></thead>
+      <tbody id="syntaxBody"></tbody>
+    </table>
+    <p class="note">
+      ・複数書いた場合は、どれか1つ当てはまれば運転します（「平日,10/24」＝平日と、10/24）。<br>
+      ・<b>!</b> を頭につけると除外です（除外だけ書いた場合は「毎日から除外」）。<br>
+      ・日付の年を書かない（10/25）と毎年その日付です。年を書く（2026-10-25）とその年だけです。<br>
+      ・Googleスプレッドシートは「1/2」を日付に変換することがあります。セルの書式を「プレーンテキスト」にしてください（変換後の「2026/1/2」でも読めますが、年つきの扱いになります）。<br>
+      ・読めない書き方は「当てはまらない」扱いです（②で赤く出ます）。
+    </p>
+  </div>
+</main>
+
+<script src="nav.js"></script>
+<script>initNav("運転日指定チェック");</script>
+<script src="dayrule.js?v=1.1.0"></script>
+<script>
+const SYNTAX = [
+  ["（空欄）", "毎日"],
+  ["平日", "平日ダイヤの日（土日祝以外）"],
+  ["土休日", "土日祝（土日・祝日。「土日祝」「休日」「土日」も同じ）"],
+  ["毎日", "毎日"],
+  ["金", "金曜だけ（祝日でも金曜なら運転）"],
+  ["月水金", "月・水・金だけ（「月曜」「金曜日」の書き方もOK）"],
+  ["祝", "祝日だけ"],
+  ["10/25", "10月25日だけ（毎年）"],
+  ["2026-10-25", "2026年10月25日だけ（「2026/10/25」「2026年10月25日」でも可）"],
+  ["10/25~11/3", "10月25日から11月3日まで（両端を含む。「12/25~1/5」のような年またぎもOK）"],
+  ["1/17,24,31 2/7,14,28", "月日のあとに日だけ並べると同じ月（1/17・1/24・1/31・2/7・2/14・2/28）"],
+  ["1/17~24", "1月17日から24日まで（終わりの月は省略可）"],
+  ["平日,!11/3", "平日だけど、11/3は運休"],
+  ["金,!祝", "金曜だけど、祝日の金曜は運休"],
+  ["平日,10/24", "平日に加えて、10/24（土曜）も運転"],
+];
+const EXAMPLES = ["平日", "土休日", "金", "月水金", "1/2", "1/17,24,31 2/7,14,28", "12/28~1/4", "平日,!1/1~3", "金,!祝"];
+const DOWN = "日月火水木金土";
+const pad = n => String(n).padStart(2, "0");
+const dkey = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+let HOL = new Set();
+
+const $ = id => document.getElementById(id);
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+function describe(t) {
+  const md = d => `${d.y != null ? d.y + "年" : "毎年 "}${d.m}月${d.d}日`;
+  switch (t.kind) {
+    case "all": return "毎日";
+    case "weekday": return "平日ダイヤの日（土日祝以外）";
+    case "holiday": return "土日祝（休日ダイヤの日）";
+    case "pubhol": return "祝日だけ";
+    case "dow": return [...t.set].sort().map(i => DOWN[i] + "曜").join("・");
+    case "date": return md(t.d);
+    case "range": return `${md(t.s)} 〜 ${md(t.e)}`;
+    default: return "読めません（この書き方は当てはまらない扱いになります）";
+  }
+}
+
+function renderTokens(rule) {
+  const toks = DayRule.parse(rule);
+  if (!toks.length) { $("tokens").innerHTML = '<div class="tok"><span class="badge ok">毎日</span> 空欄なので、すべての日に運転します。</div>'; return toks; }
+  // 元の文字列（正規化後）を並べる。ここでは読み取り結果の説明だけ出す
+  $("tokens").innerHTML = toks.map(t => `<div class="tok ${t.kind === "bad" ? "bad" : ""}">
+      ${t.neg ? '<span class="neg">除外</span>' : '<span class="badge ok">運転</span>'}
+      <span>${esc(describe(t))}</span></div>`).join("");
+  return toks;
+}
+
+function windowStats(rule) {
+  const base = new Date(); base.setHours(0, 0, 0, 0);
+  let n = 0, wk = 0, hl = 0, first = null, last = null;
+  for (let i = -400; i <= 400; i++) {
+    const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i);
+    if (!DayRule.matches(rule, d, HOL)) continue;
+    n++; if (DayRule.isHolidayType(d, HOL)) hl++; else wk++;
+    if (!first) first = d; last = d;
+  }
+  return { n, wk, hl, first, last };
+}
+
+function renderSummary(rule) {
+  const k = DayRule.kind(rule, HOL);
+  const kindText = { both: "平日ダイヤの日にも休日ダイヤの日にも運転します（時刻表では両方のタブに出ます）", weekday: "平日ダイヤの日だけに運転します（時刻表では平日のタブに出ます）", holiday: "休日ダイヤの日だけに運転します（時刻表では休日のタブに出ます）", none: "前後約1年に、運転する日がありません（時刻表には出ません）" }[k];
+  const w = windowStats(rule);
+  const fmt = d => d ? `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}(${DOWN[d.getDay()]})` : "-";
+  $("summary").innerHTML = `${kindText}。<br>前後約1年（今日の400日前〜400日後）で運転する日：<b>${w.n}日</b>（平日ダイヤの日 ${w.wk}日／休日ダイヤの日 ${w.hl}日）${w.n ? `<br>最初：${fmt(w.first)}　最後：${fmt(w.last)}` : ""}`;
+}
+
+function renderMonths() {
+  const rule = $("ruleInput").value;
+  const v = $("startMonth").value; if (!v) return;
+  const [y, m] = v.split("-").map(Number);
+  const today = dkey(new Date());
+  let html = "", runList = [];
+  for (let k = 0; k < 3; k++) {
+    const first = new Date(y, m - 1 + k, 1);
+    const days = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+    html += `<div class="month"><h3>${first.getFullYear()}年${first.getMonth() + 1}月</h3><div class="cal">` +
+      [...DOWN].map(c => `<div class="dow">${c}</div>`).join("") + '<div></div>'.repeat(first.getDay());
+    for (let d = 1; d <= days; d++) {
+      const dt = new Date(first.getFullYear(), first.getMonth(), d);
+      const run = DayRule.matches(rule, dt, HOL);
+      const cls = ["d", dt.getDay() === 0 ? "sun" : dt.getDay() === 6 ? "sat" : "", HOL.has(dkey(dt)) ? "hol" : "", run ? "run" : "", dkey(dt) === today ? "today" : ""].filter(Boolean).join(" ");
+      html += `<div class="${cls}" title="${dkey(dt)}">${d}</div>`;
+      if (run) runList.push(`${dt.getMonth() + 1}/${d}(${DOWN[dt.getDay()]})`);
+    }
+    html += "</div></div>";
+  }
+  $("months").innerHTML = html;
+  $("listNote").textContent = runList.length ? `この3か月で運転する日（${runList.length}日）：${runList.join("、")}` : "この3か月に運転する日はありません。";
+}
+
+function renderDate() {
+  const rule = $("ruleInput").value;
+  const dv = $("checkDate").value, tv = $("checkTime").value || "12:00";
+  if (!dv) { $("dateResult").textContent = ""; return; }
+  const [y, m, d] = dv.split("-").map(Number), [hh, mm] = tv.split(":").map(Number);
+  const real = new Date(y, m - 1, d, hh, mm);
+  const svc = DayRule.serviceDate(real);
+  const ok = DayRule.matches(rule, svc, HOL);
+  const typ = DayRule.isHolidayType(svc, HOL) ? "休日ダイヤの日（土日祝）" : "平日ダイヤの日";
+  const shifted = svc.getDate() !== real.getDate();
+  $("dateResult").innerHTML = `${y}/${m}/${d}(${DOWN[real.getDay()]}) ${tv} → 運行日は <b>${svc.getMonth() + 1}/${svc.getDate()}(${DOWN[svc.getDay()]})</b>${shifted ? "（3:00前なので前日の運行日）" : ""}<br>
+    ${ok ? '<span class="badge ok">運転する</span>' : '<span class="badge ng">運転しない</span>'}　この運行日は ${typ}${HOL.has(dkey(svc)) ? "・祝日" : ""}`;
+}
+
+function refresh() {
+  const rule = $("ruleInput").value;
+  renderTokens(rule); renderSummary(rule); renderMonths(); renderDate();
+  try { history.replaceState(null, "", rule ? "#r=" + encodeURIComponent(rule) : location.pathname); } catch (e) {}
+}
+
+function setRule(text) { $("ruleInput").value = text; refresh(); $("ruleInput").focus(); }
+
+async function init() {
+  $("exampleChips").innerHTML = EXAMPLES.map(e => `<button type="button" class="chip" data-r="${esc(e)}">${esc(e)}</button>`).join("");
+  $("exampleChips").onclick = e => { const b = e.target.closest("[data-r]"); if (b) setRule(b.dataset.r); };
+  $("syntaxBody").innerHTML = SYNTAX.map(([a, b]) => `<tr><td><code>${esc(a)}</code></td><td>${esc(b)}</td><td>${a === "（空欄）" ? "" : `<button class="use" type="button" data-r="${esc(a)}">入れる</button>`}</td></tr>`).join("");
+  $("syntaxBody").onclick = e => { const b = e.target.closest("[data-r]"); if (b) setRule(b.dataset.r); };
+
+  const now = new Date();
+  $("startMonth").value = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
+  $("checkDate").value = dkey(now);
+  const shift = n => { const [y, m] = $("startMonth").value.split("-").map(Number); const d = new Date(y, m - 1 + n, 1); $("startMonth").value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; renderMonths(); };
+  $("prevBtn").onclick = () => shift(-3);
+  $("nextBtn").onclick = () => shift(3);
+  $("thisBtn").onclick = () => { $("startMonth").value = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`; renderMonths(); };
+  $("startMonth").onchange = renderMonths;
+  $("checkDate").onchange = renderDate; $("checkTime").onchange = renderDate;
+  $("ruleInput").oninput = refresh;
+
+  const h = decodeURIComponent((location.hash.match(/^#r=(.*)$/) || [])[1] || "");
+  if (h) $("ruleInput").value = h;
+  refresh();
+
+  // 祝日（本番と同じ取り方）。取れたら表示を更新
+  try {
+    const c = JSON.parse(localStorage.getItem("tuts4_holidays_cache") || "null");
+    if (c && Array.isArray(c.dates)) HOL = new Set(c.dates);
+  } catch (e) {}
+  refresh();
+  try {
+    const res = await fetch("https://holidays-jp.github.io/api/v1/date.json");
+    HOL = new Set(Object.keys(await res.json()));
+    refresh();
+  } catch (e) { /* 祝日が取れなくても曜日だけで表示 */ }
+}
+init();
+</script>
+</body>
+</html>
