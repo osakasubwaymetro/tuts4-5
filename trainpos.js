@@ -1,4 +1,5 @@
-// trainpos.js v1.15.1
+// trainpos.js v1.15.2
+// 1.15.2: 併結で列車番号・種別行先・編成番号が同じものは、1つにまとめて表示する（2020B+2020B → 2020B）。アイコンは1本ずつ出てタップで各列車の時刻表が開く
 // 1.15.1: パターンを変えた時に、ダイヤ（キャッシュを使わず取り直し）と乗車記録を取得し直す
 // 1.15.0: 現在時刻の枠に「パターン」のプルダウンを追加。自動（今日の曜日）／平日ダイヤ／土日祝ダイヤ を切り替えて表示できる（選んだパターンに当てはまる、いちばん近い日のダイヤで表示）
 // 1.14.2: 一度広げた路線は、リロードするまで高さを一切変えない（以前は、まだ混んでいると広げ足していたので、列車が動くたびにサイズが変わってスクロールが戻されることがあった）
@@ -993,13 +994,15 @@
         return { badge, icon, defIcons, label: `${tb.type}${tb.bound}`, num: fm && fm.number ? cleanNum(fm.number) : "" };
       });
       const multi = views.length > 1;
-      const nums = views.map(v => v.num);
+      const nums = [...new Set(views.map(v => v.num).filter(Boolean))];
+      const labels = [...new Set(views.map(v => v.label))];
+      const badges = [...new Set(views.map(v => v.badge).filter(Boolean))];
       el.className = "tp-train tp-" + side + (p.a.pos.atStation ? " tp-stop" : "") + (multi ? " tp-coupled" : "");
       el.innerHTML = `
-        <div class="tp-badge">${esc(views.map(v => v.badge).filter(Boolean).join("+"))}</div>
+        <div class="tp-badge">${esc(badges.join("+"))}</div>
         ${views.map((v, i) => `<div class="tp-icon" data-mi="${i}"><img src="${esc(v.icon)}" ${v.defIcons.length > 1 ? `data-icons="${esc(v.defIcons.join("\n"))}"` : ""} alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';"></div>`).join("")}
-        ${views.map(v => `<div class="tp-label">${esc(v.label)}</div>`).join("")}
-        ${nums.some(Boolean) ? nums.map((n, i) => `<div class="tp-num">${esc(n)}${multi && i < nums.length - 1 ? "+" : ""}</div>`).join("") : ""}`;
+        ${labels.map(t => `<div class="tp-label">${esc(t)}</div>`).join("")}
+        ${nums.map((n, i) => `<div class="tp-num">${esc(n)}${i < nums.length - 1 ? "+" : ""}</div>`).join("")}`;
       el.onclick = () => openDetail(p.a.train);
       // 併結：アイコンを押すと、その列車の時刻表（列車詳細）を出す
       el.querySelectorAll(".tp-icon[data-mi]").forEach(ic => {
