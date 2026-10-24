@@ -1,4 +1,5 @@
-// trainpos.js v1.13.0
+// trainpos.js v1.13.1
+// 1.13.1: 他路線を通る区間の道のりを、via_（直通先の目印）が置いてある駅でだけ路線を乗り換える地図でたどるようにした（例: 湖西線の近江塩津の via_JR北陸本線 から北陸本線に移って敦賀へ）。同じ名前の駅に勝手に飛ばない。駅間の数の比で時刻を決める
 // 1.13.0: 時刻が書いてない区間を他路線で走る列車（例: 京都→山科→敦賀のサンダーバード。近江塩津〜敦賀）の位置を、全路線の駅を隣同士でつないだ地図で一番短い道のりにたどり、途中のこの路線の駅を駅数の比で補って出す（今までは境界駅1つだけを推定していたので、間違った道で推定されたり出なかったりした）
 // 1.12.2: 始発駅では併結の判定を発車時刻だけで行う（到着時刻は見ない）。在線表示の開始も発車の10分前から
 // 1.12.1: 始発駅の在線表示の併結判定に、発車時刻も条件に追加（到着が同じで発車が1分違う列車も別々に表示）
@@ -533,32 +534,78 @@
     return ctx._ri;
   }
 
-  // 全路線の駅を「隣の駅同士」でつないだ地図（路線をまたぐ共通の駅でつながる）。via_は飛ばす
+  // 全路線の駅を「隣の駅同士」でつないだ地図。路線をまたぐのは、via_（直通先の目印）が置いてある駅だけ
+  // （例: 湖西線の端の「近江塩津」に via_JR北陸本線 があれば、近江塩津で湖西線→北陸本線に乗り換えて進める）。
+  // 同じ名前の駅だからといって、無関係な路線に勝手に飛ばないようにするため
   const canonKey = n => { const k = nameKey(n); const g = st.aliasMap && st.aliasMap.get(k); return g ? [...g].sort()[0] : k; };
+  const nodeId = (r, n) => r + "\u0001" + canonKey(n);
   function stationGraph(ctx) {
     if (ctx._g && ctx._gRoute === ctx.routeVal) return ctx._g;
-    const { byRoute } = routeInfo(ctx);
-    const adj = new Map();
-    const link = (a, b) => { if (a === b) return; if (!adj.has(a)) adj.set(a, new Set()); if (!adj.has(b)) adj.set(b, new Set()); adj.get(a).add(b); adj.get(b).add(a); };
-    byRoute.forEach(names => { for (let i = 1; i < names.length; i++) link(canonKey(names[i - 1]), canonKey(names[i])); });
-    ctx._g = { adj, memo: new Map() }; ctx._gRoute = ctx.routeVal;
+    const rowsBy = new Map(); // 路線 → 生の駅名の並び（via_込み）
+    (ctx.stationData || []).forEach(r => {
+      const n = String(r["駅名"] || "");
+      if (!n) return;
+      if (!rowsBy.has(r["路線"])) rowsBy.set(r["路線"], []);
+      rowsBy.get(r["路線"]).push(n);
+    });
+    const adj = new Map(); // ノード → Map(隣ノード → 駅間の数(0 or 1))
+    const link = (a, b, w) => {
+      if (a === b) return;
+      if (!adj.has(a)) adj.set(a, new Map()); if (!adj.has(b)) adj.set(b, new Map());
+      if (!adj.get(a).has(b) || adj.get(a).get(b) > w) { adj.get(a).set(b, w); adj.get(b).set(a, w); }
+    };
+    const stationsOf = new Map(); // 路線 → 駅名キーのSet（via_を除く）
+    rowsBy.forEach((rows, rt) => stationsOf.set(rt, new Set(rows.filter(n => !n.startsWith("via_")).map(canonKey))));
+    const nodesOfStation = new Map(); // 駅名キー → ノード一覧
+    rowsBy.forEach((rows, rt) => {
+      const real = rows.filter(n => !n.startsWith("via_"));
+      real.forEach(n => {
+        const id = nodeId(rt, n), k = canonKey(n);
+        if (!nodesOfStation.has(k)) nodesOfStation.set(k, []);
+        nodesOfStation.get(k).push(id);
+      });
+      for (let i = 1; i < real.length; i++) link(nodeId(rt, real[i - 1]), nodeId(rt, real[i]), 1);
+      // via_ の両隣の駅が、直通先の路線にもあれば、そこで乗り換えられる（駅間の数は増えない）
+      rows.forEach((n, i) => {
+        if (!n.startsWith("via_")) return;
+        const target = n.slice(4);
+        if (!stationsOf.has(target)) return;
+        [rows.slice(0, i).reverse().find(x => !x.startsWith("via_")), rows.slice(i + 1).find(x => !x.startsWith("via_"))].forEach(nb => {
+          if (nb && stationsOf.get(target).has(canonKey(nb))) link(nodeId(rt, nb), nodeId(target, nb), 0);
+        });
+      });
+    });
+    ctx._g = { adj, nodesOfStation, memo: new Map() }; ctx._gRoute = ctx.routeVal;
     return ctx._g;
   }
-  // 2駅の間の一番短い道のり（駅数が最小）。見つからなければ null
+  // 2駅の間の一番短い道のり（駅間の数が最小）。[{r:路線, k:駅名キー, m:そこまでの駅間の数}] を返す。無ければ null
   function graphPath(ctx, from, to) {
     const g = stationGraph(ctx);
-    const a = canonKey(from), b = canonKey(to), mk = a + ">" + b;
+    const fk = canonKey(from), tk = canonKey(to), mk = fk + ">" + tk;
     if (g.memo.has(mk)) return g.memo.get(mk);
     let res = null;
-    if (g.adj.has(a) && g.adj.has(b)) {
-      const prev = new Map([[a, null]]);
-      let frontier = [a];
-      while (frontier.length && !prev.has(b)) {
-        const next = [];
-        for (const u of frontier) for (const v of g.adj.get(u)) if (!prev.has(v)) { prev.set(v, u); next.push(v); }
-        frontier = next;
+    const starts = g.nodesOfStation.get(fk) || [], goals = new Set(g.nodesOfStation.get(tk) || []);
+    if (starts.length && goals.size) {
+      const dist = new Map(), prev = new Map();
+      const dq = [];
+      starts.forEach(n => { dist.set(n, 0); prev.set(n, null); dq.push(n); });
+      // 0-1 BFS（乗り換えは0、駅間は1）
+      let head = 0; const front = [];
+      const pop = () => front.length ? front.pop() : dq[head++];
+      while (front.length || head < dq.length) {
+        const u = pop(), du = dist.get(u);
+        for (const [v, w] of g.adj.get(u) || []) {
+          const nd = du + w;
+          if (!dist.has(v) || nd < dist.get(v)) { dist.set(v, nd); prev.set(v, u); if (w === 0) front.push(v); else dq.push(v); }
+        }
       }
-      if (prev.has(b)) { res = []; for (let x = b; x != null; x = prev.get(x)) res.push(x); res.reverse(); }
+      let best = null;
+      goals.forEach(n => { if (dist.has(n) && (best == null || dist.get(n) < dist.get(best))) best = n; });
+      if (best != null) {
+        res = [];
+        for (let x = best; x != null; x = prev.get(x)) { const [r, k] = x.split("\u0001"); res.push({ r, k, m: dist.get(x) }); }
+        res.reverse();
+      }
     }
     g.memo.set(mk, res);
     return res;
@@ -618,13 +665,15 @@
       // 2駅の間を、路線の駅を隣同士でつないだ地図で一番短い道のりでたどり、その途中のこの路線の駅を
       // 駅数の比で時刻を決めて差し込む（時刻の書いてない区間でも、他路線を通ってこの路線に入る列車の位置が出る）
       const gp = graphPath(ctx, P.s, Q.s);
-      if (gp && gp.length >= 3) {
-        const H = gp.length - 1;
-        for (let h = 1; h < H; h++) {
-          if (!idxOf.has(gp[h])) continue;
-          const t = P.d + (Q.a - P.d) * h / H;
-          out.push({ s: gp[h], a: t, d: t, pass: true });
-        }
+      if (gp && gp[gp.length - 1].m > 0) {
+        const H = gp[gp.length - 1].m;
+        const seen = new Set();
+        gp.forEach(nd => {
+          if (nd.r !== ctx.routeVal || nd.m <= 0 || nd.m >= H || !idxOf.has(nd.k) || seen.has(nd.k)) return;
+          seen.add(nd.k);
+          const t = P.d + (Q.a - P.d) * nd.m / H;
+          out.push({ s: nd.k, a: t, d: t, pass: true });
+        });
         continue;
       }
       if (pOn === qOn) continue;
