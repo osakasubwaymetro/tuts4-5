@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>候補デバッグツール</title>
-<!-- version: 1.0.10 -->
+<!-- version: 1.0.11 -->
 <!-- 1.0.9: dayrule.js 1.1.0（曜日区分で「1/17,24,31 2/7,14」の書き方に対応） -->
 <!-- 1.0.8: 併結ダイヤのまとめ表示（scripts.js v1.38.0と同じ） -->
 <!-- 1.0.7: 曜日区分の細かい指定（曜日／特定の日／期間／除外）に対応（scripts.js v1.37.0と同じ。dayrule.js を使用） -->
@@ -355,7 +355,10 @@ function mergeCoupledDiagram(list) {
   const out = [];
   groups.forEach(arr => {
     const members = [], rest = [];
-    arr.forEach(c => { if (c.bound) members.push(c); else rest.push(c); });
+    const numCount = new Map();
+    arr.forEach(c => { if (c.trainNumber) numCount.set(c.trainNumber, (numCount.get(c.trainNumber) || 0) + 1); });
+    // 行先が空でも、同じ列車番号が2つ以上あるものは必ず併結に入れる
+    arr.forEach(c => { if (c.bound || (c.trainNumber && numCount.get(c.trainNumber) > 1)) members.push(c); else rest.push(c); });
     if (members.length >= 2) {
       const first = members[0];
       out.push({

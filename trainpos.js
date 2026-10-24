@@ -1,4 +1,5 @@
-// trainpos.js v1.14.0
+// trainpos.js v1.14.1
+// 1.14.1: 列車番号が同じ列車が2本以上走っているときは、位置や時刻に関係なく必ず併結としてまとめる
 // 1.14.0: 種別も行先も同じ列車でも、同じ位置・同じ時刻なら併結として1つにまとめる。併結のアイコンは1つずつ押せて、押した列車の時刻表（列車詳細）が出る
 // 1.13.1: 他路線を通る区間の道のりを、via_（直通先の目印）が置いてある駅でだけ路線を乗り換える地図でたどるようにした（例: 湖西線の近江塩津の via_JR北陸本線 から北陸本線に移って敦賀へ）。同じ名前の駅に勝手に飛ばない。駅間の数の比で時刻を決める
 // 1.13.0: 時刻が書いてない区間を他路線で走る列車（例: 京都→山科→敦賀のサンダーバード。近江塩津〜敦賀）の位置を、全路線の駅を隣同士でつないだ地図で一番短い道のりにたどり、途中のこの路線の駅を駅数の比で補って出す（今までは境界駅1つだけを推定していたので、間違った道で推定されたり出なかったりした）
@@ -875,6 +876,21 @@
         gm.set(gk, p);
         placed.push(p);
       });
+      // 列車番号が同じ列車は、位置・時刻が違っても必ず併結扱いにする（先に出てきた方の位置にまとめる）
+      const byNum = new Map();
+      for (let i = 0; i < placed.length; i++) {
+        const el = placed[i];
+        const nums = el.members.map(m => m.train.trainNumber).filter(Boolean);
+        const hit = nums.map(n => byNum.get(n)).find(x => x && x !== el);
+        if (hit) {
+          hit.members.push(...el.members);
+          hit.h = 67 + 55 * (hit.members.length - 1);
+          placed.splice(i, 1); i--;
+          hit.members.forEach(m => m.train.trainNumber && byNum.set(m.train.trainNumber, hit));
+        } else {
+          nums.forEach(n => byNum.set(n, el));
+        }
+      }
       const rideOnly = rideOnlyList.map(r => {
         const y = centers[r.row];
         return y == null ? null : { kind: "ride", r, sign: r.sign, y, h: 67 };

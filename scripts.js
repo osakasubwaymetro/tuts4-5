@@ -1,4 +1,5 @@
-// version: 1.38.2
+// version: 1.38.3
+// 1.38.3: 同じ列車番号が2つ以上ある候補は、行先が空でも必ず併結としてまとめる
 // 1.38.2: 同じ時刻で種別も行先も同じダイヤも併結としてまとめる
 // 1.38.1: 駅名の表記ゆれ（stationaliasシート）に対応。ダイヤの駅名・行先が通称（例: なんば）でも、正式名称の駅（難波）と同じ駅として候補に出す
 // 1.38.0: 併結ダイヤの考え方を変更。同じ駅を同じ時刻（分）に同じ方向へ出る別々の種別・行先のダイヤ（運番が違うシート同士、または1つのセルの「/」区切り）は、
@@ -2030,7 +2031,10 @@ function mergeCoupledDiagram(list) {
   const out = [];
   groups.forEach(arr => {
     const members = [], rest = [];
-    arr.forEach(c => { if (c.bound) members.push(c); else rest.push(c); });
+    const numCount = new Map();
+    arr.forEach(c => { if (c.trainNumber) numCount.set(c.trainNumber, (numCount.get(c.trainNumber) || 0) + 1); });
+    // 行先が空でも、同じ列車番号が2つ以上あるものは必ず併結に入れる
+    arr.forEach(c => { if (c.bound || (c.trainNumber && numCount.get(c.trainNumber) > 1)) members.push(c); else rest.push(c); });
     if (members.length >= 2) {
       const first = members[0];
       out.push({
