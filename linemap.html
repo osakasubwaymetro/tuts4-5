@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.16.25 -->
+<!-- version: 1.17.0 -->
+<!-- 1.17.0: 駅名の右に「乗換」ボタン。押すと、同じ駅（stationaliasの別表記も同じ駅）を通るほかの路線を下から出して、押した路線へ飛べる -->
 <!-- 1.16.25: trainpos.js 1.14.1 -->
 <!-- 1.16.24: trainpos.js 1.14.0 -->
 <!-- 1.16.23: trainpos.js 1.13.1 -->
@@ -236,6 +237,21 @@
     margin-left: 6px;
     vertical-align: middle;
   }
+  /* 乗換ボタン（駅名の右）と、押したときに下から出る「のりかえ駅」シート */
+  .xfer-btn { display:inline-block; margin-left:10px; padding:0; border:0; background:#1a5a8a; cursor:pointer; vertical-align:middle;
+    clip-path:polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%); letter-spacing:0; }
+  .xfer-btn span { display:block; margin:1.5px; padding:2px 14px 2px 8px; background:#fff; color:#1a5a8a; font-size:12px; font-weight:bold; letter-spacing:0;
+    clip-path:polygon(0 0, calc(100% - 8px) 0, 100% 50%, calc(100% - 8px) 100%, 0 100%); }
+  .xfer-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:10002; }
+  .xfer-overlay.show { display:block; }
+  .xfer-sheet { position:absolute; left:0; right:0; bottom:0; max-height:75vh; overflow-y:auto; background:#ececec; border-radius:16px 16px 0 0; padding:8px 16px 28px; }
+  .xfer-grab { width:56px; height:4px; border-radius:2px; background:#aaa; margin:0 auto 10px; }
+  .xfer-close { position:absolute; top:10px; right:12px; width:34px; height:34px; border-radius:50%; border:0; background:#999; color:#fff; font-size:18px; line-height:1; cursor:pointer; }
+  .xfer-title { text-align:center; font-weight:bold; color:#333; font-size:15px; }
+  .xfer-st { text-align:center; font-weight:bold; color:#222; font-size:22px; margin:18px 0 14px; }
+  .xfer-item { display:block; width:100%; text-align:left; background:#fff; border:0; border-radius:12px; padding:14px 14px 16px; margin-bottom:10px; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,0.08); }
+  .xfer-item .ln { font-size:13px; color:#666; }
+  .xfer-item .nm { font-size:17px; font-weight:bold; color:#111; margin-top:8px; }
   .rt-row { position: relative; }
   .parallel-line {
     position: absolute;
@@ -513,6 +529,16 @@
 
   <div id="mapResult"></div>
 
+  <div class="xfer-overlay" id="xferOverlay" onclick="if(event.target===this) closeXfer()">
+    <div class="xfer-sheet">
+      <button type="button" class="xfer-close" onclick="closeXfer()" aria-label="閉じる">✕</button>
+      <div class="xfer-grab"></div>
+      <div class="xfer-title">のりかえ駅</div>
+      <div class="xfer-st" id="xferStation"></div>
+      <div id="xferList"></div>
+    </div>
+  </div>
+
   <div class="tt-modal-overlay" id="ttTrainDetailOverlay" onclick="if(event.target===this) ttCloseTrainDetail()">
     <div class="tt-modal">
       <div class="tt-modal-header">
@@ -761,6 +787,58 @@ function jumpToRoute(routeName) {
   renderMap();
   saveSelection();
 }
+
+/* ----------------------------------------
+   乗換（駅名の右の「乗換」ボタン）
+   乗換先は index の「最寄り駅から選択」と同じ考え方：駅マスタ（station）に、同じ駅名（stationaliasの
+   別表記も同じ駅）で載っている、ほかの路線。via_の行・同じ路線の別区間（路線名[区間]）は除く
+---------------------------------------- */
+fetchCachedMasterData("stationalias", BASE + "stationalias", data => {
+  try { ttBuildAlias(data); } catch (e) { /* timetable.js が無ければ表記ゆれ無しで動く */ }
+  if (document.getElementById("mapRoute").value && allstationData.length) renderMap();
+});
+function xferCanon(n) { try { return ttCanon(n); } catch (e) { return String(n || "").replace(/駅$/, ""); } }
+function xferBaseRoute(r) { return String(r || "").replace(/\[[^\]]*\]\s*$/, "").trim(); }
+let _xferIdx = null, _xferIdxFor = null;
+function xferRoutesAt(stationName, currentRoute) {
+  if (_xferIdxFor !== allstationData) {
+    _xferIdx = new Map();
+    allstationData.forEach(r => {
+      const n = r["駅名"], rt = r["路線"];
+      if (!n || !rt || isViaEntry(n)) return;
+      const k = xferCanon(n);
+      if (!_xferIdx.has(k)) _xferIdx.set(k, new Set());
+      _xferIdx.get(k).add(rt);
+    });
+    _xferIdxFor = allstationData;
+  }
+  const set = _xferIdx.get(xferCanon(stationName));
+  if (!set) return [];
+  const curBase = xferBaseRoute(currentRoute);
+  return [...set].filter(rt => rt !== currentRoute && xferBaseRoute(rt) !== curBase);
+}
+function openXfer(stationName, currentRoute) {
+  const routes = xferRoutesAt(stationName, currentRoute);
+  document.getElementById("xferStation").textContent = stationName.replace(/駅$/, "") + "駅";
+  const box = document.getElementById("xferList");
+  box.innerHTML = "";
+  routes.forEach(rt => {
+    const meta = allrouteData.find(r => r["路線"] === rt);
+    const company = meta ? (meta["会社"] || "") : "";
+    const label = company && !rt.includes(company) ? company + " " + rt : rt;
+    const row = allstationData.find(r => r["路線"] === rt && !isViaEntry(r["駅名"]) && xferCanon(r["駅名"]) === xferCanon(stationName));
+    const nm = ((row && row["駅名"]) || stationName).replace(/駅$/, "") + "駅";
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "xfer-item";
+    b.innerHTML = `<div class="ln"></div><div class="nm"></div>`;
+    b.querySelector(".ln").textContent = "🚆 " + label;
+    b.querySelector(".nm").textContent = nm;
+    b.onclick = () => { closeXfer(); jumpToRoute(rt); };
+    box.appendChild(b);
+  });
+  document.getElementById("xferOverlay").classList.add("show");
+}
+function closeXfer() { document.getElementById("xferOverlay").classList.remove("show"); }
 
 /* ----------------------------------------
    via_（直通先）関連のヘルパー
@@ -1629,7 +1707,7 @@ function renderMap() {
     html += `
       <div class="rt-row${shaded}">
         ${parallelLines}
-        <div class="rt-name">${name}</div>
+        <div class="rt-name">${name}${xferRoutesAt(name, routeVal).length ? `<button type="button" class="xfer-btn" data-st="${escAttr(name)}"><span>乗換</span></button>` : ""}</div>
         <div class="rt-dot-wrap">
           <div class="rt-line-half" style="background:${upperColor};"></div>
           <span class="rt-dot" style="${dotRidden ? `background:${riddenColor};border-color:${riddenColor};` : `border-color:${unriddenColor};`}"></span>
@@ -1660,6 +1738,9 @@ function renderMap() {
 
   box.querySelectorAll(".via-pill").forEach(btn => {
     btn.onclick = () => jumpToRoute(btn.dataset.route);
+  });
+  box.querySelectorAll(".xfer-btn").forEach(btn => {
+    btn.onclick = () => openXfer(btn.dataset.st, routeVal);
   });
 
   // 列車位置（trainpos.js）：描画した路線図の上に、今走ってる列車を重ねる
