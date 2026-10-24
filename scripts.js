@@ -1,4 +1,6 @@
-// version: 1.38.0
+// version: 1.38.2
+// 1.38.2: 同じ時刻で種別も行先も同じダイヤも併結としてまとめる
+// 1.38.1: 駅名の表記ゆれ（stationaliasシート）に対応。ダイヤの駅名・行先が通称（例: なんば）でも、正式名称の駅（難波）と同じ駅として候補に出す
 // 1.38.0: 併結ダイヤの考え方を変更。同じ駅を同じ時刻（分）に同じ方向へ出る別々の種別・行先のダイヤ（運番が違うシート同士、または1つのセルの「/」区切り）は、
 //         併結とみなして「○○:○○ はやぶさ新青森行き + こまち秋田行き」の1件にまとめて表示。押すと、併結のブロックを自動で増やして種別・行先を全部入れる
 // 1.37.0: ダイヤ一覧の「曜日区分」を細かく指定できるように対応（曜日／特定の日／期間／除外。dayrule.js を使用。無い時は今まで通り平日・土休日だけで判定）。運行日は3:00で切り替え（0:00〜2:59は前日扱い）
@@ -1727,7 +1729,7 @@ async function getDiagramCandidates(routeVal, boardingStation, todayIsWeekendTyp
     const results = [];
     const isExtra = isFlaggedExtraGeneric(d["臨時"]);
     parseDiagramTimes(rows).forEach(({ row: r, dep }) => {
-      if (r["駅名"] !== boardingStation) return;
+      if (r["駅名"] !== boardingStation && !isStationNameMatch(r["駅名"], boardingStation)) return; // 通称（ひらがな等）で書いてあっても同じ駅
       // 乗車駅の候補には「発車時刻」を使う（終着駅は発車が無いので候補に出さない）
       if (!dep) return;
       const hm = dep.match(/^(\d{1,2}):(\d{2})$/);
@@ -1767,7 +1769,10 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
   document.getElementById("historyModalOverlay").classList.add("show");
 
   const stationsOnRoute = (allstationData || []).filter(r => r["路線"] === routeVal);
-  const indexOf = name => stationsOnRoute.findIndex(r => r["駅名"] === name);
+  const indexOf = name => {
+    const i = stationsOnRoute.findIndex(r => r["駅名"] === name);
+    return i !== -1 || !name ? i : stationsOnRoute.findIndex(r => isStationNameMatch(r["駅名"], name)); // 通称の行先でも判定できるように
+  };
   const isCircular = dirVal === "__outer__" || dirVal === "__inner__";
   const dirIndex = isCircular ? null : indexOf(dirVal);
   const boardingIndex = isCircular ? null : indexOf(boardingStation);
@@ -2013,7 +2018,7 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
 }
 
 // 同じ駅を同じ時刻（分）に同じ方向へ出るダイヤの候補のうち、種別・行先が違うものを「併結」として1件にまとめる。
-// （運番の違うシート同士でも、1つのセルの「/」区切りでも同じ。種別・行先が全く同じものは併結にせず別々のまま残す）
+// （運番の違うシート同士でも、1つのセルの「/」区切りでも同じ。種別・行先が全く同じでも、同じ時刻なら併結にする。行先が空のものだけ別々のまま残す）
 // 併結の順番は、ダイヤ一覧・シートに出てくる順
 function mergeCoupledDiagram(list) {
   const groups = new Map(); // HH:MM → [候補]
@@ -2024,12 +2029,8 @@ function mergeCoupledDiagram(list) {
   });
   const out = [];
   groups.forEach(arr => {
-    const seenKey = new Set();
     const members = [], rest = [];
-    arr.forEach(c => {
-      const key = c.type + "|" + c.bound;
-      if (c.bound && !seenKey.has(key)) { seenKey.add(key); members.push(c); } else rest.push(c);
-    });
+    arr.forEach(c => { if (c.bound) members.push(c); else rest.push(c); });
     if (members.length >= 2) {
       const first = members[0];
       out.push({

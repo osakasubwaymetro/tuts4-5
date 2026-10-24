@@ -1,4 +1,5 @@
-// trainpos.js v1.13.1
+// trainpos.js v1.14.0
+// 1.14.0: 種別も行先も同じ列車でも、同じ位置・同じ時刻なら併結として1つにまとめる。併結のアイコンは1つずつ押せて、押した列車の時刻表（列車詳細）が出る
 // 1.13.1: 他路線を通る区間の道のりを、via_（直通先の目印）が置いてある駅でだけ路線を乗り換える地図でたどるようにした（例: 湖西線の近江塩津の via_JR北陸本線 から北陸本線に移って敦賀へ）。同じ名前の駅に勝手に飛ばない。駅間の数の比で時刻を決める
 // 1.13.0: 時刻が書いてない区間を他路線で走る列車（例: 京都→山科→敦賀のサンダーバード。近江塩津〜敦賀）の位置を、全路線の駅を隣同士でつないだ地図で一番短い道のりにたどり、途中のこの路線の駅を駅数の比で補って出す（今までは境界駅1つだけを推定していたので、間違った道で推定されたり出なかったりした）
 // 1.12.2: 始発駅では併結の判定を発車時刻だけで行う（到着時刻は見ない）。在線表示の開始も発車の10分前から
@@ -869,10 +870,9 @@
       placedRaw.forEach(p => {
         const ps = p.a.pos;
         const gk = [ps.row0, ps.row1, ps.frac.toFixed(4), ps.sign, ps.atStation ? 1 : 0, ps.sig].join("|"); // 時刻（発車・到着）も同じものだけ併結とみなす
-        const tb = tbKey(p.a);
         const g = gm.get(gk);
-        if (g && !g.keys.has(tb)) { g.keys.add(tb); g.p.members.push(p.a); g.p.h = 67 + 55 * (g.p.members.length - 1); return; }
-        if (!g) gm.set(gk, { p, keys: new Set([tb]) });
+        if (g) { g.members.push(p.a); g.h = 67 + 55 * (g.members.length - 1); return; }
+        gm.set(gk, p);
         placed.push(p);
       });
       const rideOnly = rideOnlyList.map(r => {
@@ -963,10 +963,14 @@
       el.className = "tp-train tp-" + side + (p.a.pos.atStation ? " tp-stop" : "") + (multi ? " tp-coupled" : "");
       el.innerHTML = `
         <div class="tp-badge">${esc(views.map(v => v.badge).filter(Boolean).join("+"))}</div>
-        ${views.map(v => `<div class="tp-icon"><img src="${esc(v.icon)}" ${v.defIcons.length > 1 ? `data-icons="${esc(v.defIcons.join("\n"))}"` : ""} alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';"></div>`).join("")}
+        ${views.map((v, i) => `<div class="tp-icon" data-mi="${i}"><img src="${esc(v.icon)}" ${v.defIcons.length > 1 ? `data-icons="${esc(v.defIcons.join("\n"))}"` : ""} alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';"></div>`).join("")}
         ${views.map(v => `<div class="tp-label">${esc(v.label)}</div>`).join("")}
         ${nums.some(Boolean) ? nums.map((n, i) => `<div class="tp-num">${esc(n)}${multi && i < nums.length - 1 ? "+" : ""}</div>`).join("") : ""}`;
       el.onclick = () => openDetail(p.a.train);
+      // 併結：アイコンを押すと、その列車の時刻表（列車詳細）を出す
+      el.querySelectorAll(".tp-icon[data-mi]").forEach(ic => {
+        ic.onclick = ev => { ev.stopPropagation(); const m = p.members[+ic.dataset.mi]; if (m) openDetail(m.train); };
+      });
       layer.appendChild(el);
     });
 
