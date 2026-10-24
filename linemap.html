@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.22.0 -->
+<!-- version: 1.22.1 -->
+<!-- 1.22.1: 並走先に間の駅が無い時（例: 京浜東北線の鶯谷が常磐快速線に無い）、並走線が途切れて日暮里と上野にだけ乱立するのを、間の駅も並走中にして繋ぐ -->
 <!-- 1.22.0: timetable.js 1.18.0／trainpos.js 1.16.0（スタフの着後に次の列車番号・前後の列車のスタフに飛ぶボタン） -->
 <!-- 1.21.1: trainpos.js 1.15.2（併結の同じ列車番号・種別行先を1つにまとめて表示） -->
 <!-- 1.21.0: trainpos.js 1.15.1（パターンを変えたらダイヤ・乗車記録を取り直す）／全キャッシュクリアボタン（🧹）を一時的に全ユーザーに表示 -->
@@ -1426,6 +1427,25 @@ function getBidiParallelInfoAll() {
           extra[partner][pIdx].add(rt);
         });
       });
+    });
+
+    // 並走先に、こちらの路線の「間の駅」が無い場合の穴埋め。
+    // 例: 常磐快速線は日暮里→上野で京浜東北線と並走するが、常磐快速線に鶯谷は無い。
+    // このままだと京浜東北線側は日暮里と上野の行にしか並走線が付かず、間の鶯谷が抜けて線が途切れる。
+    // 宣言してる側で隣り合う2駅がどちらも並走中なら、並走先の路線でその2駅の間にある駅も並走中にする
+    routeNames.forEach(rt => {
+      const info = oneWay[rt];
+      for (let i = 0; i + 1 < info.stationsOnRoute.length; i++) {
+        info.activeParallelByIndex[i].forEach(partner => {
+          if (!info.activeParallelByIndex[i + 1].includes(partner)) return;
+          const pInfo = oneWay[partner];
+          if (!pInfo) return;
+          const a = pInfo.stationsOnRoute.indexOf(info.stationsOnRoute[i]);
+          const b = pInfo.stationsOnRoute.indexOf(info.stationsOnRoute[i + 1]);
+          if (a === -1 || b === -1 || Math.abs(a - b) <= 1) return;
+          for (let k = Math.min(a, b) + 1; k < Math.max(a, b); k++) extra[partner][k].add(rt);
+        });
+      }
     });
 
     const result = {};
