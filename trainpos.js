@@ -1,4 +1,5 @@
-// trainpos.js v1.15.0
+// trainpos.js v1.15.1
+// 1.15.1: パターンを変えた時に、ダイヤ（キャッシュを使わず取り直し）と乗車記録を取得し直す
 // 1.15.0: 現在時刻の枠に「パターン」のプルダウンを追加。自動（今日の曜日）／平日ダイヤ／土日祝ダイヤ を切り替えて表示できる（選んだパターンに当てはまる、いちばん近い日のダイヤで表示）
 // 1.14.2: 一度広げた路線は、リロードするまで高さを一切変えない（以前は、まだ混んでいると広げ足していたので、列車が動くたびにサイズが変わってスクロールが戻されることがあった）
 // 1.14.1: 列車番号が同じ列車が2本以上走っているときは、位置や時刻に関係なく必ず併結としてまとめる
@@ -228,10 +229,11 @@
     return out;
   }
 
-  async function loadRouteTrains(ctx, onProgress) {
+  async function loadRouteTrains(ctx, onProgress, force) {
     const par = (ctx.parallelRoutes || []).filter(p => p.route && p.route !== ctx.routeVal);
     const cacheKey = "tp_trains8_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
-    if (idb()) {
+    if (force) { try { localStorage.removeItem("tuts4_diagram_list_cache"); } catch (e) { /* ignore */ } }
+    if (idb() && !force) {
       const c = await idb().get(cacheKey);
       if (c && Array.isArray(c.trains) && Date.now() - c.fetchedAt < TRAINS_TTL_MS) return c.trains;
     }
@@ -299,7 +301,7 @@
     st.ridesLoading = true;
     try {
       let data = null;
-      if (!st.rides) {
+      if (!st.rides && !force) {
         const c = readLsCache("tuts4_tt_allrides_cache", 60 * 60 * 1000);
         if (c) data = c.data;
       }
@@ -1070,7 +1072,13 @@
       }
       renderLayer();
     };
-    document.getElementById("tpPattern").onchange = e => { st.pattern = e.target.value; renderLayer(); };
+    document.getElementById("tpPattern").onchange = e => {
+      st.pattern = e.target.value;
+      // パターンを変えたら、ダイヤと乗車記録を取り直す
+      st.force = true; st.trains = []; st.trainsRoute = ""; st.pending = null;
+      renderLayer();
+      ensureData().then(renderLayer);
+    };
     document.getElementById("tpTime").onchange = e => {
       const m = String(e.target.value || "").match(/^(\d{1,2}):(\d{2})$/);
       if (m) { st.manualSec = Number(m[1]) * 3600 + Number(m[2]) * 60; renderLayer(); }
@@ -1113,15 +1121,16 @@
     const status = document.getElementById("tpStatus");
     if (!ctx || !st.on) return;
     const seq = ++st.loadSeq;
+    const force = !!st.force; st.force = false;
     if (st.trainsRoute !== ctx.routeVal) {
       st.loading = true;
       st.trains = []; st.trainsRoute = "";
       if (status) status.textContent = "ダイヤを読み込み中…";
       // 乗車記録・祝日・車両マスタは、列車の読み込みと同時に取りに行く（順番待ちしない）
-      const others = Promise.all([getHolidaySet(), loadRides(false), loadMasters()]);
+      const others = Promise.all([getHolidaySet(), loadRides(force), loadMasters()]);
       const trains = await loadRouteTrains(ctx, (d, n) => {
         if (seq === st.loadSeq && status) status.textContent = `ダイヤを読み込み中… ${d}/${n}`;
-      });
+      }, force);
       if (seq !== st.loadSeq) return; // 路線が切り替わっていたら捨てる
       st.trains = trains; st.trainsRoute = ctx.routeVal;
       if (status) status.textContent = "乗車記録を確認中…";
@@ -1131,7 +1140,7 @@
       return;
     }
     if (status) status.textContent = "乗車記録を確認中…";
-    await Promise.all([getHolidaySet(), loadRides(false), loadMasters()]);
+    await Promise.all([getHolidaySet(), loadRides(force), loadMasters()]);
     if (seq !== st.loadSeq) return;
     st.loading = false;
   }

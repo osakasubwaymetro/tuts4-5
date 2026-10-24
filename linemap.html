@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.20.0 -->
+<!-- version: 1.21.0 -->
+<!-- 1.21.0: trainpos.js 1.15.1（パターンを変えたらダイヤ・乗車記録を取り直す）／全キャッシュクリアボタン（🧹）を一時的に全ユーザーに表示 -->
 <!-- 1.20.0: trainpos.js 1.15.0（パターン：平日／土日祝の切り替え） -->
 <!-- 1.19.0: 会社を選んだ時、路線が1つだけならそれを自動で選んで表示する -->
 <!-- 1.18.1: trainpos.js 1.14.2 -->
@@ -588,15 +589,15 @@
 <script src="dayrule.js?v=1.1.0"></script>
 <script src="timetable.js?v=1.17.0"></script>
 <script src="trainnavi.js?v=1.4.0"></script>
-<script src="trainpos.js?v=1.15.0"></script>
+<script src="trainpos.js?v=1.15.1"></script>
 <script>initNav("乗車路線マップ確認用");</script>
 <script>
 const username = checkLogin();
 const IS_ADMIN = (username === "運営");
 
-// 【運営専用】全キャッシュクリアボタン（右上・ヘッダーの下のアイコンだけ）。端末に保存したキャッシュだけ消して読み込み直す
+// 【一時的に全ユーザーに表示中】全キャッシュクリアボタン（運営だけに戻す時は下の true を IS_ADMIN に戻す）（右上・ヘッダーの下のアイコンだけ）。端末に保存したキャッシュだけ消して読み込み直す
 // （ユーザー名・ショートカット・下書き・送信待ちなどのデータは消さない）
-if (IS_ADMIN) {
+if (true /* IS_ADMIN */) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.id = "adminClearCacheBtn";
@@ -610,7 +611,7 @@ if (IS_ADMIN) {
   btn.onclick = async () => {
     if (!confirm("このブラウザに保存したキャッシュを全部消して、読み込み直します。")) return;
     try {
-      const prefixes = ["tuts4_master_", "tuts4_diagram_", "tuts4_holidays_cache", "tuts4_tt_allrides_cache", "tuts4_community_ride_cache", "tuts4_show_cache_", "tuts4_transfers_cache_", "tp_"];
+      const prefixes = ["tuts4_master_", "tuts4_diagram_", "tuts4_holidays_cache", "tuts4_tt_allrides_cache", "tuts4_community_ride_cache", "tuts4_show_cache_", "tuts4_transfers_cache_", "tuts4_xfer_", "tp_"];
       Object.keys(localStorage).filter(k => prefixes.some(p => k.startsWith(p))).forEach(k => localStorage.removeItem(k));
     } catch (e) {}
     try {
