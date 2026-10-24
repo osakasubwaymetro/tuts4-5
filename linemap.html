@@ -7,7 +7,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.18.0 -->
+<!-- version: 1.19.0 -->
+<!-- 1.19.0: 会社を選んだ時、路線が1つだけならそれを自動で選んで表示する -->
+<!-- 1.18.1: trainpos.js 1.14.2 -->
 <!-- 1.18.0: 乗換先の探し方を変更。HeartRailsで駅の位置を特定（隣駅が一致したものだけ採用）→その周辺の駅を検索してヒットした路線を出す。駅名が違う乗換駅も出る。結果は端末に保存 -->
 <!-- 1.17.0: 駅名の右に「乗換」ボタン。押すと、同じ駅（stationaliasの別表記も同じ駅）を通るほかの路線を下から出して、押した路線へ飛べる -->
 <!-- 1.16.25: trainpos.js 1.14.1 -->
@@ -584,7 +586,7 @@
 <script src="dayrule.js?v=1.1.0"></script>
 <script src="timetable.js?v=1.17.0"></script>
 <script src="trainnavi.js?v=1.4.0"></script>
-<script src="trainpos.js?v=1.14.1"></script>
+<script src="trainpos.js?v=1.14.2"></script>
 <script>initNav("乗車路線マップ確認用");</script>
 <script>
 const username = checkLogin();
@@ -738,7 +740,14 @@ async function restoreSelection() {
 
 document.getElementById("mapArea").addEventListener("change", () => { buildCompanySelect(); buildRouteSelect(); clearMap(); saveSelection(); });
 document.getElementById("mapType").addEventListener("change", () => { buildCompanySelect(); buildRouteSelect(); clearMap(); saveSelection(); });
-document.getElementById("mapCompany").addEventListener("change", () => { buildRouteSelect(); clearMap(); saveSelection(); });
+document.getElementById("mapCompany").addEventListener("change", () => {
+  buildRouteSelect(); clearMap();
+  // 会社を選んだ結果、路線が1つだけならそれを自動で選んで表示する
+  const rs = document.getElementById("mapRoute");
+  const opts = [...rs.options].filter(o => o.value);
+  if (opts.length === 1) { rs.value = opts[0].value; updatePickerLabels(); renderMap(); }
+  saveSelection();
+});
 document.getElementById("mapRoute").addEventListener("change", () => { renderMap(); saveSelection(); });
 setTimeout(restoreSelection, 800);
 
