@@ -1,4 +1,8 @@
-// trainpos.js v1.11.0
+// trainpos.js v1.12.2
+// 1.12.2: 始発駅では併結の判定を発車時刻だけで行う（到着時刻は見ない）。在線表示の開始も発車の10分前から
+// 1.12.1: 始発駅の在線表示の併結判定に、発車時刻も条件に追加（到着が同じで発車が1分違う列車も別々に表示）
+// 1.12.0: 駅名の表記ゆれ（stationaliasシートの正式名称⇄通称、ひらがな・カタカナの違い）に対応。ダイヤの駅名が通称（例: なんば）でも、この路線の正式名称の駅（難波）の位置に出す
+// 1.11.1: 併結のまとめ判定に、停車・発車・到着の時刻も条件に追加。始発駅の在線表示で、発車時刻が違う列車が併結にまとめられていたのを修正
 // 1.11.0: 併結列車（同じ位置を同じ方向に進む、種別・行先が違う列車）を1つにまとめ、アイコンを縦に並べて表示。バッジは列車番号を「+」でつなぎ、種別行先は1本ずつ2行、編成番号は「G11+」「U1」のように2行
 // 1.10.0: ダイヤ一覧の「曜日区分」の細かい指定（曜日／特定の日／期間／除外。dayrule.js）に対応。運行日（0:00〜2:59は前日）ごとに、その日に運転する列車だけ表示する
 // 1.9.0: 列車の始発駅の発車（到着）10分前から、始発駅に在線表示する。同じ運用の前の列車がまだ走行中（全区間の時刻で判定）なら、在線表示は出さず前の列車を引き続き出す
@@ -64,6 +68,21 @@
   };
 
   /* ---------- 小物 ---------- */
+  // 駅名の比較用：駅を取り、カタカナ→ひらがな、小さい仮名→大きい仮名にそろえる
+  function nameKey(n) {
+    return String(n == null ? "" : n).trim().replace(/駅$/, "").replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60))
+      .replace(/[ぁぃぅぇぉっゃゅょ]/g, c => ({ "ぁ": "あ", "ぃ": "い", "ぅ": "う", "ぇ": "え", "ぉ": "お", "っ": "つ", "ゃ": "や", "ゅ": "ゆ", "ょ": "よ" }[c])).replace(/\s/g, "");
+  }
+  // 路線の駅の並び → 「駅名（通称・表記ゆれ込み）→ 行番号」の引き当て
+  function makeIdx(names) {
+    const m = new Map();
+    names.forEach((n, i) => {
+      const k = nameKey(n);
+      const grp = st.aliasMap && st.aliasMap.get(k);
+      [k, ...(grp ? [...grp] : [])].forEach(x => { if (!m.has(x)) m.set(x, i); });
+    });
+    return { get: x => m.get(nameKey(x)), has: x => m.has(nameKey(x)) };
+  }
   const pad = n => String(n).padStart(2, "0");
   const dateKey = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -290,11 +309,11 @@
   }
 
   async function loadMasters() {
-    if (st.modelRows && st.numberRows) return;
+    if (st.modelRows && st.numberRows && st.aliasMap) return;
     const get = async (name) => {
       const key = "tp_master_" + name;
       let cached = null;
-      if (idb()) { const c = await idb().get(key); if (Array.isArray(c) && c.length) cached = c; }
+      if (idb() && name !== "stationalias") { const c = await idb().get(key); if (Array.isArray(c) && c.length) cached = c; } // 駅名の対応表は毎回取り直す（追加してすぐ反映）
       if (cached) return cached;
       try {
         const res = await fetch(MASTER_BASE + name);
@@ -303,8 +322,18 @@
       } catch (e) { /* ignore */ }
       return [];
     };
-    const [m, n] = await Promise.all([get("model"), get("number")]);
+    const [m, n, al] = await Promise.all([get("model"), get("number"), get("stationalias")]);
     st.modelRows = m; st.numberRows = n;
+    // 駅名の表記ゆれ（stationaliasシート：正式名称⇄通称。ひらがな・カタカナの違いも同じ駅として扱う）
+    const am = new Map();
+    (al || []).forEach(r => {
+      const o = nameKey(r["正式名称"]), a = nameKey(r["通称"]);
+      if (!o || !a) return;
+      const grp = am.get(o) || am.get(a) || new Set([o]);
+      grp.add(o); grp.add(a);
+      grp.forEach(x => am.set(x, grp));
+    });
+    st.aliasMap = am;
   }
 
   function resolveIcon(modelName, numberName) {
@@ -396,8 +425,7 @@
   function buildRideSlotIndex(ctx) {
     const sig = `${ctx.routeVal}|${ctx.revisionDate ? ctx.revisionDate.getTime() : ""}|${st.ridesFetchedAt}|${st.rides ? st.rides.length : 0}`;
     if (st.slotIdx && st.slotIdxSig === sig) return st.slotIdx;
-    const idxOf = new Map();
-    ctx.stationsOnRoute.forEach((n, i) => { if (!idxOf.has(n)) idxOf.set(n, i); });
+    const idxOf = makeIdx(ctx.stationsOnRoute);
     const rev = ctx.revisionDate && !isNaN(ctx.revisionDate) ? ctx.revisionDate : null;
     const best = new Map(); // 重複排除用：dtype|hm|station|bound → { d, ...記録 }
     (st.rides || []).forEach(r => {
@@ -486,8 +514,7 @@
   //    探して、「駅数の比」で境界駅を通る時刻を推定して差し込む（これで境界駅までと境界駅から先の位置が消えない）
   function routeInfo(ctx) {
     if (ctx._ri && ctx._riRoute === ctx.routeVal) return ctx._ri;
-    const idxOf = new Map();
-    ctx.stationsOnRoute.forEach((n, i) => { if (!idxOf.has(n)) idxOf.set(n, i); });
+    const idxOf = makeIdx(ctx.stationsOnRoute);
     const byRoute = new Map(); // 路線名 → 駅名の並び（via_を除く）
     (ctx.stationData || []).forEach(r => {
       const n = String(r["駅名"] || "");
@@ -591,15 +618,18 @@
     // 始発駅の発車（到着）の10分前から、始発駅に在線表示する（この路線に始発駅がある列車だけ）
     if (t < on[0].a) {
       const f0 = train.stops[0], idx0 = routeInfo(ctx).idxOf.get(f0.s);
-      if (idx0 === on[0].i && (f0.a != null || f0.d != null) && t >= on[0].a - WAIT_SEC) {
+      if (idx0 === on[0].i && (f0.a != null || f0.d != null) && t >= on[0].d - WAIT_SEC) {
         const nx = on[1];
         let sign = nx ? Math.sign(nx.i - on[0].i) : 1;
         if (ctx.isLoop && nx && Math.abs(nx.i - on[0].i) > N / 2) sign = -sign;
-        return { row0: on[0].i, row1: on[0].i, frac: 0, sign: sign || 1, atStation: true, waiting: true };
+        return { row0: on[0].i, row1: on[0].i, frac: 0, sign: sign || 1, atStation: true, waiting: true, sig: `w${on[0].d}` }; // 始発駅は発車時刻だけで判定（発車が1秒でも違えば併結にしない）
       }
       return null;
     }
     if (t > on[on.length - 1].d) return null;
+    // この路線の最初の駅が列車の始発駅なら、併結の判定は発車時刻だけで行う（到着時刻は見ない）
+    const f1 = train.stops[0];
+    const firstIsOrigin = (f1.a != null || f1.d != null) && routeInfo(ctx).idxOf.get(f1.s) === on[0].i;
 
     for (let k = 0; k < on.length; k++) {
       const cur = on[k];
@@ -607,7 +637,7 @@
         const nx = on[k + 1], pv = on[k - 1];
         let sign = nx ? Math.sign(nx.i - cur.i) : (pv ? Math.sign(cur.i - pv.i) : 1);
         if (ctx.isLoop && nx && Math.abs(nx.i - cur.i) > N / 2) sign = -sign;
-        return { row0: cur.i, row1: cur.i, frac: 0, sign: sign || 1, atStation: !cur.pass }; // 通過駅は停車扱いにしない
+        return { row0: cur.i, row1: cur.i, frac: 0, sign: sign || 1, atStation: !cur.pass, sig: (k === 0 && firstIsOrigin) ? `s${cur.d}` : `s${cur.a}-${cur.d}` }; // 通過駅は停車扱いにしない
       }
       const nx = on[k + 1];
       if (nx && t > cur.d && t < nx.a) {
@@ -618,7 +648,7 @@
           else if (i === 0 && j === N - 1) i = N;
         }
         const frac = (t - cur.d) / Math.max(1, nx.a - cur.d);
-        return { row0: i, row1: j, frac, sign: Math.sign(j - i) || 1, atStation: false };
+        return { row0: i, row1: j, frac, sign: Math.sign(j - i) || 1, atStation: false, sig: `r${cur.d}-${nx.a}` };
       }
     }
     return null;
@@ -744,7 +774,7 @@
       const gm = new Map();
       placedRaw.forEach(p => {
         const ps = p.a.pos;
-        const gk = [ps.row0, ps.row1, ps.frac.toFixed(4), ps.sign, ps.atStation ? 1 : 0].join("|");
+        const gk = [ps.row0, ps.row1, ps.frac.toFixed(4), ps.sign, ps.atStation ? 1 : 0, ps.sig].join("|"); // 時刻（発車・到着）も同じものだけ併結とみなす
         const tb = tbKey(p.a);
         const g = gm.get(gk);
         if (g && !g.keys.has(tb)) { g.keys.add(tb); g.p.members.push(p.a); g.p.h = 67 + 55 * (g.p.members.length - 1); return; }
