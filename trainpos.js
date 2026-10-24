@@ -1,4 +1,5 @@
-// trainpos.js v1.14.2
+// trainpos.js v1.15.0
+// 1.15.0: 現在時刻の枠に「パターン」のプルダウンを追加。自動（今日の曜日）／平日ダイヤ／土日祝ダイヤ を切り替えて表示できる（選んだパターンに当てはまる、いちばん近い日のダイヤで表示）
 // 1.14.2: 一度広げた路線は、リロードするまで高さを一切変えない（以前は、まだ混んでいると広げ足していたので、列車が動くたびにサイズが変わってスクロールが戻されることがあった）
 // 1.14.1: 列車番号が同じ列車が2本以上走っているときは、位置や時刻に関係なく必ず併結としてまとめる
 // 1.14.0: 種別も行先も同じ列車でも、同じ位置・同じ時刻なら併結として1つにまとめる。併結のアイコンは1つずつ押せて、押した列車の時刻表（列車詳細）が出る
@@ -69,7 +70,7 @@
     holidaySet: null,
     modelRows: null, numberRows: null,
     timer: null, pending: null,
-    on: false, live: true, manualSec: null,
+    on: false, live: true, manualSec: null, pattern: "auto",
   };
 
   /* ---------- 小物 ---------- */
@@ -833,6 +834,20 @@
     let sec = (st.live || st.manualSec == null) ? now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds() : st.manualSec;
     let date = now;
     if (sec < DAY_START) { date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1); sec += 86400; }
+    // パターン指定（平日／土日祝）：その日がパターンに合わなければ、合ういちばん近い日で代用する
+    if (st.pattern === "weekday" || st.pattern === "holiday") {
+      const want = st.pattern === "holiday";
+      if (isHoliday(date) !== want) {
+        for (let i = 1; i <= 14; i++) {
+          let hit = null;
+          for (const sgn of [1, -1]) {
+            const c = new Date(date.getFullYear(), date.getMonth(), date.getDate() + sgn * i);
+            if (isHoliday(c) === want) { hit = c; break; }
+          }
+          if (hit) { date = hit; break; }
+        }
+      }
+    }
     return { date, sec };
   }
 
@@ -1031,6 +1046,12 @@
       <span class="tp-opts" id="tpOpts" style="display:none;">
         <label class="tp-sw"><input type="checkbox" id="tpNow" checked> 現在時刻</label>
         <input type="time" id="tpTime" step="60" disabled>
+        <label class="tp-sw" style="margin-left:6px;">パターン</label>
+        <select id="tpPattern">
+          <option value="auto">自動（今日）</option>
+          <option value="weekday">平日ダイヤ</option>
+          <option value="holiday">土日祝ダイヤ</option>
+        </select>
         <span class="tp-clock">🕐 <span id="tpClock">--:--:--</span></span>
       </span>
       <div id="tpStatus" class="small" style="color:#888;margin-top:4px;"></div>`;
@@ -1049,6 +1070,7 @@
       }
       renderLayer();
     };
+    document.getElementById("tpPattern").onchange = e => { st.pattern = e.target.value; renderLayer(); };
     document.getElementById("tpTime").onchange = e => {
       const m = String(e.target.value || "").match(/^(\d{1,2}):(\d{2})$/);
       if (m) { st.manualSec = Number(m[1]) * 3600 + Number(m[2]) * 60; renderLayer(); }

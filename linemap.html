@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.19.0 -->
+<!-- version: 1.20.0 -->
+<!-- 1.20.0: trainpos.js 1.15.0（パターン：平日／土日祝の切り替え） -->
 <!-- 1.19.0: 会社を選んだ時、路線が1つだけならそれを自動で選んで表示する -->
 <!-- 1.18.1: trainpos.js 1.14.2 -->
 <!-- 1.18.0: 乗換先の探し方を変更。HeartRailsで駅の位置を特定（隣駅が一致したものだけ採用）→その周辺の駅を検索してヒットした路線を出す。駅名が違う乗換駅も出る。結果は端末に保存 -->
@@ -345,6 +346,7 @@
   .tp-bar { background:#fff; border-radius:10px; padding:10px 14px; margin:0 0 10px; box-shadow:0 1px 4px rgba(0,0,0,.08); font-size:14px; }
   .tp-sw { display:inline-flex; align-items:center; gap:6px; margin-right:12px; font-weight:600; color:#333; }
   .tp-opts { display:inline; }
+  .tp-opts select { font-size:14px; padding:3px 6px; border:1px solid #ccc; border-radius:6px; background:#fff; }
   .tp-opts input[type=time] { font-size:14px; padding:3px 6px; border:1px solid #ccc; border-radius:6px; }
   .tp-clock { margin-left:10px; font-weight:bold; font-variant-numeric:tabular-nums; color:#17324f; }
   #tpLayer { position:absolute; inset:0; pointer-events:none; z-index:6; overflow:hidden; }
@@ -586,7 +588,7 @@
 <script src="dayrule.js?v=1.1.0"></script>
 <script src="timetable.js?v=1.17.0"></script>
 <script src="trainnavi.js?v=1.4.0"></script>
-<script src="trainpos.js?v=1.14.2"></script>
+<script src="trainpos.js?v=1.15.0"></script>
 <script>initNav("乗車路線マップ確認用");</script>
 <script>
 const username = checkLogin();
