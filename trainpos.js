@@ -1,4 +1,5 @@
-// trainpos.js v1.12.2
+// trainpos.js v1.13.0
+// 1.13.0: 時刻が書いてない区間を他路線で走る列車（例: 京都→山科→敦賀のサンダーバード。近江塩津〜敦賀）の位置を、全路線の駅を隣同士でつないだ地図で一番短い道のりにたどり、途中のこの路線の駅を駅数の比で補って出す（今までは境界駅1つだけを推定していたので、間違った道で推定されたり出なかったりした）
 // 1.12.2: 始発駅では併結の判定を発車時刻だけで行う（到着時刻は見ない）。在線表示の開始も発車の10分前から
 // 1.12.1: 始発駅の在線表示の併結判定に、発車時刻も条件に追加（到着が同じで発車が1分違う列車も別々に表示）
 // 1.12.0: 駅名の表記ゆれ（stationaliasシートの正式名称⇄通称、ひらがな・カタカナの違い）に対応。ダイヤの駅名が通称（例: なんば）でも、この路線の正式名称の駅（難波）の位置に出す
@@ -532,6 +533,37 @@
     return ctx._ri;
   }
 
+  // 全路線の駅を「隣の駅同士」でつないだ地図（路線をまたぐ共通の駅でつながる）。via_は飛ばす
+  const canonKey = n => { const k = nameKey(n); const g = st.aliasMap && st.aliasMap.get(k); return g ? [...g].sort()[0] : k; };
+  function stationGraph(ctx) {
+    if (ctx._g && ctx._gRoute === ctx.routeVal) return ctx._g;
+    const { byRoute } = routeInfo(ctx);
+    const adj = new Map();
+    const link = (a, b) => { if (a === b) return; if (!adj.has(a)) adj.set(a, new Set()); if (!adj.has(b)) adj.set(b, new Set()); adj.get(a).add(b); adj.get(b).add(a); };
+    byRoute.forEach(names => { for (let i = 1; i < names.length; i++) link(canonKey(names[i - 1]), canonKey(names[i])); });
+    ctx._g = { adj, memo: new Map() }; ctx._gRoute = ctx.routeVal;
+    return ctx._g;
+  }
+  // 2駅の間の一番短い道のり（駅数が最小）。見つからなければ null
+  function graphPath(ctx, from, to) {
+    const g = stationGraph(ctx);
+    const a = canonKey(from), b = canonKey(to), mk = a + ">" + b;
+    if (g.memo.has(mk)) return g.memo.get(mk);
+    let res = null;
+    if (g.adj.has(a) && g.adj.has(b)) {
+      const prev = new Map([[a, null]]);
+      let frontier = [a];
+      while (frontier.length && !prev.has(b)) {
+        const next = [];
+        for (const u of frontier) for (const v of g.adj.get(u)) if (!prev.has(v)) { prev.set(v, u); next.push(v); }
+        frontier = next;
+      }
+      if (prev.has(b)) { res = []; for (let x = b; x != null; x = prev.get(x)) res.push(x); res.reverse(); }
+    }
+    g.memo.set(mk, res);
+    return res;
+  }
+
   // other（この路線に無い駅）から見た、この路線との境界駅 { C, dOther(境界駅までの駅数 on T), T }
   function findJunction(ctx, other) {
     const { idxOf, byRoute, routesOf } = routeInfo(ctx);
@@ -582,6 +614,19 @@
       out.push(P);
       if (!Q) break;
       const pOn = idxOf.has(P.s), qOn = idxOf.has(Q.s);
+      if (pOn && qOn) continue;
+      // 2駅の間を、路線の駅を隣同士でつないだ地図で一番短い道のりでたどり、その途中のこの路線の駅を
+      // 駅数の比で時刻を決めて差し込む（時刻の書いてない区間でも、他路線を通ってこの路線に入る列車の位置が出る）
+      const gp = graphPath(ctx, P.s, Q.s);
+      if (gp && gp.length >= 3) {
+        const H = gp.length - 1;
+        for (let h = 1; h < H; h++) {
+          if (!idxOf.has(gp[h])) continue;
+          const t = P.d + (Q.a - P.d) * h / H;
+          out.push({ s: gp[h], a: t, d: t, pass: true });
+        }
+        continue;
+      }
       if (pOn === qOn) continue;
       const names = ctx.stationsOnRoute;
       if (pOn && !qOn) {
