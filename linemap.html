@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.16.19 -->
+<!-- version: 1.16.20 -->
+<!-- 1.16.20: 運営アカウントだけ、右下に全キャッシュクリアのアイコンボタン（🧹）を追加 -->
 <!-- 1.16.19: trainpos.js 1.12.2 -->
 <!-- 1.16.18: trainpos.js 1.12.1 -->
 <!-- 1.16.17: dayrule.js 1.1.0（曜日区分で「1/17,24,31 2/7,14」の書き方に対応） -->
@@ -556,6 +557,33 @@
 <script>
 const username = checkLogin();
 const IS_ADMIN = (username === "運営");
+
+// 【運営専用】全キャッシュクリアボタン（右下のアイコンだけ）。端末に保存したキャッシュだけ消して読み込み直す
+// （ユーザー名・ショートカット・下書き・送信待ちなどのデータは消さない）
+if (IS_ADMIN) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.id = "adminClearCacheBtn";
+  btn.textContent = "🧹";
+  btn.title = "全キャッシュをクリア";
+  btn.setAttribute("aria-label", "全キャッシュをクリア");
+  btn.style.cssText = "position:fixed; right:14px; bottom:14px; z-index:900; width:42px; height:42px; padding:0; margin:0; border:none; border-radius:50%; background:#222; color:#fff; font-size:20px; line-height:42px; box-shadow:0 3px 10px rgba(0,0,0,.3); cursor:pointer; opacity:.85;";
+  btn.onclick = async () => {
+    if (!confirm("このブラウザに保存したキャッシュを全部消して、読み込み直します。")) return;
+    try {
+      const prefixes = ["tuts4_master_", "tuts4_diagram_", "tuts4_holidays_cache", "tuts4_tt_allrides_cache", "tuts4_community_ride_cache", "tuts4_show_cache_", "tuts4_transfers_cache_", "tp_"];
+      Object.keys(localStorage).filter(k => prefixes.some(p => k.startsWith(p))).forEach(k => localStorage.removeItem(k));
+    } catch (e) {}
+    try {
+      if (window.caches) (await caches.keys()).forEach(k => caches.delete(k));
+    } catch (e) {}
+    try {
+      if (indexedDB.databases) { for (const d of await indexedDB.databases()) if (d.name) indexedDB.deleteDatabase(d.name); }
+    } catch (e) {}
+    setTimeout(() => location.reload(), 400);
+  };
+  document.body.appendChild(btn);
+}
 
 document.addEventListener("DOMContentLoaded", () => {
   logAction("view", "ページ閲覧: linemap.html");
