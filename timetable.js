@@ -1,5 +1,7 @@
 // timetable.js
-// version: 1.16.0
+// version: 1.18.0
+// 1.18.0: スタフの「着後」に、同じ運用の次の列車番号（へ乗継）とボタンを出し、押すとその列車のスタフに飛ぶ。前の列車（より乗継）にも飛べる
+// 1.17.0: 駅名の表記ゆれに対応（stationaliasシートの正式名称⇄通称。ひらがな・カタカナの違いも無視）。駅名検索で通称（例: なんば）でも正式名称（難波）が出て、ダイヤ・乗車記録の駅名が通称で書いてあっても同じ駅として時刻表に出る
 // 1.16.0: 駅名を選んだ後に路線が1つだけなら自動で選び、路線を選んだ後に方向が1つだけなら自動で選ぶ
 // 1.15.0: ダイヤ一覧の「曜日区分」の細かい指定（曜日／特定の日／期間／除外）に対応。時刻表の平日／休日タブには、前後1年のうち運転する日の種類（平日の日／休日の日／両方）で振り分ける（dayrule.js を使用）
 // 1.14.0: 時刻表の表示を高速化（キャッシュに頼らず、取得のしかたを改善）
@@ -91,6 +93,48 @@ const TT_DIAGRAM_SHEET_ID = "1JzY1wIGbj2Z83ItsMnMrz1xQ-cviEv50P0mOHiyi70A";
 // -> NAV_RIDES_GAS_URL
 
 let ttStationData = [];
+
+/* ---------- 駅名の表記ゆれ（stationaliasシート：正式名称・通称。scripts.jsと同じシート） ----------
+   例: 正式名称「難波」・通称「なんば」。ひらがな／カタカナ／漢字の違いは、このシートに1行登録しておけば同じ駅として扱う。
+   ・駅名の検索は、正式名称・通称のどちらを入力しても出る（ひらがな・カタカナの違いも気にしない）
+   ・ダイヤ・乗車記録の駅名が通称で書いてあっても、同じ駅として時刻表に出る */
+let ttAliasCanon = new Map();   // 正規化した名前 → 代表（正式名称を正規化したもの）
+let ttAliasGroups = new Map();  // 代表 → その駅の全ての名前（正規化済み）
+function ttKey(n) {
+  return String(n || "").trim().replace(/駅$/, "").replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60))
+    .replace(/ゕ/g, "か").replace(/ゖ/g, "け").replace(/ぁ/g, "あ").replace(/ぃ/g, "い").replace(/ぅ/g, "う").replace(/ぇ/g, "え").replace(/ぉ/g, "お")
+    .replace(/っ/g, "つ").replace(/ゃ/g, "や").replace(/ゅ/g, "ゆ").replace(/ょ/g, "よ").replace(/ヶ/g, "ケ").replace(/\s/g, "").toLowerCase();
+}
+function ttBuildAlias(data) {
+  const canon = new Map(), groups = new Map();
+  (data || []).forEach(r => {
+    const off = ttKey(r["正式名称"]), al = ttKey(r["通称"]);
+    if (!off || !al) return;
+    const rep = canon.get(off) || off;
+    canon.set(off, rep); canon.set(al, rep);
+    if (!groups.has(rep)) groups.set(rep, new Set([rep]));
+    groups.get(rep).add(off); groups.get(rep).add(al);
+  });
+  ttAliasCanon = canon; ttAliasGroups = groups;
+}
+function ttCanon(n) { const k = ttKey(n); return ttAliasCanon.get(k) || k; }
+function ttSameStation(a, b) { return a === b || ttCanon(a) === ttCanon(b); }
+function ttIndexOfStation(list, name) {
+  const i = list.indexOf(name);
+  if (i !== -1) return i;
+  const c = ttCanon(name);
+  return list.findIndex(x => ttCanon(x) === c);
+}
+// 駅名の検索用：この駅の全ての名前（正式名称・通称・ひらがな化したもの）のどれかに、入力が含まれるか
+function ttStationMatchesQuery(name, q) {
+  const kq = ttKey(q);
+  if (!kq) return false;
+  const c = ttCanon(name);
+  const names = ttAliasGroups.get(c) || new Set([c]);
+  if (ttKey(name).includes(kq)) return true;
+  for (const n of names) if (n.includes(kq)) return true;
+  return false;
+}
 let ttRouteData = [];
 
 /* ---------- 共通データ取得（scripts.jsと同じキャッシュキー名を使い、既に他ページで
@@ -378,8 +422,8 @@ function ttGroupByTrainNumber(rows) {
 // fromName→toName の移動が、その路線の並び順で「index増加方向」か「減少方向」かを返す
 // (1 / -1)。環状線は短い方の回り方を採用する
 function ttDirectionSign(routeVal, orderList, fromName, toName) {
-  const i = orderList.indexOf(fromName);
-  const j = orderList.indexOf(toName);
+  const i = ttIndexOfStation(orderList, fromName);
+  const j = ttIndexOfStation(orderList, toName);
   if (i === -1 || j === -1 || i === j) return null;
   if (!ttIsCircular(routeVal)) return j > i ? 1 : -1;
   const total = orderList.length;
@@ -397,14 +441,14 @@ function ttResolveRideDirectionSign(routeVal, orderList, rawOrder, stationName, 
   const direct = ttDirectionSign(routeVal, orderList, stationName, bound);
   if (direct !== null) return direct;
 
-  const curRawIdx = rawOrder.indexOf(stationName);
+  const curRawIdx = ttIndexOfStation(rawOrder, stationName);
   if (curRawIdx === -1) return null;
 
   for (let i = 0; i < rawOrder.length; i++) {
     if (!ttIsViaEntry(rawOrder[i])) continue;
     const targetRoute = ttViaTargetRoute(rawOrder[i]);
     const targetOrder = ttRouteStationOrder(targetRoute);
-    if (targetOrder.indexOf(bound) === -1) continue;
+    if (ttIndexOfStation(targetOrder, bound) === -1) continue;
     if (i === curRawIdx) continue;
     return i > curRawIdx ? 1 : -1;
   }
@@ -458,12 +502,17 @@ function ttExtractFromSheet(d, rows, stationName, routeVal, orderList) {
   }
 
   const groups = ttGroupByTrainNumber(rows);
-  groups.forEach(group => {
+  // スタフの「前の列車・次の列車」用：この運用シートの全列車（シートの並び順）。押された時に初めて中身を作る
+  const seq = groups.map(group => ({
+    trainNumber: group[0]["列車番号"] || "", unban: d["運番"] || "",
+    build() { return ttBuildSeqEntry(d["運番"] || "", group); }
+  }));
+  groups.forEach((group, gi) => {
     // この列車にその駅が無ければ、時刻の解析などを丸ごと飛ばす
-    if (!group.some(r => r["駅名"] === stationName)) return;
+    if (!group.some(r => ttSameStation(r["駅名"], stationName))) return;
     const groupTimes = ttParseGroupTimes(group);
     group.forEach((row, idx) => {
-      if (row["駅名"] !== stationName) return;
+      if (!ttSameStation(row["駅名"], stationName)) return;
       // 駅ごとの時刻表は「発車時刻」を載せる（終着駅は載せない）
       const hm = groupTimes[idx].dep ? groupTimes[idx].dep.match(/^(\d{1,2}):(\d{2})$/) : null;
       if (!hm) return;
@@ -506,11 +555,26 @@ function ttExtractFromSheet(d, rows, stationName, routeVal, orderList) {
 
       out.push({ sign, entry: {
         hour: Number(hm[1]), minute: Number(hm[2]), bound, type, dayType, isExtra, source: "diagram",
-        unban: d["運番"] || "", trainNumber: row["列車番号"] || "", stops
+        unban: d["運番"] || "", trainNumber: row["列車番号"] || "", stops, seq, seqIdx: gi
       } });
     });
   });
   return out;
+}
+
+// 1つの列車（同じ列車番号の行のまとまり）から、スタフ・列車詳細用のデータを作る
+function ttBuildSeqEntry(unban, group) {
+  const gt = ttParseGroupTimes(group);
+  const stops = group
+    .map((r2, k) => ({ r2, g: gt[k] }))
+    .filter(({ r2 }) => r2["駅名"])
+    .map(({ r2, g }) => ({
+      station: r2["駅名"], time: g.arr || "", arr: g.arr || "", dep: g.dep || "", arrSec: g.arrSec, depSec: g.depSec,
+      type: String(r2["種別"] || "").split("/").map(s => s.trim()).filter(Boolean)[0] || "",
+      bound: String(r2["行先"] || "").split("/").map(s => s.trim()).filter(Boolean)[0] || ""
+    }));
+  const f = stops.find(s => s.bound) || stops[0] || {};
+  return { unban, trainNumber: group[0]["列車番号"] || "", type: f.type || "", bound: f.bound || "", stops };
 }
 
 // 乗車記録（全ユーザー分）から、選んだ駅の出現を [{sign, entry}] で取り出す
@@ -521,7 +585,7 @@ function ttExtractFromRides(allRides, holidaySet, stationName, routeVal, orderLi
   const revisionDate = revisionRaw ? new Date(revisionRaw) : null;
   const hasValidRevisionDate = revisionDate && !isNaN(revisionDate);
   allRides.forEach(r => {
-    if (r["路線"] !== routeVal || r["乗車駅"] !== stationName) return;
+    if (r["路線"] !== routeVal || !ttSameStation(r["乗車駅"], stationName)) return;
     if (companyVal && r["会社"] && r["会社"] !== companyVal) return;
 
     const timeRaw = String(r["時刻"] || "").trim();
@@ -740,9 +804,27 @@ function ttStaffTimeHTML(hm, sec, showHour) {
   return `${hourPart}${m[2]}${secPart}`;
 }
 
+let ttStaffEntry = null; // いま開いているスタフの列車（前後に飛ぶ時に使う）
 function ttShowStaff(idx) {
-  const e = ttTrainDetailRegistry[idx];
+  ttRenderStaff(ttTrainDetailRegistry[idx]);
+}
+// 同じ運用の前（delta=-1）／次（+1）の列車のスタフに飛ぶ
+function ttStaffGo(delta) {
+  const cur = ttStaffEntry;
+  if (!cur || !cur.seq) return;
+  const i = cur.seqIdx + delta;
+  const it = cur.seq[i];
+  if (!it) return;
+  const e = it.build();
+  e.seq = cur.seq; e.seqIdx = i;
+  ttRenderStaff(e);
+  const b = document.getElementById("ttStaffBody");
+  if (b) { b.scrollTop = 0; if (b.parentElement) b.parentElement.scrollTop = 0; }
+  const ov = document.getElementById("ttStaffOverlay"); if (ov) ov.scrollTop = 0;
+}
+function ttRenderStaff(e) {
   if (!e || !e.stops || !e.stops.length) return;
+  ttStaffEntry = e;
 
   const stops = e.stops;
   let lastHour = null;
@@ -786,6 +868,9 @@ function ttShowStaff(idx) {
     </tr>`;
   }).join("");
 
+  const seqLabel = i => { const it = e.seq && e.seq[i]; return it ? (it.trainNumber || (it.unban ? `運番${it.unban}（${i + 1}本目）` : `${i + 1}本目`)) : ""; };
+  const prevLabel = e.seq ? seqLabel(e.seqIdx - 1) : "";
+  const nextLabel = e.seq ? seqLabel(e.seqIdx + 1) : "";
   const num = e.trainNumber ? escapeHtmlTT(e.trainNumber) : (e.unban ? escapeHtmlTT(e.unban) : "");
   const sub = [e.type, e.bound ? `${e.bound}行き` : ""].filter(Boolean).join("　");
   document.getElementById("ttStaffTitle").textContent = e.trainNumber || (e.unban ? `運番 ${e.unban}` : "スタフ");
@@ -794,7 +879,7 @@ function ttShowStaff(idx) {
       <thead><tr><th>列　車</th><th>最高速度<br>(Km / h)</th><th>速度種別</th><th>けん引定数</th></tr></thead>
       <tbody><tr><td class="num">${num}<small>${escapeHtmlTT(sub)}</small></td><td></td><td></td><td></td></tr></tbody>
     </table>
-    <div class="tt-staff-cars"><span class="box">　　</span> 両</div>
+    <div class="tt-staff-cars"><span class="box">　　</span> 両${prevLabel ? `　<a href="javascript:void(0)" onclick="ttStaffGo(-1)" style="font-size:12px;color:#0a6b1f;text-decoration:underline;">${escapeHtmlTT(prevLabel)}より乗継</a>` : ""}</div>
     <table class="tt-staff-table">
       <thead><tr>
         <th>運転<br>時分</th><th>停車場名</th><th class="hl">着</th><th>発（通）</th>
@@ -802,7 +887,10 @@ function ttShowStaff(idx) {
       </tr></thead>
       <tbody>${rowsHTML}</tbody>
     </table>
-    <div class="tt-staff-after">着後</div>
+    <div class="tt-staff-after">着後${nextLabel ? `<div style="margin:8px 0 2px;font-size:12px;color:#444;">${escapeHtmlTT(nextLabel)}へ乗継</div>` : ""}
+      ${nextLabel ? `<button type="button" onclick="ttStaffGo(1)" style="display:block;width:100%;margin:6px 0;padding:12px 8px;border:0;border-radius:8px;background:#0a6b1f;color:#fff;font-size:17px;font-weight:bold;box-shadow:0 2px 4px rgba(0,0,0,.25);cursor:pointer;">${escapeHtmlTT(nextLabel)}の時刻表へ</button>` : ""}
+      ${prevLabel ? `<button type="button" onclick="ttStaffGo(-1)" style="display:block;width:100%;margin:6px 0;padding:10px 8px;border:2px solid #0a6b1f;border-radius:8px;background:#fff;color:#0a6b1f;font-size:15px;font-weight:bold;cursor:pointer;">前の列車　${escapeHtmlTT(prevLabel)}の時刻表へ</button>` : ""}
+    </div>
   `;
   document.getElementById("ttStaffOverlay").classList.add("show");
   ttStaffStart(stops);
@@ -1044,11 +1132,11 @@ function ttStationNames() {
 }
 
 function ttRunStationSearch() {
-  const q = document.getElementById("ttStationInput").value.trim().toLowerCase();
+  const q = document.getElementById("ttStationInput").value.trim();
   const box = document.getElementById("ttStationResults");
   if (!q) { box.innerHTML = ""; return; }
 
-  const names = ttStationNames().filter(n => n.toLowerCase().includes(q));
+  const names = ttStationNames().filter(n => ttStationMatchesQuery(n, q));
   if (!names.length) {
     box.innerHTML = '<p class="section-desc">見つかりませんでした</p>';
     return;
@@ -1083,7 +1171,7 @@ function ttPopulateRouteSelect(stationName) {
   const routeSel = document.getElementById("ttRouteSelect");
   const routes = [...new Set(
     (ttStationData || [])
-      .filter(r => r["駅名"] === stationName)
+      .filter(r => ttSameStation(r["駅名"], stationName))
       .map(r => r["路線"])
   )].filter(Boolean);
 
@@ -1163,6 +1251,10 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   ttFetchCachedMaster("route", `${TT_MASTER_BASE}/route`, data => {
     ttRouteData = data;
+  });
+  ttFetchCachedMaster("stationalias", `${TT_MASTER_BASE}/stationalias`, data => {
+    ttBuildAlias(data);
+    ttRunStationSearch(); // 入力済みなら、通称が読み込めた分を候補に反映する
   });
 
   const stationInput = document.getElementById("ttStationInput");

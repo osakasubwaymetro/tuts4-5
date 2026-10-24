@@ -1,4 +1,5 @@
-// trainpos.js v1.15.2
+// trainpos.js v1.16.0
+// 1.16.0: スタフの前の列車・次の列車（同じ運用）に飛べるよう、列車詳細に運用の列車一覧を渡す
 // 1.15.2: 併結で列車番号・種別行先・編成番号が同じものは、1つにまとめて表示する（2020B+2020B → 2020B）。アイコンは1本ずつ出てタップで各列車の時刻表が開く
 // 1.15.1: パターンを変えた時に、ダイヤ（キャッシュを使わず取り直し）と乗車記録を取得し直す
 // 1.15.0: 現在時刻の枠に「パターン」のプルダウンを追加。自動（今日の曜日）／平日ダイヤ／土日祝ダイヤ を切り替えて表示できる（選んだパターンに当てはまる、いちばん近い日のダイヤで表示）
@@ -810,8 +811,7 @@
     return { hm: `${h}:${pad(m)}`, sec: s ? s : null };
   }
 
-  function openDetail(train) {
-    if (typeof window.ttOpenTrainDetail !== "function") return;
+  function trainToEntry(train) {
     const stops = train.stops.map(s => {
       const a = secToHm(s.a), d = secToHm(s.d);
       return {
@@ -823,11 +823,19 @@
       };
     });
     const first = train.stops.find(s => s.bound) || train.stops[0] || {};
-    const bound = first.bound || "";
-    window.ttOpenTrainDetail({
-      unban: train.unban, trainNumber: train.trainNumber,
-      type: first.type || "", bound, stops
-    });
+    return { unban: train.unban, trainNumber: train.trainNumber, type: first.type || "", bound: first.bound || "", stops };
+  }
+  function openDetail(train) {
+    if (typeof window.ttOpenTrainDetail !== "function") return;
+    const entry = trainToEntry(train);
+    // 同じ運用（シート）の列車を、シートの並び順で渡す（スタフで前・次の列車に飛ぶため）
+    const list = train.sheetKey ? st.trains.filter(x => x.sheetKey === train.sheetKey) : [];
+    const i = list.indexOf(train);
+    if (list.length > 1 && i >= 0) {
+      entry.seq = list.map(x => ({ trainNumber: x.trainNumber || "", unban: x.unban || "", build: () => trainToEntry(x) }));
+      entry.seqIdx = i;
+    }
+    window.ttOpenTrainDetail(entry);
   }
 
   /* ---------- 描画 ---------- */
