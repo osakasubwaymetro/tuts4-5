@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.17.0 -->
+<!-- version: 1.18.0 -->
+<!-- 1.18.0: 乗換先の探し方を変更。HeartRailsで駅の位置を特定（隣駅が一致したものだけ採用）→その周辺の駅を検索してヒットした路線を出す。駅名が違う乗換駅も出る。結果は端末に保存 -->
 <!-- 1.17.0: 駅名の右に「乗換」ボタン。押すと、同じ駅（stationaliasの別表記も同じ駅）を通るほかの路線を下から出して、押した路線へ飛べる -->
 <!-- 1.16.25: trainpos.js 1.14.1 -->
 <!-- 1.16.24: trainpos.js 1.14.0 -->
@@ -790,53 +791,197 @@ function jumpToRoute(routeName) {
 
 /* ----------------------------------------
    乗換（駅名の右の「乗換」ボタン）
-   乗換先は index の「最寄り駅から選択」と同じ考え方：駅マスタ（station）に、同じ駅名（stationaliasの
-   別表記も同じ駅）で載っている、ほかの路線。via_の行・同じ路線の別区間（路線名[区間]）は除く
+   乗換先の探し方（駅名が違う乗換駅も出るように、位置で探す）：
+   ①HeartRails Express に駅名で問い合わせて、その駅の位置（緯度経度）を特定する。
+     同じ駅名が別の県にもあるので、前後どちらかの隣駅が、マスタの並びの隣駅と一致したものだけを採用する
+   ②その位置を中心にHeartRailsで近くの駅を検索し、ヒットした駅を駅マスタの路線に当てはめて出す
+     （路線名の表記ゆれ・隣駅の一致で当てはめる考え方は、indexの「最寄り駅から選択」と同じ）
+   結果は端末に保存して使い回す。HeartRailsに繋がらない時だけ、同じ駅名の別路線を出す
 ---------------------------------------- */
+const XF_API = "https://express.heartrails.com/api/json";
+const XF_MAX_M = 800;            // この距離（m）より遠いヒットは乗換にしない
+const XF_CACHE_KEY = "tuts4_xfer_v2";
+let xfAliasRaw = [], lineAliasData = [], linePrefixData = [];
 fetchCachedMasterData("stationalias", BASE + "stationalias", data => {
   try { ttBuildAlias(data); } catch (e) { /* timetable.js が無ければ表記ゆれ無しで動く */ }
-  if (document.getElementById("mapRoute").value && allstationData.length) renderMap();
+  xfAliasRaw = data.map(r => ({ o: (r["正式名称"] || "").trim(), a: (r["通称"] || "").trim() })).filter(r => r.o && r.a);
 });
+fetchCachedMasterData("linealias", BASE + "linealias", data => {
+  lineAliasData = data.map(r => ({ official: r["正式名称"] || "", alias: r["通称"] || "" })).filter(r => r.official && r.alias);
+});
+fetchCachedMasterData("lineprefix", BASE + "lineprefix", data => {
+  linePrefixData = data.map(r => ({ officialPrefix: r["正式接頭辞"] || "", aliasPrefix: r["通称接頭辞"] || "" })).filter(r => r.officialPrefix && r.aliasPrefix);
+});
+
 function xferCanon(n) { try { return ttCanon(n); } catch (e) { return String(n || "").replace(/駅$/, ""); } }
+function xfSame(a, b) { return !!a && !!b && xferCanon(a) === xferCanon(b); }
 function xferBaseRoute(r) { return String(r || "").replace(/\[[^\]]*\]\s*$/, "").trim(); }
-let _xferIdx = null, _xferIdxFor = null;
-function xferRoutesAt(stationName, currentRoute) {
-  if (_xferIdxFor !== allstationData) {
-    _xferIdx = new Map();
-    allstationData.forEach(r => {
-      const n = r["駅名"], rt = r["路線"];
-      if (!n || !rt || isViaEntry(n)) return;
-      const k = xferCanon(n);
-      if (!_xferIdx.has(k)) _xferIdx.set(k, new Set());
-      _xferIdx.get(k).add(rt);
-    });
-    _xferIdxFor = allstationData;
-  }
-  const set = _xferIdx.get(xferCanon(stationName));
-  if (!set) return [];
-  const curBase = xferBaseRoute(currentRoute);
-  return [...set].filter(rt => rt !== currentRoute && xferBaseRoute(rt) !== curBase);
+function xfNameVariants(name) {
+  const base = String(name || "").replace(/駅$/, "");
+  const set = new Set([base]);
+  xfAliasRaw.forEach(r => { if (r.o.replace(/駅$/, "") === base) set.add(r.a.replace(/駅$/, "")); if (r.a.replace(/駅$/, "") === base) set.add(r.o.replace(/駅$/, "")); });
+  return [...set];
 }
-function openXfer(stationName, currentRoute) {
-  const routes = xferRoutesAt(stationName, currentRoute);
+// 路線名の表記ゆれ（scripts.js の isLineMatch と同じ考え方）
+function xfLineVariants(name) {
+  const base = String(name || "").trim();
+  const exact = lineAliasData.filter(x => x.official === base);
+  if (exact.length) return exact.map(m => m.alias.trim());
+  let withAlias = base;
+  lineAliasData.forEach(({ official, alias }) => { withAlias = withAlias.split(official).join(alias); });
+  const v = [withAlias.trim()];
+  const pr = linePrefixData.find(x => base.startsWith(x.officialPrefix));
+  if (pr) {
+    let w = pr.aliasPrefix + base.slice(pr.officialPrefix.length);
+    lineAliasData.forEach(({ official, alias }) => { w = w.split(official).join(alias); });
+    v.push(w.trim());
+  }
+  return v;
+}
+function xfIsLineMatch(masterLine, apiLine) {
+  for (const a of xfLineVariants(masterLine)) for (const b of xfLineVariants(apiLine)) {
+    if (!a || !b) continue;
+    if (a === b || a.includes(b) || b.includes(a)) return true;
+    const ca = a.replace(/線$/, ""), cb = b.replace(/線$/, "");
+    if (ca && cb && (ca === cb || a.includes(cb) || b.includes(ca))) return true;
+  }
+  return false;
+}
+// 駅マスタ上の、その路線・駅の前後の実駅（via_以外）
+function xfNeighbors(route, name) {
+  const rows = allstationData.filter(r => r["路線"] === route);
+  const idx = rows.findIndex(r => r["駅名"] === name);
+  let prev = null, next = null;
+  if (idx === -1) return { prev, next };
+  for (let i = idx - 1; i >= 0; i--) if (!isViaEntry(rows[i]["駅名"])) { prev = rows[i]["駅名"]; break; }
+  for (let i = idx + 1; i < rows.length; i++) if (!isViaEntry(rows[i]["駅名"])) { next = rows[i]["駅名"]; break; }
+  return { prev, next };
+}
+async function xfApi(q) {
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), 8000);
+  try {
+    const r = await fetch(XF_API + "?" + q, { signal: c.signal });
+    const j = await r.json();
+    return (j.response && j.response.station) || [];
+  } catch (e) { return null; } finally { clearTimeout(t); }
+}
+
+// HeartRailsに繋がらない時だけ使う：駅マスタで同じ駅名（表記ゆれ込み）の、ほかの路線
+function xfFallbackSameName(stationName, currentRoute) {
+  const k = xferCanon(stationName), curBase = xferBaseRoute(currentRoute), set = new Set();
+  allstationData.forEach(r => {
+    if (!r["駅名"] || !r["路線"] || isViaEntry(r["駅名"]) || r["路線"] === currentRoute || xferBaseRoute(r["路線"]) === curBase) return;
+    if (xferCanon(r["駅名"]) === k) set.add(r["路線"]);
+  });
+  return [...set].map(route => ({ route, name: stationName, dist: 0, same: true }));
+}
+
+let _xfMem = null;
+function xfCache() {
+  if (_xfMem) return _xfMem;
+  try { _xfMem = JSON.parse(localStorage.getItem(XF_CACHE_KEY) || "{}") || {}; } catch (e) { _xfMem = {}; }
+  return _xfMem;
+}
+function xfSave() { try { localStorage.setItem(XF_CACHE_KEY, JSON.stringify(_xfMem || {})); } catch (e) { /* 容量超過等は無視 */ } }
+const XF_TTL = 30 * 86400 * 1000;
+function xfGet(route, name) {
+  const e = xfCache()[route + "|" + name];
+  return e && Date.now() - e.t < XF_TTL ? e.hits : undefined;
+}
+const _xfInflight = new Map();
+function xfResolve(route, name) {
+  const key = route + "|" + name;
+  if (_xfInflight.has(key)) return _xfInflight.get(key);
+  const p = (async () => {
+    const nb = xfNeighbors(route, name);
+    // ①駅名から位置を特定（隣駅が一致したものだけ。別の県の同じ駅名を避ける）
+    let pos = null;
+    for (const q of xfNameVariants(name)) {
+      const ents = await xfApi("method=getStations&name=" + encodeURIComponent(q));
+      if (ents === null) return xfFallbackSameName(name, route);   // 繋がらない：保存しない
+      const ok = e => (!nb.prev && !nb.next) || [e.prev, e.next].some(x => x && (xfSame(x, nb.prev) || xfSame(x, nb.next)));
+      pos = ents.find(ok) || null;
+      if (pos) break;
+    }
+    let hits = [];
+    if (pos) {
+      // ②その位置のまわりの駅を検索して、駅マスタの路線に当てはめる
+      const near = await xfApi(`method=getStations&x=${encodeURIComponent(pos.x)}&y=${encodeURIComponent(pos.y)}`);
+      if (near === null) return xfFallbackSameName(name, route);
+      const curBase = xferBaseRoute(route), byRoute = new Map();
+      near.forEach(h => {
+        const dist = parseInt(String(h.distance || "0"), 10) || 0;
+        if (dist > XF_MAX_M) return;
+        const rows = allstationData.filter(r => r["駅名"] && !isViaEntry(r["駅名"]) && xfSame(r["駅名"], h.name));
+        const routes = new Set();
+        rows.forEach(r => { if (xfIsLineMatch(r["路線"], h.line)) routes.add(r["路線"]); });
+        rows.forEach(r => {
+          if (routes.has(r["路線"])) return;
+          const n = xfNeighbors(r["路線"], r["駅名"]);
+          if ((h.prev && n.prev && xfSame(n.prev, h.prev)) || (h.next && n.next && xfSame(n.next, h.next)) ||
+              (h.prev && n.next && xfSame(n.next, h.prev)) || (h.next && n.prev && xfSame(n.prev, h.next))) routes.add(r["路線"]);
+        });
+        routes.forEach(rt => {
+          if (rt === route || xferBaseRoute(rt) === curBase) return;
+          const row = rows.find(r => r["路線"] === rt);
+          const cur = byRoute.get(rt);
+          if (!cur || dist < cur.dist) byRoute.set(rt, { route: rt, name: row["駅名"], dist, same: xfSame(row["駅名"], name) });
+        });
+      });
+      hits = [...byRoute.values()].sort((a, b) => (b.same - a.same) || (a.dist - b.dist));
+    }
+    xfCache()[key] = { t: Date.now(), hits };
+    xfSave();
+    return hits;
+  })().finally(() => _xfInflight.delete(key));
+  _xfInflight.set(key, p);
+  return p;
+}
+function xferBtnHtml(name) {
+  return `<button type="button" class="xfer-btn" data-st="${escAttr(name)}"><span>乗換</span></button>`;
+}
+// 描画後に、まだ調べてない駅を順に調べて、乗換先がある駅にボタンを足す（同時3本まで）
+let _xfRun = 0;
+function xferPrefetch(route, names) {
+  const run = ++_xfRun;
+  const queue = names.filter(n => xfGet(route, n) === undefined);
+  const worker = async () => {
+    while (queue.length && run === _xfRun) {
+      const n = queue.shift();
+      const hits = await xfResolve(route, n);
+      if (run !== _xfRun || !hits || !hits.length) continue;
+      document.querySelectorAll("#mapResult .rt-name[data-xst]").forEach(el => {
+        if (el.dataset.xst === n && !el.querySelector(".xfer-btn")) {
+          el.insertAdjacentHTML("beforeend", xferBtnHtml(n));
+          el.querySelector(".xfer-btn").onclick = () => openXfer(n, route);
+        }
+      });
+    }
+  };
+  for (let i = 0; i < 3; i++) worker();
+}
+async function openXfer(stationName, currentRoute) {
   document.getElementById("xferStation").textContent = stationName.replace(/駅$/, "") + "駅";
   const box = document.getElementById("xferList");
+  box.innerHTML = '<p style="text-align:center;color:#888;">乗換先を調べています…</p>';
+  document.getElementById("xferOverlay").classList.add("show");
+  let hits = xfGet(currentRoute, stationName);
+  if (hits === undefined) hits = await xfResolve(currentRoute, stationName);
   box.innerHTML = "";
-  routes.forEach(rt => {
-    const meta = allrouteData.find(r => r["路線"] === rt);
+  if (!hits.length) { box.innerHTML = '<p style="text-align:center;color:#888;">乗換先が見つかりませんでした</p>'; return; }
+  hits.forEach(h => {
+    const meta = allrouteData.find(r => r["路線"] === h.route);
     const company = meta ? (meta["会社"] || "") : "";
-    const label = company && !rt.includes(company) ? company + " " + rt : rt;
-    const row = allstationData.find(r => r["路線"] === rt && !isViaEntry(r["駅名"]) && xferCanon(r["駅名"]) === xferCanon(stationName));
-    const nm = ((row && row["駅名"]) || stationName).replace(/駅$/, "") + "駅";
+    const label = company && !h.route.includes(company) ? company + " " + h.route : h.route;
     const b = document.createElement("button");
     b.type = "button"; b.className = "xfer-item";
     b.innerHTML = `<div class="ln"></div><div class="nm"></div>`;
     b.querySelector(".ln").textContent = "🚆 " + label;
-    b.querySelector(".nm").textContent = nm;
-    b.onclick = () => { closeXfer(); jumpToRoute(rt); };
+    b.querySelector(".nm").textContent = h.name.replace(/駅$/, "") + "駅" + (!h.same && h.dist ? `（約${h.dist}m）` : "");
+    b.onclick = () => { closeXfer(); jumpToRoute(h.route); };
     box.appendChild(b);
   });
-  document.getElementById("xferOverlay").classList.add("show");
 }
 function closeXfer() { document.getElementById("xferOverlay").classList.remove("show"); }
 
@@ -1707,7 +1852,7 @@ function renderMap() {
     html += `
       <div class="rt-row${shaded}">
         ${parallelLines}
-        <div class="rt-name">${name}${xferRoutesAt(name, routeVal).length ? `<button type="button" class="xfer-btn" data-st="${escAttr(name)}"><span>乗換</span></button>` : ""}</div>
+        <div class="rt-name" data-xst="${escAttr(name)}">${name}${(xfGet(routeVal, name) || []).length ? xferBtnHtml(name) : ""}</div>
         <div class="rt-dot-wrap">
           <div class="rt-line-half" style="background:${upperColor};"></div>
           <span class="rt-dot" style="${dotRidden ? `background:${riddenColor};border-color:${riddenColor};` : `border-color:${unriddenColor};`}"></span>
@@ -1742,6 +1887,7 @@ function renderMap() {
   box.querySelectorAll(".xfer-btn").forEach(btn => {
     btn.onclick = () => openXfer(btn.dataset.st, routeVal);
   });
+  xferPrefetch(routeVal, stationsOnRoute);
 
   // 列車位置（trainpos.js）：描画した路線図の上に、今走ってる列車を重ねる
   if (window.TrainPos) {
