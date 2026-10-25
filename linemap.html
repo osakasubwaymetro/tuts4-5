@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.23.0 -->
+<!-- version: 1.23.1 -->
+<!-- 1.23.1: 直通先のラベル・分岐線の色も、直通先の路線の「路線カラー」にした（無ければ今までの色） -->
 <!-- 1.23.0: 並走線の色を、並走先の路線の「路線カラー」にした（無ければ紫） -->
 <!-- 1.22.1: 並走先に間の駅が無い時（例: 京浜東北線の鶯谷が常磐快速線に無い）、並走線が途切れて日暮里と上野にだけ乱立するのを、間の駅も並走中にして繋ぐ -->
 <!-- 1.22.0: timetable.js 1.18.0／trainpos.js 1.16.0（スタフの着後に次の列車番号・前後の列車のスタフに飛ぶボタン） -->
@@ -1010,6 +1011,10 @@ function viaTargetRoute(n) { return n.slice(4).split("#")[0]; }
 // 路線名から見た目の色を一定に決める（同じ路線なら常に同じ色になる）
 const LINE_COLORS = ["#1e8449", "#2874a6", "#b9770e", "#7d3c98", "#c0392b", "#117864", "#5b2c6f", "#1a5276"];
 function colorForRoute(name) {
+  // routeシートの「路線カラー」があればそれを使う（直通先のラベル・分岐線の色）。無ければ路線名から決めた色
+  const crow = allrouteData.find(r => r["路線"] === name);
+  const chex = crow && crow["路線カラー"] ? String(crow["路線カラー"]).trim() : "";
+  if (/^#[0-9a-fA-F]{6}$/.test(chex)) return chex;
   let hash = 0;
   const s = String(name || "");
   for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) % LINE_COLORS.length;
