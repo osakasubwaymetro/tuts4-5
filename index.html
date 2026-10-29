@@ -10,7 +10,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.15.9 -->
+  <!-- version: 1.16.0 -->
+  <!-- 1.16.0: 投稿フォームに「連結編成数」「前から何個目の編成に乗る？」を追加（scripts.js 1.39.0） -->
   <!-- 1.15.9: scripts.js 1.38.3 -->
   <!-- 1.15.8: scripts.js 1.38.2 -->
 <!-- 1.15.7: dayrule.js 1.1.0（曜日区分で「1/17,24,31 2/7,14」の書き方に対応） -->
@@ -831,6 +832,14 @@
   </div>
   </div>
 
+  <div id="formationBox">
+    <label><h3>連結編成数</h3></label>
+    <small>つながっている編成の数（併結のダイヤは自動で入ります）</small>
+    <select id="formCount"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option><option value="10">10</option><option value="11">11</option><option value="12">12</option></select>
+    <label><h3>前から何個目の編成に乗る？</h3></label>
+    <select id="formPos"><option value="1">1</option></select>
+  </div>
+
   <label><h3>メモ</h3></label>
   <small>プルダウンにない場合はここに入力してください</small>
   <input type="text" id="memo" name="ride_memo_note" autocomplete="off">
@@ -878,7 +887,7 @@
 <script src="logs.js?v=1.2.1"></script>
 <script src="idbcache.js?v=1.0.0"></script>
 <script src="dayrule.js?v=1.1.0"></script>
-<script src="scripts.js?v=1.38.3"></script>
+<script src="scripts.js?v=1.39.0"></script>
 <script>
   const username = checkLogin();
 

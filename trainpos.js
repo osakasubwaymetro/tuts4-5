@@ -1,4 +1,5 @@
-// trainpos.js v1.16.0
+// trainpos.js v1.17.0
+// 1.17.0: 乗車記録の「連結編成数」「乗車位置（前から何個目の編成）」に対応。連結編成数ぶんのアイコンを縦に出し、乗車位置の編成だけに車両アイコン・編成番号を反映する（それ以外は汎用アイコン／所定形式）。併結（ダイヤ上の複数列車）は前から並べた順。記録に乗車位置が無い古いものは、前から1個目として扱う
 // 1.16.0: スタフの前の列車・次の列車（同じ運用）に飛べるよう、列車詳細に運用の列車一覧を渡す
 // 1.15.2: 併結で列車番号・種別行先・編成番号が同じものは、1つにまとめて表示する（2020B+2020B → 2020B）。アイコンは1本ずつ出てタップで各列車の時刻表が開く
 // 1.15.1: パターンを変えた時に、ダイヤ（キャッシュを使わず取り直し）と乗車記録を取得し直す
@@ -395,14 +396,18 @@
           const model = splitSlash(r["車両形式"])[0] || "";
           const number = splitSlash(r["車番"])[0] || "";
           if (!model && !number) return;
-          const k = model + "\u0001" + number;
+          const cnt = parseInt(r["連結編成数"], 10) || 0, pos = parseInt(r["乗車位置"], 10) || 0;
+          const k = model + "\u0001" + number + "\u0001" + pos + "\u0001" + cnt;
           tally.set(k, (tally.get(k) || 0) + 1);
         });
       });
     });
     if (!tally.size) return null;
-    const best = [...tally.entries()].sort((a, b) => b[1] - a[1])[0][0].split("\u0001");
-    return { model: best[0], number: best[1] };
+    return fmFromKey([...tally.entries()].sort((a, b) => b[1] - a[1])[0][0]);
+  }
+  function fmFromKey(key) {
+    const b = key.split("\u0001");
+    return { model: b[0], number: b[1], pos: Number(b[2]) || 0, count: Number(b[3]) || 0 };
   }
 
   // 自分の列車に記録が無くても、同じ運用（sheetKey）の他の列車に記録があれば、その編成を使う
@@ -417,14 +422,11 @@
       if (t.sheetKey !== train.sheetKey) return;
       const f = findFormation(t, serviceDate, ridesIdx);
       if (!f) return;
-      const k = f.model + "\u0001" + f.number;
+      const k = f.model + "\u0001" + f.number + "\u0001" + f.pos + "\u0001" + f.count;
       tally.set(k, (tally.get(k) || 0) + 1);
     });
     let result = null;
-    if (tally.size) {
-      const best = [...tally.entries()].sort((a, b) => b[1] - a[1])[0][0].split("\u0001");
-      result = { model: best[0], number: best[1] };
-    }
+    if (tally.size) result = fmFromKey([...tally.entries()].sort((a, b) => b[1] - a[1])[0][0]);
     memo.set(mk, result);
     return result;
   }
@@ -884,6 +886,32 @@
     const active = computeActive(ctx, sec, date);
     const ridesIdx = indexRides(st.rides);
     const rideOnlyList = computeRideOnly(ctx, sec, date);
+    const fmMemo = new Map();
+    const fmCache = new Map();
+    const fmOf = a => {
+      if (!fmCache.has(a)) fmCache.set(a, findFormationForSheet(a.train, a.serviceDate, ridesIdx, fmMemo));
+      return fmCache.get(a);
+    };
+    // 1つの表示（単独または併結）の編成の並び：連結編成数ぶんの枠を前から並べ、記録の乗車位置の枠に車両を当てはめる
+    const slotPlan = p => {
+      const recs = [], seen = new Set();
+      p.members.forEach(a => {
+        const f = fmOf(a);
+        if (!f) return;
+        const k = f.model + "\u0001" + f.number + "\u0001" + f.pos + "\u0001" + f.count;
+        if (seen.has(k)) return;
+        seen.add(k); recs.push(f);
+      });
+      let n = p.members.length;
+      recs.forEach(f => { if (f.count > n) n = f.count; });
+      const assigned = new Array(n).fill(null);
+      recs.forEach(f => {
+        let s = (f.pos > 0 ? f.pos : 1) - 1;
+        if (s >= n) s = n - 1;
+        if (!assigned[s]) assigned[s] = f;
+      });
+      return { n, assigned };
+    };
 
     // 現在の行位置から、配置する列車一覧を作る
     const build = (centers) => {
@@ -918,6 +946,7 @@
           nums.forEach(n => byNum.set(n, el));
         }
       }
+      placed.forEach(p => { p.h = 67 + 55 * (slotPlan(p).n - 1); });
       const rideOnly = rideOnlyList.map(r => {
         const y = centers[r.row];
         return y == null ? null : { kind: "ride", r, sign: r.sign, y, h: 67 };
@@ -963,7 +992,6 @@
     layer.id = "tpLayer";
     scroll.appendChild(layer);
 
-    const fmMemo = new Map();
     const slots = { left: [], right: [] }; // 同じ側で近い列車を横にずらすための記録
 
     all.forEach(p => {
@@ -992,23 +1020,31 @@
         return;
       }
 
-      // 1本（または併結の複数本）ぶんの表示を作る。併結は、アイコンを縦に並べ、種別行先は2行（1本ずつ）、編成番号は「G11+」「U1」のように並べる
-      const views = p.members.map(a => {
-        const fm = findFormationForSheet(a.train, a.serviceDate, ridesIdx, fmMemo);
+      // 1本（または併結の複数本）ぶんの表示を作る。アイコンは編成ごとに縦に並べ（連結編成数ぶん）、種別行先は列車ごとに1行ずつ、編成番号は「G11+」「U1」のように並べる
+      const mviews = p.members.map(a => {
         const tb = typeBound(a);
-        const defIcons = (!fm && a.train.defaultIcons) || [];
-        const icon = fm ? resolveIcon(fm.model, fm.number) : (defIcons.length ? defIcons[iconIdx(defIcons.length)] : FALLBACK_TRAIN_IMAGE);
+        const defIcons = a.train.defaultIcons || [];
         const badge = a.train.trainNumber || (a.train.unban ? "運" + a.train.unban : "");
-        return { badge, icon, defIcons, label: `${tb.type}${tb.bound}`, num: fm && fm.number ? cleanNum(fm.number) : "" };
+        return { badge, defIcons, label: `${tb.type}${tb.bound}` };
       });
+      const plan = slotPlan(p);
+      const nM = mviews.length;
+      const views = [];
+      for (let j = 0; j < plan.n; j++) {
+        const mi = Math.min(j, nM - 1);
+        const fm = plan.assigned[j];
+        const defIcons = !fm ? mviews[mi].defIcons : [];
+        const icon = fm ? resolveIcon(fm.model, fm.number) : (defIcons.length ? defIcons[iconIdx(defIcons.length)] : FALLBACK_TRAIN_IMAGE);
+        views.push({ icon, defIcons, mi, num: fm && fm.number ? cleanNum(fm.number) : "" });
+      }
       const multi = views.length > 1;
       const nums = [...new Set(views.map(v => v.num).filter(Boolean))];
-      const labels = [...new Set(views.map(v => v.label))];
-      const badges = [...new Set(views.map(v => v.badge).filter(Boolean))];
+      const labels = [...new Set(mviews.map(v => v.label))];
+      const badges = [...new Set(mviews.map(v => v.badge).filter(Boolean))];
       el.className = "tp-train tp-" + side + (p.a.pos.atStation ? " tp-stop" : "") + (multi ? " tp-coupled" : "");
       el.innerHTML = `
         <div class="tp-badge">${esc(badges.join("+"))}</div>
-        ${views.map((v, i) => `<div class="tp-icon" data-mi="${i}"><img src="${esc(v.icon)}" ${v.defIcons.length > 1 ? `data-icons="${esc(v.defIcons.join("\n"))}"` : ""} alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';"></div>`).join("")}
+        ${views.map(v => `<div class="tp-icon" data-mi="${v.mi}"><img src="${esc(v.icon)}" ${v.defIcons.length > 1 ? `data-icons="${esc(v.defIcons.join("\n"))}"` : ""} alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';"></div>`).join("")}
         ${labels.map(t => `<div class="tp-label">${esc(t)}</div>`).join("")}
         ${nums.map((n, i) => `<div class="tp-num">${esc(n)}${i < nums.length - 1 ? "+" : ""}</div>`).join("")}`;
       el.onclick = () => openDetail(p.a.train);

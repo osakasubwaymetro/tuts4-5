@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.23.1 -->
+<!-- version: 1.24.0 -->
+<!-- 1.24.0: trainpos.js 1.17.0（連結編成数ぶんのアイコン／乗車位置の編成にだけ車両を反映） -->
 <!-- 1.23.1: 直通先のラベル・分岐線の色も、直通先の路線の「路線カラー」にした（無ければ今までの色） -->
 <!-- 1.23.0: 並走線の色を、並走先の路線の「路線カラー」にした（無ければ紫） -->
 <!-- 1.22.1: 並走先に間の駅が無い時（例: 京浜東北線の鶯谷が常磐快速線に無い）、並走線が途切れて日暮里と上野にだけ乱立するのを、間の駅も並走中にして繋ぐ -->
@@ -594,7 +595,7 @@
 <script src="dayrule.js?v=1.1.0"></script>
 <script src="timetable.js?v=1.18.0"></script>
 <script src="trainnavi.js?v=1.4.0"></script>
-<script src="trainpos.js?v=1.16.0"></script>
+<script src="trainpos.js?v=1.17.0"></script>
 <script>initNav("乗車路線マップ確認用");</script>
 <script>
 const username = checkLogin();

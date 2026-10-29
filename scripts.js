@@ -1,4 +1,5 @@
-// version: 1.38.3
+// version: 1.39.0
+// 1.39.0: 投稿フォームに「連結編成数」（ダイヤの併結は併結の数が初期値）と「前から何個目の編成に乗る？」を追加。投稿内容に couplingCountValue／ridePosValue を載せる（受け取る側のGAS・シートに「連結編成数」「乗車位置」の列が必要）
 // 1.38.3: 同じ列車番号が2つ以上ある候補は、行先が空でも必ず併結としてまとめる
 // 1.38.2: 同じ時刻で種別も行先も同じダイヤも併結としてまとめる
 // 1.38.1: 駅名の表記ゆれ（stationaliasシート）に対応。ダイヤの駅名・行先が通称（例: なんば）でも、正式名称の駅（難波）と同じ駅として候補に出す
@@ -568,7 +569,39 @@ function resetRideBlocksToOne() {
   const blocks = container.querySelectorAll(".ride-block");
   blocks.forEach((b, i) => { if (i > 0) b.remove(); });
   rideBlockCount = 1;
+  _formCountTouched = false;
+  syncFormCountToBlocks();
 }
+
+// 連結編成数・乗車位置（前から何個目）。連結編成数は、手で変えるまでは併結ブロックの数に合わせる
+let _formCountTouched = false;
+function rebuildFormPos(keep) {
+  const cnt = Number(document.getElementById("formCount")?.value) || 1;
+  const sel = document.getElementById("formPos");
+  if (!sel) return;
+  const cur = Number(keep != null ? keep : sel.value) || 1;
+  sel.innerHTML = Array.from({ length: cnt }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join("");
+  sel.value = String(Math.min(cur, cnt));
+}
+function setFormCount(n, pos) {
+  const el = document.getElementById("formCount");
+  if (!el) return;
+  el.value = String(Math.max(1, Math.min(12, n)));
+  rebuildFormPos(pos);
+}
+function syncFormCountToBlocks() {
+  if (_formCountTouched) return;
+  const n = document.querySelectorAll("#rideBlocks .ride-block").length || 1;
+  setFormCount(n);
+}
+function removeCoupling(btn) {
+  btn.closest(".ride-block").remove();
+  syncFormCountToBlocks();
+}
+document.getElementById("formCount")?.addEventListener("change", e => {
+  if (e.isTrusted) _formCountTouched = true; // 手で変えたら、併結の数に合わせるのをやめる
+  rebuildFormPos();
+});
 
 document.getElementById("route").addEventListener("change", () => {
   resetRideBlocksToOne();
@@ -585,7 +618,7 @@ function addCoupling() {
   block.innerHTML = `
     <div class="ride-block-head">
       <span class="ride-block-label">併結 ${rideBlockCount}号車</span>
-      <button type="button" class="remove-couple-btn" onclick="this.closest('.ride-block').remove()">✕ 削除</button>
+      <button type="button" class="remove-couple-btn" onclick="removeCoupling(this)">✕ 削除</button>
     </div>
     <div class="ride-block-row">
       <div class="field stack-field">
@@ -601,6 +634,7 @@ function addCoupling() {
   // 新しく増えたプルダウンにも選択肢を反映（乗車駅は最初のブロックのみなので更新不要）
   updatesujitypeList();
   updateboundList();
+  syncFormCountToBlocks();
 }
 
 
@@ -729,7 +763,10 @@ function _uploadImpl() {
     boundValue,
     numberValue,
     memoValue,
-    isExtraValue
+    isExtraValue,
+    // 連結編成数と、前から何個目の編成に乗るか（走行位置MAPで、その編成にだけ車両アイコン・編成番号を出すために使う）
+    couplingCountValue: g('formCount') || "1",
+    ridePosValue: g('formPos') || "1"
   };
 
   // 送信を連打すると同じ内容の投稿が何件もできてしまう対策。
@@ -804,6 +841,8 @@ function resetForm() {
 
   const timeEl = document.getElementById("departing_time");
   if (timeEl) timeEl.value = "";
+  _formCountTouched = false;
+  setFormCount(1, 1);
   const memoEl = document.getElementById("memo");
   if (memoEl) memoEl.value = "";
   const extraEl = document.getElementById("isExtraTrain");
@@ -2691,6 +2730,9 @@ function saveDraft() {
     model: document.getElementById("model")?.value || "",
     number: document.getElementById("number")?.value || "",
     memo: document.getElementById("memo")?.value || "",
+    formCount: document.getElementById("formCount")?.value || "1",
+    formPos: document.getElementById("formPos")?.value || "1",
+    formCountTouched: _formCountTouched,
     departing_time: document.getElementById("departing_time")?.value || "",
     rideBlocks
   };
@@ -2759,6 +2801,9 @@ async function restoreDraft() {
     setAndTrigger("model", draft.model);
     await wait(300);
     setAndTrigger("number", draft.number);
+    // 連結編成数・乗車位置の復元（手で変えていた場合は、その値を維持する）
+    if (draft.formCountTouched) { _formCountTouched = true; setFormCount(Number(draft.formCount) || 1, Number(draft.formPos) || 1); }
+    else { syncFormCountToBlocks(); rebuildFormPos(Number(draft.formPos) || 1); }
   } finally {
     _restoringDraft = false;
   }
