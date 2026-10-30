@@ -10,7 +10,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>新規投稿</title>
-  <!-- version: 1.16.0 -->
+  <!-- version: 1.17.0 -->
+  <!-- 1.17.0: 「併結を追加」→「行先別併結を追加」。連結編成数・乗車位置を併結ボタンと車両形式の間に移し、丸3つ（−／数／＋）で増減する形に。路線シートの「貫通」がTRUEの路線では非表示（scripts.js 1.40.0） -->
   <!-- 1.16.0: 投稿フォームに「連結編成数」「前から何個目の編成に乗る？」を追加（scripts.js 1.39.0） -->
   <!-- 1.15.9: scripts.js 1.38.3 -->
   <!-- 1.15.8: scripts.js 1.38.2 -->
@@ -521,6 +522,12 @@
       color: #17324f;
       margin-bottom: 10px;
     }
+    .stepper { display:flex; align-items:center; justify-content:center; gap:18px; margin:8px 0 14px; }
+    .step-btn, .step-val { width:46px; height:46px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:22px; font-weight:bold; box-sizing:border-box; }
+    .step-btn { border:2px solid #004C97; background:#EEF4FF; color:#004C97; cursor:pointer; padding:0; line-height:1; }
+    .step-btn:active { background:#d9e6fb; }
+    .step-btn:disabled { opacity:.35; cursor:default; }
+    .step-val { border:2px solid #004C97; background:#004C97; color:#fff; }
     .secondary-btn {
       background: #EEF4FF;
       color: #004C97;
@@ -818,7 +825,25 @@
       </div>
     </div>
   </div>
-  <button type="button" id="coupleBtn" onclick="addCoupling()" style="display:none;">🔗 併結を追加</button>
+  <button type="button" id="coupleBtn" onclick="addCoupling()" style="display:none;">🔗 行先別併結を追加</button>
+
+  <div id="formationBox">
+    <label><h3>連結編成数</h3></label>
+    <small>つながっている編成の数（行先別併結のダイヤは自動で入ります）</small>
+    <div class="stepper" id="formCountStepper">
+      <button type="button" class="step-btn" data-step="formCount" data-d="-1" aria-label="減らす">−</button>
+      <span class="step-val" id="formCountVal">1</span>
+      <button type="button" class="step-btn" data-step="formCount" data-d="1" aria-label="増やす">＋</button>
+    </div>
+    <label><h3>前から何個目の編成に乗る？</h3></label>
+    <div class="stepper" id="formPosStepper">
+      <button type="button" class="step-btn" data-step="formPos" data-d="-1" aria-label="前へ">−</button>
+      <span class="step-val" id="formPosVal">1</span>
+      <button type="button" class="step-btn" data-step="formPos" data-d="1" aria-label="後ろへ">＋</button>
+    </div>
+    <select id="formCount" style="display:none;"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option><option value="10">10</option><option value="11">11</option><option value="12">12</option></select>
+    <select id="formPos" style="display:none;"><option value="1">1</option></select>
+  </div>
 
   <label><h3>車両形式</h3></label>
   <select id="model" style="display:none;"></select>
@@ -830,14 +855,6 @@
   <div style="text-align:right; margin-top:6px;">
     <button type="button" id="carSearchBtn" class="secondary-btn" onclick="openCarSearchPopup()">🔍 車両検索</button>
   </div>
-  </div>
-
-  <div id="formationBox">
-    <label><h3>連結編成数</h3></label>
-    <small>つながっている編成の数（併結のダイヤは自動で入ります）</small>
-    <select id="formCount"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option><option value="10">10</option><option value="11">11</option><option value="12">12</option></select>
-    <label><h3>前から何個目の編成に乗る？</h3></label>
-    <select id="formPos"><option value="1">1</option></select>
   </div>
 
   <label><h3>メモ</h3></label>
@@ -887,7 +904,7 @@
 <script src="logs.js?v=1.2.1"></script>
 <script src="idbcache.js?v=1.0.0"></script>
 <script src="dayrule.js?v=1.1.0"></script>
-<script src="scripts.js?v=1.39.0"></script>
+<script src="scripts.js?v=1.40.0"></script>
 <script>
   const username = checkLogin();
 
