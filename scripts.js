@@ -1,4 +1,5 @@
-// version: 1.39.0
+// version: 1.40.0
+// 1.40.0: 連結編成数・乗車位置を、丸3つ（−／数／＋）で増減する形に変更。路線シートの「貫通」がTRUEの路線では非表示（投稿にも載せない）。「併結を追加」を「行先別併結を追加」に名称変更
 // 1.39.0: 投稿フォームに「連結編成数」（ダイヤの併結は併結の数が初期値）と「前から何個目の編成に乗る？」を追加。投稿内容に couplingCountValue／ridePosValue を載せる（受け取る側のGAS・シートに「連結編成数」「乗車位置」の列が必要）
 // 1.38.3: 同じ列車番号が2つ以上ある候補は、行先が空でも必ず併結としてまとめる
 // 1.38.2: 同じ時刻で種別も行先も同じダイヤも併結としてまとめる
@@ -561,6 +562,24 @@ function updateCoupleButtonVisibility() {
   const routeVal = document.getElementById("route").value;
   const btn = document.getElementById("coupleBtn");
   btn.style.display = routeHasCoupling(routeVal) ? "block" : "none";
+  updateFormationBoxVisibility();
+}
+
+// 路線シートの「貫通」がTRUEの路線では、連結編成数・乗車位置を出さない
+function isThroughRoute(routeVal) {
+  const row = (allrouteData || []).find(r => r["路線"] === routeVal);
+  const v = row ? String(row["貫通"] || "").trim() : "";
+  return ["true", "TRUE", "True", "1", "はい", "有", "✓"].includes(v);
+}
+function updateFormationBoxVisibility() {
+  const box = document.getElementById("formationBox");
+  if (!box) return;
+  const routeVal = document.getElementById("route")?.value || "";
+  box.style.display = routeVal && isThroughRoute(routeVal) ? "none" : "";
+}
+function formationBoxHidden() {
+  const box = document.getElementById("formationBox");
+  return !!box && box.style.display === "none";
 }
 
 // 路線を変更したら、併結ブロックは一旦1つに戻す
@@ -582,7 +601,37 @@ function rebuildFormPos(keep) {
   const cur = Number(keep != null ? keep : sel.value) || 1;
   sel.innerHTML = Array.from({ length: cnt }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join("");
   sel.value = String(Math.min(cur, cnt));
+  updateStepperUI();
 }
+// 丸3つ（−／数／＋）の表示を、選択値に合わせて更新する
+function updateStepperUI() {
+  const cnt = Number(document.getElementById("formCount")?.value) || 1;
+  const pos = Number(document.getElementById("formPos")?.value) || 1;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = String(v); };
+  set("formCountVal", cnt); set("formPosVal", pos);
+  document.querySelectorAll(".step-btn").forEach(b => {
+    const d = Number(b.dataset.d), t = b.dataset.step;
+    b.disabled = t === "formCount" ? (d < 0 ? cnt <= 1 : cnt >= 12) : (d < 0 ? pos <= 1 : pos >= cnt);
+  });
+}
+document.querySelectorAll(".step-btn").forEach(b => {
+  b.addEventListener("click", () => {
+    const d = Number(b.dataset.d);
+    if (b.dataset.step === "formCount") {
+      _formCountTouched = true; // 手で変えたら、併結の数に合わせるのをやめる
+      const cnt = Math.max(1, Math.min(12, (Number(document.getElementById("formCount").value) || 1) + d));
+      document.getElementById("formCount").value = String(cnt);
+      rebuildFormPos();
+    } else {
+      const sel = document.getElementById("formPos");
+      const cnt = Number(document.getElementById("formCount").value) || 1;
+      sel.value = String(Math.max(1, Math.min(cnt, (Number(sel.value) || 1) + d)));
+      updateStepperUI();
+    }
+    if (typeof saveDraft === "function") saveDraft();
+  });
+});
+updateStepperUI();
 function setFormCount(n, pos) {
   const el = document.getElementById("formCount");
   if (!el) return;
@@ -606,6 +655,7 @@ document.getElementById("formCount")?.addEventListener("change", e => {
 document.getElementById("route").addEventListener("change", () => {
   resetRideBlocksToOne();
   updateCoupleButtonVisibility();
+  updateFormationBoxVisibility();
 });
 
 function addCoupling() {
@@ -765,8 +815,8 @@ function _uploadImpl() {
     memoValue,
     isExtraValue,
     // 連結編成数と、前から何個目の編成に乗るか（走行位置MAPで、その編成にだけ車両アイコン・編成番号を出すために使う）
-    couplingCountValue: g('formCount') || "1",
-    ridePosValue: g('formPos') || "1"
+    couplingCountValue: formationBoxHidden() ? "" : (g('formCount') || "1"),
+    ridePosValue: formationBoxHidden() ? "" : (g('formPos') || "1")
   };
 
   // 送信を連打すると同じ内容の投稿が何件もできてしまう対策。
