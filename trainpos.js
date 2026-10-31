@@ -1,4 +1,7 @@
-// trainpos.js v1.17.1
+// trainpos.js v1.19.0
+// 1.19.0: 現在時刻を指定する時に、時刻だけでなく日付も変えられるようにした（日時の入力欄）。指定した日の曜日・祝日でダイヤを選ぶ
+// 1.18.0: 黒いラベル（列車番号・種別行先）の文字が見切れる時は、ラベルの中で文字を左右にスクロールして全部読めるようにした
+// 1.17.2: 右側（下り＝画面の下へ進む列車）の併結・連結は、前の編成が下に来るよう縦の並びを逆にする（アイコン・種別行先・編成番号・列車番号。左側は前が上のまま）
 // 1.17.1: ダイヤに無い乗車記録（乗車記録だけの列車）も、連結編成数ぶんのアイコンを縦に出す。乗車位置の編成だけに車両アイコン・編成番号を出し、ほかは汎用アイコン。記録に連結編成数が無い古い併結の記録は、行先の数を連結編成数とみなす
 // 1.17.0: 乗車記録の「連結編成数」「乗車位置（前から何個目の編成）」に対応。連結編成数ぶんのアイコンを縦に出し、乗車位置の編成だけに車両アイコン・編成番号を反映する（それ以外は汎用アイコン／所定形式）。併結（ダイヤ上の複数列車）は前から並べた順。記録に乗車位置が無い古いものは、前から1個目として扱う
 // 1.16.0: スタフの前の列車・次の列車（同じ運用）に飛べるよう、列車詳細に運用の列車一覧を渡す
@@ -847,9 +850,11 @@
   // 運行日は3:00で切り替える（0:00〜2:59は前日の運行日の続き＝時刻に24時間足す）
   function currentNow() {
     const now = new Date();
-    let sec = (st.live || st.manualSec == null) ? now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds() : st.manualSec;
-    let date = now;
-    if (sec < DAY_START) { date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1); sec += 86400; }
+    const manual = !st.live && st.manualSec != null;
+    let sec = manual ? st.manualSec : now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+    const base = manual && st.manualDate ? st.manualDate : now; // 指定した日（無ければ今日）
+    let date = base;
+    if (sec < DAY_START) { date = new Date(base.getFullYear(), base.getMonth(), base.getDate() - 1); sec += 86400; }
     // パターン指定（平日／土日祝）：その日がパターンに合わなければ、合ういちばん近い日で代用する
     if (st.pattern === "weekday" || st.pattern === "holiday") {
       const want = st.pattern === "holiday";
@@ -1016,9 +1021,11 @@
         const realIcon = (r.model || r.number) ? resolveIcon(r.model, r.number) : FALLBACK_TRAIN_IMAGE;
         // 連結編成数ぶんのアイコンを縦に並べ、乗車位置の編成だけに車両アイコンを出す（ほかは汎用アイコン）
         const icons = Array.from({ length: n }, (_, j) => j === r.pos - 1 ? realIcon : FALLBACK_TRAIN_IMAGE);
-        const labs = [...new Set(r.bounds && r.bounds.length > 1
+        const labList = r.bounds && r.bounds.length > 1
           ? r.bounds.map((b, i) => `${(r.types && (r.types[i] || r.types[0])) || ""}${b}`)
-          : [`${r.type}${r.bound}`])];
+          : [`${r.type}${r.bound}`];
+        if (side === "right") { icons.reverse(); labList.reverse(); } // 右側は先頭の編成が下
+        const labs = [...new Set(labList)];
         el.className = "tp-train tp-ride tp-" + side + (n > 1 ? " tp-coupled" : "");
         el.innerHTML = `
           <div class="tp-badge">${esc(r.hm)}</div>
@@ -1046,6 +1053,8 @@
         const icon = fm ? resolveIcon(fm.model, fm.number) : (defIcons.length ? defIcons[iconIdx(defIcons.length)] : FALLBACK_TRAIN_IMAGE);
         views.push({ icon, defIcons, mi, num: fm && fm.number ? cleanNum(fm.number) : "" });
       }
+      // 右側は画面の下へ進むので、先頭の編成が下に来るよう逆順にする
+      if (side === "right") { views.reverse(); mviews.reverse(); }
       const multi = views.length > 1;
       const nums = [...new Set(views.map(v => v.num).filter(Boolean))];
       const labels = [...new Set(mviews.map(v => v.label))];
@@ -1062,6 +1071,22 @@
         ic.onclick = ev => { ev.stopPropagation(); const m = p.members[+ic.dataset.mi]; if (m) openDetail(m.train); };
       });
       layer.appendChild(el);
+    });
+
+    // 黒いラベル（列車番号・種別行先）の文字が見切れている時は、ラベルの中で文字を左右にスクロールする。
+    // 1秒ごとに描き直すので、アニメの位置は現在時刻から決めて、描き直しても途切れず続くようにする
+    layer.querySelectorAll(".tp-badge, .tp-label").forEach(lb => {
+      const over = lb.scrollWidth - lb.clientWidth;
+      if (over < 2) return;
+      const span = document.createElement("span");
+      span.textContent = lb.textContent;
+      lb.textContent = "";
+      lb.appendChild(span);
+      const dur = Math.max(2, over / 18); // 片道の秒数（遅めで読める速さ）
+      lb.classList.add("tp-scroll");
+      span.style.setProperty("--d", (over + 2) + "px");
+      span.style.setProperty("--t", dur + "s");
+      span.style.setProperty("--dl", "-" + ((Date.now() / 1000) % (dur * 2)).toFixed(3) + "s");
     });
 
     const status = document.getElementById("tpStatus");
@@ -1103,7 +1128,7 @@
       <label class="tp-sw"><input type="checkbox" id="tpOn"> 🚆 列車位置を表示</label>
       <span class="tp-opts" id="tpOpts" style="display:none;">
         <label class="tp-sw"><input type="checkbox" id="tpNow" checked> 現在時刻</label>
-        <input type="time" id="tpTime" step="60" disabled>
+        <input type="datetime-local" id="tpTime" step="60" disabled>
         <label class="tp-sw" style="margin-left:6px;">パターン</label>
         <select id="tpPattern">
           <option value="auto">自動（今日）</option>
@@ -1123,8 +1148,9 @@
       ti.disabled = st.live;
       if (!st.live) {
         const n = new Date();
-        ti.value = `${pad(n.getHours())}:${pad(n.getMinutes())}`;
+        ti.value = `${n.getFullYear()}-${pad(n.getMonth() + 1)}-${pad(n.getDate())}T${pad(n.getHours())}:${pad(n.getMinutes())}`;
         st.manualSec = n.getHours() * 3600 + n.getMinutes() * 60;
+        st.manualDate = new Date(n.getFullYear(), n.getMonth(), n.getDate());
       }
       renderLayer();
     };
@@ -1136,8 +1162,12 @@
       ensureData().then(renderLayer);
     };
     document.getElementById("tpTime").onchange = e => {
-      const m = String(e.target.value || "").match(/^(\d{1,2}):(\d{2})$/);
-      if (m) { st.manualSec = Number(m[1]) * 3600 + Number(m[2]) * 60; renderLayer(); }
+      const m = String(e.target.value || "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{1,2}):(\d{2})/);
+      if (m) {
+        st.manualDate = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+        st.manualSec = Number(m[4]) * 3600 + Number(m[5]) * 60;
+        renderLayer();
+      }
     };
   }
 

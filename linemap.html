@@ -7,7 +7,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.24.1 -->
+<!-- version: 1.26.0 -->
+<!-- 1.26.0: trainpos.js 1.19.0（現在時刻の指定で日付も変えられる） -->
+<!-- 1.25.0: trainpos.js 1.18.0（見切れる黒ラベルはラベル内でスクロール） -->
+<!-- 1.24.2: trainpos.js 1.17.2（右側は先頭の編成が下に来るよう並びを逆に） -->
 <!-- 1.24.1: trainpos.js 1.17.1（乗車記録だけの列車も連結編成数ぶんのアイコンを出す） -->
 <!-- 1.24.0: trainpos.js 1.17.0（連結編成数ぶんのアイコン／乗車位置の編成にだけ車両を反映） -->
 <!-- 1.23.1: 直通先のラベル・分岐線の色も、直通先の路線の「路線カラー」にした（無ければ今までの色） -->
@@ -355,7 +358,7 @@
   .tp-sw { display:inline-flex; align-items:center; gap:6px; margin-right:12px; font-weight:600; color:#333; }
   .tp-opts { display:inline; }
   .tp-opts select { font-size:14px; padding:3px 6px; border:1px solid #ccc; border-radius:6px; background:#fff; }
-  .tp-opts input[type=time] { font-size:14px; padding:3px 6px; border:1px solid #ccc; border-radius:6px; }
+  .tp-opts input[type=time], .tp-opts input[type=datetime-local] { font-size:14px; padding:3px 6px; border:1px solid #ccc; border-radius:6px; }
   .tp-clock { margin-left:10px; font-weight:bold; font-variant-numeric:tabular-nums; color:#17324f; }
   #tpLayer { position:absolute; inset:0; pointer-events:none; z-index:6; overflow:hidden; }
   .tp-train { cursor:pointer; pointer-events:auto; position:absolute; width:64px; display:flex; flex-direction:column; align-items:center; transform:translateY(-50%); }
@@ -363,6 +366,9 @@
   .tp-icon { width:44px; height:28px; margin-top:1px; }
   .tp-icon img { width:100%; height:100%; object-fit:contain; display:block; }
   .tp-label { background:#111; color:#fff; border-radius:3px; padding:0 4px; font-size:9px; line-height:13px; white-space:nowrap; max-width:76px; overflow:hidden; text-overflow:ellipsis; margin-top:-3px; }
+  .tp-scroll { text-overflow:clip; }
+  .tp-scroll > span { display:inline-block; animation: tpMq var(--t,3s) linear infinite alternate; animation-delay: var(--dl,0s); will-change:transform; }
+  @keyframes tpMq { 0%,18% { transform:translateX(0); } 82%,100% { transform:translateX(calc(-1 * var(--d,0px))); } }
   .tp-num { font-size:11px; color:#222; font-weight:600; line-height:13px; text-shadow:0 0 3px #fff,0 0 3px #fff; }
   .tp-train.tp-coupled .tp-label + .tp-label { margin-top:1px; }
   .tp-train.tp-stop .tp-badge { background:#0a7a3d; }
@@ -596,7 +602,7 @@
 <script src="dayrule.js?v=1.1.0"></script>
 <script src="timetable.js?v=1.18.0"></script>
 <script src="trainnavi.js?v=1.4.0"></script>
-<script src="trainpos.js?v=1.17.1"></script>
+<script src="trainpos.js?v=1.19.0"></script>
 <script>initNav("乗車路線マップ確認用");</script>
 <script>
 const username = checkLogin();
