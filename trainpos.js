@@ -1,4 +1,5 @@
-// trainpos.js v1.17.0
+// trainpos.js v1.17.1
+// 1.17.1: ダイヤに無い乗車記録（乗車記録だけの列車）も、連結編成数ぶんのアイコンを縦に出す。乗車位置の編成だけに車両アイコン・編成番号を出し、ほかは汎用アイコン。記録に連結編成数が無い古い併結の記録は、行先の数を連結編成数とみなす
 // 1.17.0: 乗車記録の「連結編成数」「乗車位置（前から何個目の編成）」に対応。連結編成数ぶんのアイコンを縦に出し、乗車位置の編成だけに車両アイコン・編成番号を反映する（それ以外は汎用アイコン／所定形式）。併結（ダイヤ上の複数列車）は前から並べた順。記録に乗車位置が無い古いものは、前から1個目として扱う
 // 1.16.0: スタフの前の列車・次の列車（同じ運用）に飛べるよう、列車詳細に運用の列車一覧を渡す
 // 1.15.2: 併結で列車番号・種別行先・編成番号が同じものは、1つにまとめて表示する（2020B+2020B → 2020B）。アイコンは1本ずつ出てタップで各列車の時刻表が開く
@@ -458,9 +459,10 @@
       best.set(key, {
         d, dtype, hm, station, row,
         bound: rb[0] || "", bounds: rb,
-        type: splitSlash(r["種別"])[0] || "",
+        type: splitSlash(r["種別"])[0] || "", types: splitSlash(r["種別"]),
         model: splitSlash(r["車両形式"])[0] || "",
-        number: splitSlash(r["車番"])[0] || ""
+        number: splitSlash(r["車番"])[0] || "",
+        count: parseInt(r["連結編成数"], 10) || 0, pos: parseInt(r["乗車位置"], 10) || 0
       });
     });
     const idx = new Map(); // dtype|hm → [記録]
@@ -513,7 +515,8 @@
           sign = window.ttResolveRideDirectionSign(ctx.routeVal, window.ttRouteStationOrder(ctx.routeVal), window.ttRouteRawOrder(ctx.routeVal), c.station, c.bound);
         } catch (e) { sign = null; }
       }
-      out.push({ row: c.row, sign: sign || 1, hm: c.hm, type: c.type, bound: c.bound, model: c.model, number: c.number });
+      const n = Math.max(c.count || 0, c.bounds.length, 1);
+      out.push({ row: c.row, sign: sign || 1, hm: c.hm, type: c.type, bound: c.bound, bounds: c.bounds, types: c.types, model: c.model, number: c.number, n, pos: Math.min(c.pos > 0 ? c.pos : 1, n) });
     });
     return out;
   }
@@ -949,7 +952,7 @@
       placed.forEach(p => { p.h = 67 + 55 * (slotPlan(p).n - 1); });
       const rideOnly = rideOnlyList.map(r => {
         const y = centers[r.row];
-        return y == null ? null : { kind: "ride", r, sign: r.sign, y, h: 67 };
+        return y == null ? null : { kind: "ride", r, sign: r.sign, y, h: 67 + 55 * ((r.n || 1) - 1) };
       }).filter(Boolean);
       const all = placed.concat(rideOnly).sort((p, q) => p.y - q.y);
       return { placed, rideOnly, all };
@@ -1009,12 +1012,18 @@
       if (p.kind === "ride") {
         // 乗車記録だけの列車：バッジは列車番号の代わりに発車時刻。ダイヤが無いのでタップしても何も起きない
         const r = p.r;
-        const icon = (r.model || r.number) ? resolveIcon(r.model, r.number) : FALLBACK_TRAIN_IMAGE;
-        el.className = "tp-train tp-ride tp-" + side;
+        const n = r.n || 1;
+        const realIcon = (r.model || r.number) ? resolveIcon(r.model, r.number) : FALLBACK_TRAIN_IMAGE;
+        // 連結編成数ぶんのアイコンを縦に並べ、乗車位置の編成だけに車両アイコンを出す（ほかは汎用アイコン）
+        const icons = Array.from({ length: n }, (_, j) => j === r.pos - 1 ? realIcon : FALLBACK_TRAIN_IMAGE);
+        const labs = [...new Set(r.bounds && r.bounds.length > 1
+          ? r.bounds.map((b, i) => `${(r.types && (r.types[i] || r.types[0])) || ""}${b}`)
+          : [`${r.type}${r.bound}`])];
+        el.className = "tp-train tp-ride tp-" + side + (n > 1 ? " tp-coupled" : "");
         el.innerHTML = `
           <div class="tp-badge">${esc(r.hm)}</div>
-          <div class="tp-icon"><img src="${esc(icon)}" alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';"></div>
-          <div class="tp-label">${esc(`${r.type}${r.bound}`)}</div>
+          ${icons.map(ic => `<div class="tp-icon"><img src="${esc(ic)}" alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';"></div>`).join("")}
+          ${labs.map(t => `<div class="tp-label">${esc(t)}</div>`).join("")}
           ${r.number ? `<div class="tp-num">${esc(cleanNum(r.number))}</div>` : ""}`;
         layer.appendChild(el);
         return;
