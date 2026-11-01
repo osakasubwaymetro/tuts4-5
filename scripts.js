@@ -1,4 +1,6 @@
-// version: 1.40.0
+// version: 1.41.0
+// 1.41.0: ダイヤから選ばず、過去の乗車記録から選んだ時や、手動で時刻を変えた時は、メモに「ダイヤなし」と入れる（ダイヤの候補を選んだ時は外す）
+// 1.40.1: 「貫通」でも連結編成数が消えない時があったのを修正（路線の探し方を併結判定と同じにし、路線が別の経路で切り替わっても追従するようにした）
 // 1.40.0: 連結編成数・乗車位置を、丸3つ（−／数／＋）で増減する形に変更。路線シートの「貫通」がTRUEの路線では非表示（投稿にも載せない）。「併結を追加」を「行先別併結を追加」に名称変更
 // 1.39.0: 投稿フォームに「連結編成数」（ダイヤの併結は併結の数が初期値）と「前から何個目の編成に乗る？」を追加。投稿内容に couplingCountValue／ridePosValue を載せる（受け取る側のGAS・シートに「連結編成数」「乗車位置」の列が必要）
 // 1.38.3: 同じ列車番号が2つ以上ある候補は、行先が空でも必ず併結としてまとめる
@@ -567,16 +569,27 @@ function updateCoupleButtonVisibility() {
 
 // 路線シートの「貫通」がTRUEの路線では、連結編成数・乗車位置を出さない
 function isThroughRoute(routeVal) {
-  const row = (allrouteData || []).find(r => r["路線"] === routeVal);
-  const v = row ? String(row["貫通"] || "").trim() : "";
-  return ["true", "TRUE", "True", "1", "はい", "有", "✓"].includes(v);
+  if (!routeVal || !allrouteData || !allrouteData.length) return false;
+  // 併結の判定（routeHasCoupling）と同じ探し方：区分・会社が合う行を優先し、無ければ路線名だけで探す
+  const typeVal = document.getElementById("type")?.value || "";
+  const countryVal = document.getElementById("country")?.value || "";
+  const row = allrouteData.find(r =>
+    r["路線"] === routeVal && (!typeVal || r["区分"] === typeVal) && (!countryVal || r["会社"] === countryVal)
+  ) || allrouteData.find(r => r["路線"] === routeVal);
+  if (!row) return false;
+  const v = row["貫通"];
+  return v === true || v === 1 || ["true", "TRUE", "True", "1", "はい", "有", "✓"].includes(String(v == null ? "" : v).trim());
 }
 function updateFormationBoxVisibility() {
   const box = document.getElementById("formationBox");
   if (!box) return;
   const routeVal = document.getElementById("route")?.value || "";
-  box.style.display = routeVal && isThroughRoute(routeVal) ? "none" : "";
+  const hide = !!routeVal && isThroughRoute(routeVal);
+  const want = hide ? "none" : "";
+  if (box.style.display !== want) box.style.display = want;
 }
+// 路線が別の経路（最寄り駅から選ぶ・履歴から選ぶ・下書きの復元など）で切り替わっても、必ず追従させる
+setInterval(updateFormationBoxVisibility, 500);
 function formationBoxHidden() {
   const box = document.getElementById("formationBox");
   return !!box && box.style.display === "none";
@@ -2253,7 +2266,26 @@ function closeHistoryModal() {
   if (overlay) overlay.classList.remove("show");
 }
 
+// メモの「ダイヤなし」：ダイヤから選んでいない投稿の目印（メモに書いてある他の文字は消さない）
+const NO_DIAGRAM_MEMO = "ダイヤなし";
+function setNoDiagramMemo(on) {
+  const el = document.getElementById("memo");
+  if (!el) return;
+  const has = el.value.includes(NO_DIAGRAM_MEMO);
+  if (on && !has) el.value = el.value ? NO_DIAGRAM_MEMO + " " + el.value : NO_DIAGRAM_MEMO;
+  else if (!on && has) el.value = el.value.split(NO_DIAGRAM_MEMO).join("").replace(/\s{2,}/g, " ").trim();
+  else return;
+  el.dispatchEvent(new Event("input", { bubbles: true })); // 下書き保存にも反映
+}
+// 手で時刻を変えた時（プログラムが入れた時は反応しない）
+document.getElementById("departing_time")?.addEventListener("change", e => {
+  if (e.isTrusted) setNoDiagramMemo(true);
+});
+
 function applyHistoryCandidate(c) {
+  // ダイヤの候補ならメモの「ダイヤなし」を外し、過去の乗車記録（ダイヤ以外の履歴）なら付ける
+  if (c.isDiagram) setNoDiagramMemo(false);
+  else if (!c.isShortcut) setNoDiagramMemo(true);
   if (c.isDiagram) {
     const pad = n => String(n).padStart(2, "0");
     const now = new Date();

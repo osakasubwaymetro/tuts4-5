@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.26.0 -->
+<!-- version: 1.27.0 -->
+<!-- 1.27.0: 直通ラベル・「乗換」から路線に飛ぶ時、飛んだ元の駅が画面の真ん中に来る位置までスクロールする -->
 <!-- 1.26.0: trainpos.js 1.19.0（現在時刻の指定で日付も変えられる） -->
 <!-- 1.25.0: trainpos.js 1.18.0（見切れる黒ラベルはラベル内でスクロール） -->
 <!-- 1.24.2: trainpos.js 1.17.2（右側は先頭の編成が下に来るよう並びを逆に） -->
@@ -781,7 +782,7 @@ function findRouteMeta(routeName) {
   return { area: countryRow ? countryRow["えりあ"] : "", type, company, route: routeName };
 }
 
-function jumpToRoute(routeName) {
+function jumpToRoute(routeName, fromStation) {
   // 「飛べるかどうか」は route シートではなく station シートにその路線の駅データがあるかで判定する
   const hasStationData = allstationData.some(r => r["路線"] === routeName);
   if (!hasStationData) {
@@ -812,6 +813,15 @@ function jumpToRoute(routeName) {
   routeSel.value = routeName;
   renderMap();
   saveSelection();
+  // 直通ラベル・乗換から飛んだ時は、飛んだ元の駅（直通先・乗換先の路線にも載っている同じ駅）が見える位置までずらす
+  if (fromStation) scrollToStation(fromStation);
+}
+function scrollToStation(stationName) {
+  const find = () => [...document.querySelectorAll("#mapResult .rt-name[data-xst]")]
+    .find(el => el.dataset.xst === stationName || xferCanon(el.dataset.xst) === xferCanon(stationName));
+  const go = () => { const el = find(); if (el) el.scrollIntoView({ block: "center" }); };
+  go();
+  setTimeout(go, 700); // 列車位置で行の高さが広がった後にもう一度合わせる
 }
 
 /* ----------------------------------------
@@ -1004,7 +1014,7 @@ async function openXfer(stationName, currentRoute) {
     b.innerHTML = `<div class="ln"></div><div class="nm"></div>`;
     b.querySelector(".ln").textContent = "🚆 " + label;
     b.querySelector(".nm").textContent = h.name.replace(/駅$/, "") + "駅" + (!h.same && h.dist ? `（約${h.dist}m）` : "");
-    b.onclick = () => { closeXfer(); jumpToRoute(h.route); };
+    b.onclick = () => { closeXfer(); jumpToRoute(h.route, h.name); };
     box.appendChild(b);
   });
 }
@@ -1897,7 +1907,7 @@ function renderMap() {
     const lowerColor = (nextRidden === null || belowIsEnd) ? "transparent" : (nextRidden ? riddenColor : unriddenColor);
 
     const parallelRoutes = activeParallelByIndex[i] || [];
-    if (aboveVias.length) html += renderViaRow(aboveVias, upperColor, parallelRoutes);
+    if (aboveVias.length) html += renderViaRow(aboveVias, upperColor, parallelRoutes).replace(/class="via-pill/g, `data-st="${escAttr(name)}" class="via-pill`);
 
     const shaded = i % 2 === 1 ? " shaded" : "";
     const parallelLines = parallelRoutes.map((rt, pi) =>
@@ -1915,7 +1925,7 @@ function renderMap() {
       </div>
     `;
 
-    if (belowVias.length) html += renderViaRow(belowVias, lowerColor, parallelRoutes);
+    if (belowVias.length) html += renderViaRow(belowVias, lowerColor, parallelRoutes).replace(/class="via-pill/g, `data-st="${escAttr(name)}" class="via-pill`);
   });
 
   if (isLoop) {
@@ -1936,7 +1946,7 @@ function renderMap() {
   box.innerHTML = html;
 
   box.querySelectorAll(".via-pill").forEach(btn => {
-    btn.onclick = () => jumpToRoute(btn.dataset.route);
+    btn.onclick = () => jumpToRoute(btn.dataset.route, btn.dataset.st);
   });
   box.querySelectorAll(".xfer-btn").forEach(btn => {
     btn.onclick = () => openXfer(btn.dataset.st, routeVal);
