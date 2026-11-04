@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.28.0 -->
+<!-- version: 1.28.1 -->
+<!-- 1.28.1: スタフの両数の枠のデザイン調整（timetable.js 1.19.1） -->
 <!-- 1.28.0: ダイヤ一覧の「両数」列でスタフ・Train Naviの両数を自動設定（timetable.js 1.19.0／trainpos.js 1.20.0／trainnavi.js 1.5.0） -->
 <!-- 1.27.0: 直通ラベル・「乗換」から路線に飛ぶ時、飛んだ元の駅が画面の真ん中に来る位置までスクロールする -->
 <!-- 1.26.0: trainpos.js 1.19.0（現在時刻の指定で日付も変えられる） -->
@@ -419,8 +420,12 @@
   table.tt-staff-meta td { height: 48px; border: 1px solid #d3d8dd; background: #fff; text-align: center; }
   table.tt-staff-meta td.num { font-size: 24px; color: #2a4fb5; letter-spacing: 0.3em; font-weight: bold; }
   table.tt-staff-meta td.num small { display: block; font-size: 10px; letter-spacing: 0; color: #666; font-weight: normal; }
-  .tt-staff-cars { padding: 8px 16px; background: #fff; border-bottom: 1px solid #d3d8dd; font-size: 15px; color: #444; }
-  .tt-staff-cars .box { display: inline-block; min-width: 3.2em; height: 1.8em; border: 1px solid #c5ccd3; vertical-align: middle; }
+  .tt-staff-cars { display: flex; align-items: center; padding: 6px 16px 6px 56px; min-height: 60px; background: #fff; border-bottom: 1px solid #d3d8dd; font-size: 12px; color: #444; }
+  .tt-staff-cars .carswrap { display: inline-flex; align-items: center; padding: 0 14px; border-left: 1px solid #c5ccd3; border-right: 1px solid #c5ccd3; align-self: stretch; }
+  .tt-staff-cars .box { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 96px; height: 46px; border-radius: 8px; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.3); }
+  .tt-staff-cars .box b { font-size: 30px; font-weight: 800; color: #222; line-height: 1; }
+  .tt-staff-cars .box small { position: absolute; right: 8px; bottom: 4px; font-size: 11px; color: #555; }
+  .tt-staff-cars .carsnote { margin-left: 14px; font-size: 12px; }
   table.tt-staff-table { width: 100%; border-collapse: collapse; table-layout: fixed; background: #fff; }
   table.tt-staff-table th {
     background: #dde1e5; font-size: 10px; color: #444; padding: 5px 2px; font-weight: normal;
@@ -602,7 +607,7 @@
 <script src="logs.js?v=1.2.1"></script>
 <script src="idbcache.js?v=1.0.0"></script>
 <script src="dayrule.js?v=1.1.0"></script>
-<script src="timetable.js?v=1.19.0"></script>
+<script src="timetable.js?v=1.19.1"></script>
 <script src="trainnavi.js?v=1.5.0"></script>
 <script src="trainpos.js?v=1.20.0"></script>
 <script>initNav("乗車路線マップ確認用");</script>

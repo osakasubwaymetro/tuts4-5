@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="ja">
-<!-- version: 1.7.12 -->
+<!-- version: 1.7.13 -->
+<!-- 1.7.13: スタフの両数の枠のデザイン調整（timetable.js 1.19.1） -->
 <!-- 1.7.12: timetable.js 1.19.0（スタフの両数をダイヤ一覧の「両数」から自動入力） -->
 <!-- 1.7.11: timetable.js 1.18.0（スタフの前後の列車に飛べる） -->
 <!-- 1.7.10: dayrule.js 1.1.0（曜日区分で「1/17,24,31 2/7,14」の書き方に対応） -->
@@ -133,8 +134,12 @@
   table.tt-staff-meta td { height: 48px; border: 1px solid #d3d8dd; background: #fff; text-align: center; }
   table.tt-staff-meta td.num { font-size: 24px; color: #2a4fb5; letter-spacing: 0.3em; font-weight: bold; }
   table.tt-staff-meta td.num small { display: block; font-size: 10px; letter-spacing: 0; color: #666; font-weight: normal; }
-  .tt-staff-cars { padding: 8px 16px; background: #fff; border-bottom: 1px solid #d3d8dd; font-size: 15px; color: #444; }
-  .tt-staff-cars .box { display: inline-block; min-width: 3.2em; height: 1.8em; border: 1px solid #c5ccd3; vertical-align: middle; }
+  .tt-staff-cars { display: flex; align-items: center; padding: 6px 16px 6px 56px; min-height: 60px; background: #fff; border-bottom: 1px solid #d3d8dd; font-size: 12px; color: #444; }
+  .tt-staff-cars .carswrap { display: inline-flex; align-items: center; padding: 0 14px; border-left: 1px solid #c5ccd3; border-right: 1px solid #c5ccd3; align-self: stretch; }
+  .tt-staff-cars .box { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 96px; height: 46px; border-radius: 8px; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.3); }
+  .tt-staff-cars .box b { font-size: 30px; font-weight: 800; color: #222; line-height: 1; }
+  .tt-staff-cars .box small { position: absolute; right: 8px; bottom: 4px; font-size: 11px; color: #555; }
+  .tt-staff-cars .carsnote { margin-left: 14px; font-size: 12px; }
   table.tt-staff-table { width: 100%; border-collapse: collapse; table-layout: fixed; background: #fff; }
   table.tt-staff-table th {
     background: #dde1e5; font-size: 10px; color: #444; padding: 5px 2px; font-weight: normal;
@@ -432,7 +437,7 @@
 <script src="logs.js?v=1.2.1"></script>
 <script>checkLogin();</script>
 <script src="dayrule.js?v=1.1.0"></script>
-<script src="timetable.js?v=1.19.0"></script>
+<script src="timetable.js?v=1.19.1"></script>
 <script src="trainnavi.js?v=1.5.0"></script>
 </body>
 </html>

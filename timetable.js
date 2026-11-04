@@ -1,5 +1,6 @@
 // timetable.js
-// version: 1.19.0
+// version: 1.19.1
+// 1.19.1: スタフの両数の枠を、実物のスタフに近いデザインに（影つきの白い枠に大きい数字、右下に小さく「両」。前後に縦線）
 // 1.19.0: ダイヤ一覧の「両数」列を読み、スタフの「両」の枠に自動で入れる（entry.cars。併結の時は、呼び出し側が足した値を渡す）
 // 1.18.0: スタフの「着後」に、同じ運用の次の列車番号（へ乗継）とボタンを出し、押すとその列車のスタフに飛ぶ。前の列車（より乗継）にも飛べる
 // 1.17.0: 駅名の表記ゆれに対応（stationaliasシートの正式名称⇄通称。ひらがな・カタカナの違いも無視）。駅名検索で通称（例: なんば）でも正式名称（難波）が出て、ダイヤ・乗車記録の駅名が通称で書いてあっても同じ駅として時刻表に出る
@@ -880,7 +881,7 @@ function ttRenderStaff(e) {
       <thead><tr><th>列　車</th><th>最高速度<br>(Km / h)</th><th>速度種別</th><th>けん引定数</th></tr></thead>
       <tbody><tr><td class="num">${num}<small>${escapeHtmlTT(sub)}</small></td><td></td><td></td><td></td></tr></tbody>
     </table>
-    <div class="tt-staff-cars"><span class="box">${e.cars ? `<b style="padding:0 .6em;">${escapeHtmlTT(e.cars)}</b>` : "　　"}</span> 両${prevLabel ? `　<a href="javascript:void(0)" onclick="ttStaffGo(-1)" style="font-size:12px;color:#0a6b1f;text-decoration:underline;">${escapeHtmlTT(prevLabel)}より乗継</a>` : ""}</div>
+    <div class="tt-staff-cars"><span class="carswrap"><span class="box"><b>${e.cars ? escapeHtmlTT(e.cars) : ""}</b><small>両</small></span></span>${prevLabel ? `<a class="carsnote" href="javascript:void(0)" onclick="ttStaffGo(-1)" style="color:#0a6b1f;text-decoration:underline;">${escapeHtmlTT(prevLabel)}より乗継</a>` : ""}</div>
     <table class="tt-staff-table">
       <thead><tr>
         <th>運転<br>時分</th><th>停車場名</th><th class="hl">着</th><th>発（通）</th>
