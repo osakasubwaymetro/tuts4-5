@@ -1,4 +1,5 @@
-// trainpos.js v1.19.0
+// trainpos.js v1.20.0
+// 1.20.0: ダイヤ一覧の「両数」列を読み、列車詳細・スタフ・Train Naviに渡す。併結（同じ位置にまとめた複数の列車）から開く時は、それぞれの両数を足した値を渡す
 // 1.19.0: 現在時刻を指定する時に、時刻だけでなく日付も変えられるようにした（日時の入力欄）。指定した日の曜日・祝日でダイヤを選ぶ
 // 1.18.0: 黒いラベル（列車番号・種別行先）の文字が見切れる時は、ラベルの中で文字を左右にスクロールして全部読めるようにした
 // 1.17.2: 右側（下り＝画面の下へ進む列車）の併結・連結は、前の編成が下に来るよう縦の並びを逆にする（アイコン・種別行先・編成番号・列車番号。左側は前が上のまま）
@@ -229,6 +230,7 @@
         dayType, dayRaw, isExtra: isTrue(listRow["臨時"]),
         sheetKey: `${listRow["ID"] || ""}_${listRow["運番"] || ""}_${dayRaw || dayType}`, // 同じ運用（＝同じ編成が走り続ける）の目印
         bounds: [...bounds], stops,
+        cars: parseInt(listRow["両数"], 10) || 0, // ダイヤ一覧の「両数」列（スタフ・Train Naviの両数に使う）
         defaultIcons: icons, // 画像URLの一覧（複数なら1秒ごとに切り替え） // ダイヤ一覧の「所定形式」列の画像URL（編成の記録が無い時に使う）
         viaParallel: !!viaParallel // 並走路線のダイヤ一覧から取った列車（この路線のダイヤ一覧には無い）
       });
@@ -831,11 +833,13 @@
       };
     });
     const first = train.stops.find(s => s.bound) || train.stops[0] || {};
-    return { unban: train.unban, trainNumber: train.trainNumber, type: first.type || "", bound: first.bound || "", stops };
+    return { unban: train.unban, trainNumber: train.trainNumber, type: first.type || "", bound: first.bound || "", stops, cars: train.cars || 0 };
   }
-  function openDetail(train) {
+  // trains：併結でまとめた列車たち（あれば両数を足した値を渡す）
+  function openDetail(train, trains) {
     if (typeof window.ttOpenTrainDetail !== "function") return;
     const entry = trainToEntry(train);
+    if (trains && trains.length > 1) entry.cars = trains.reduce((n, x) => n + (x.cars || 0), 0);
     // 同じ運用（シート）の列車を、シートの並び順で渡す（スタフで前・次の列車に飛ぶため）
     const list = train.sheetKey ? st.trains.filter(x => x.sheetKey === train.sheetKey) : [];
     const i = list.indexOf(train);
@@ -1065,10 +1069,10 @@
         ${views.map(v => `<div class="tp-icon" data-mi="${v.mi}"><img src="${esc(v.icon)}" ${v.defIcons.length > 1 ? `data-icons="${esc(v.defIcons.join("\n"))}"` : ""} alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';"></div>`).join("")}
         ${labels.map(t => `<div class="tp-label">${esc(t)}</div>`).join("")}
         ${nums.map((n, i) => `<div class="tp-num">${esc(n)}${i < nums.length - 1 ? "+" : ""}</div>`).join("")}`;
-      el.onclick = () => openDetail(p.a.train);
+      el.onclick = () => openDetail(p.a.train, p.members.map(m => m.train));
       // 併結：アイコンを押すと、その列車の時刻表（列車詳細）を出す
       el.querySelectorAll(".tp-icon[data-mi]").forEach(ic => {
-        ic.onclick = ev => { ev.stopPropagation(); const m = p.members[+ic.dataset.mi]; if (m) openDetail(m.train); };
+        ic.onclick = ev => { ev.stopPropagation(); const m = p.members[+ic.dataset.mi]; if (m) openDetail(m.train, p.members.map(x => x.train)); };
       });
       layer.appendChild(el);
     });

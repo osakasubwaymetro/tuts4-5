@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.27.0 -->
+<!-- version: 1.28.0 -->
+<!-- 1.28.0: ダイヤ一覧の「両数」列でスタフ・Train Naviの両数を自動設定（timetable.js 1.19.0／trainpos.js 1.20.0／trainnavi.js 1.5.0） -->
 <!-- 1.27.0: 直通ラベル・「乗換」から路線に飛ぶ時、飛んだ元の駅が画面の真ん中に来る位置までスクロールする -->
 <!-- 1.26.0: trainpos.js 1.19.0（現在時刻の指定で日付も変えられる） -->
 <!-- 1.25.0: trainpos.js 1.18.0（見切れる黒ラベルはラベル内でスクロール） -->
@@ -601,9 +602,9 @@
 <script src="logs.js?v=1.2.1"></script>
 <script src="idbcache.js?v=1.0.0"></script>
 <script src="dayrule.js?v=1.1.0"></script>
-<script src="timetable.js?v=1.18.0"></script>
-<script src="trainnavi.js?v=1.4.0"></script>
-<script src="trainpos.js?v=1.19.0"></script>
+<script src="timetable.js?v=1.19.0"></script>
+<script src="trainnavi.js?v=1.5.0"></script>
+<script src="trainpos.js?v=1.20.0"></script>
 <script>initNav("乗車路線マップ確認用");</script>
 <script>
 const username = checkLogin();

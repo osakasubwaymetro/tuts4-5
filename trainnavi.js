@@ -1,4 +1,5 @@
-// trainnavi.js v1.4.0
+// trainnavi.js v1.5.0
+// 1.5.0: ダイヤ一覧の「両数」から、両数を自動で設定する（列車詳細から渡される entry.cars。無い時は今まで通り、手で入れた値）。タップで手動変更もできる
 // 1.4.0: ④「n両、n両」の開始を速度検知型に変更。駅の手前200m以内で、速度が25km/h以下になり、かつ③（ホーム進入の「n両、停車。」）を言い終えたら始める（一度始めたら停車まで続ける）。速度が取れない時は従来どおり45mで開始
 // 1.3.1: iPhoneで小窓にできなかったのを修正（動画を先に用意してボタンを押した直後に小窓を要求／iPhone独自方式を先に試す／失敗した理由を表示）
 // 1.3.0: ピクチャ・イン・ピクチャ（📺 小窓）を追加。画面をcanvasに描いてvideoにして小窓表示するので、他のアプリを開いても小さく出したままにできる。停止制動の位置を駅の500m手前に固定
@@ -561,7 +562,7 @@
     nv.meta = { type: entry.type || "", bound: entry.bound || "" };
     nv.spoken = new Set(); nv.lastPhase = ""; nv.seg = null; nv.lastMid = 0; nv.midK = -1; nv.speaking = false; nv.coordsResolvedWithPos = false; nv.token++;
     nv.voiceOn = lsGet(VOICE_KEY, "1") !== "0";
-    nv.cars = lsGet(CAR_KEY, "") || (window.__cars||"");
+    nv.cars = entry.cars ? String(entry.cars) : (lsGet(CAR_KEY, "") || (window.__cars||""));
     document.getElementById("tnNo").textContent = entry.trainNumber || (entry.unban ? `運番${entry.unban}` : "");
     renderBtns(); renderCars();
     startGps(); loadCoords(nv.token);
