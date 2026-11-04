@@ -1,4 +1,6 @@
-// version: 1.41.0
+// version: 1.42.0
+// 1.42.0: マスタのsujitypeに種別が設定されている路線では、種別のプルダウンに「回送」「臨時」「団体」を足す
+// 1.41.1: 最寄り駅から選んだ後の候補で、23時台と0時台が混ざる時に0時台が先に出てしまうのを修正（今の少し前を先頭にした順で並べる）
 // 1.41.0: ダイヤから選ばず、過去の乗車記録から選んだ時や、手動で時刻を変えた時は、メモに「ダイヤなし」と入れる（ダイヤの候補を選んだ時は外す）
 // 1.40.1: 「貫通」でも連結編成数が消えない時があったのを修正（路線の探し方を併結判定と同じにし、路線が別の経路で切り替わっても追従するようにした）
 // 1.40.0: 連結編成数・乗車位置を、丸3つ（−／数／＋）で増減する形に変更。路線シートの「貫通」がTRUEの路線では非表示（投稿にも載せない）。「併結を追加」を「行先別併結を追加」に名称変更
@@ -473,15 +475,22 @@ fetchCachedMasterData("sujitype", "https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN
 document.getElementById("route").addEventListener("change", updatesujitypeList);
 
 // 併結で追加された分も含め、.sujitype-select を全て更新する
+// 種別の選択肢：マスタのsujitypeに種別がある路線だけ、末尾に「回送」「臨時」「団体」を足す（すでにあれば重複させない）
+const EXTRA_SUJITYPES = ["回送", "臨時", "団体"];
+function sujitypeNamesFor(routeVal) {
+  const names = routeVal
+    ? [...new Set((allsujitypeData || []).filter(r => r["路線"] === routeVal).map(r => r["種別"]))].filter(Boolean)
+    : [];
+  if (!names.length) return names;
+  EXTRA_SUJITYPES.forEach(x => { if (!names.includes(x)) names.push(x); });
+  return names;
+}
 function updatesujitypeList() {
   const routeVal = document.getElementById("route").value;
   const selects = document.querySelectorAll(".sujitype-select");
   if (!allsujitypeData) return;
 
-  const filtered = routeVal
-    ? allsujitypeData.filter(row => row["路線"] === routeVal)
-    : [];
-  const names = [...new Set(filtered.map(r => r["種別"]))];
+  const names = sujitypeNamesFor(routeVal);
 
   selects.forEach(select => {
     const current = select.value;
@@ -2108,7 +2117,9 @@ async function loadAndShowHistoryPopup(routeVal, boardingStation, dirVal) {
       return null;
     }
     const noTimeCands = candidates.filter(c => sortableMinutes(c) === null);
-    const timedCands = candidates.filter(c => sortableMinutes(c) !== null).sort((a, b) => sortableMinutes(a) - sortableMinutes(b));
+    // 0時をまたぐ時は「今の少し前」を先頭にした循環順で並べる（23時台が先、0時台が後。単純に数字で並べると0時台が先に来てしまう）
+    const cyc = c => (sortableMinutes(c) - refMin + 1440) % 1440;
+    const timedCands = candidates.filter(c => sortableMinutes(c) !== null).sort((a, b) => cyc(a) - cyc(b));
     const sortedCandidates = [...noTimeCands, ...timedCands];
 
     renderHistoryPopupList(sortedCandidates, routeVal, boardingStation, dirVal);
@@ -2201,7 +2212,7 @@ function renderManualEntryForm(routeVal) {
   setModalTitle("種別・行先を入力");
   const list = document.getElementById("historyModalList");
 
-  const sujitypes = [...new Set((allsujitypeData || []).filter(r => r["路線"] === routeVal).map(r => r["種別"]))].filter(Boolean);
+  const sujitypes = sujitypeNamesFor(routeVal);
   const bounds = [...new Set((allboundData || []).filter(r => r["路線"] === routeVal).map(r => r["行先"]))].filter(Boolean);
 
   const now = new Date();
