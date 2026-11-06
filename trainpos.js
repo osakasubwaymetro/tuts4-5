@@ -1,4 +1,4 @@
-// trainpos.js v1.20.0
+// trainpos.js v1.21.0
 // 1.20.0: ダイヤ一覧の「両数」列を読み、列車詳細・スタフ・Train Naviに渡す。併結（同じ位置にまとめた複数の列車）から開く時は、それぞれの両数を足した値を渡す
 // 1.19.0: 現在時刻を指定する時に、時刻だけでなく日付も変えられるようにした（日時の入力欄）。指定した日の曜日・祝日でダイヤを選ぶ
 // 1.18.0: 黒いラベル（列車番号・種別行先）の文字が見切れる時は、ラベルの中で文字を左右にスクロールして全部読めるようにした
@@ -238,41 +238,108 @@
     return out;
   }
 
+  /* ---------- 静的JSON（Cloudflare Pages）。無い／壊れてたら従来どおりスプシから直接取る ---------- */
+  const STATIC_BASE = "https://tuts4-data.pages.dev/";
+  const STATIC_TIMEOUT_MS = 15000;
+  const SHEET_COLS = ["列車番号", "駅名", "発車時刻", "行先", "種別"];
+  let manifestP = null;
+
+  async function fetchJsonTimeout(url, opt) {
+    const ctl = typeof AbortController === "function" ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), STATIC_TIMEOUT_MS) : null;
+    try {
+      const res = await fetch(url, Object.assign({}, opt || {}, ctl ? { signal: ctl.signal } : {}));
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return await res.json();
+    } finally { if (timer) clearTimeout(timer); }
+  }
+
+  function getManifest(force) {
+    if (!manifestP || force) {
+      manifestP = fetchJsonTimeout(STATIC_BASE + "manifest.json?t=" + Date.now(), { cache: "no-cache" }).then(m => {
+        if (!m || !Array.isArray(m.files)) throw new Error("bad manifest");
+        return m;
+      });
+      manifestP.catch(() => { manifestP = null; }); // 失敗は覚えない（次回また試す）
+    }
+    return manifestP;
+  }
+
+  // 1路線ぶんの静的データ → { list, sheets(オブジェクト行に変換済み), rev }。壊れてたら例外
+  async function loadStaticRoute(entry) {
+    const data = await fetchJsonTimeout(STATIC_BASE + entry.file + "?v=" + encodeURIComponent(entry.rev || ""));
+    if (!data || !Array.isArray(data.list) || !data.sheets || typeof data.sheets !== "object") throw new Error("bad shape");
+    const sheets = {};
+    for (const d of data.list) {
+      if (!d || typeof d !== "object") throw new Error("bad list row");
+      const k = `${d["ID"] || ""}_${d["運番"] || ""}`;
+      if (sheets[k]) continue;
+      const raw = data.sheets[k];
+      if (!Array.isArray(raw)) throw new Error("missing sheet " + k);
+      sheets[k] = raw.map(r => {
+        if (!Array.isArray(r)) throw new Error("bad row " + k);
+        const o = {};
+        SHEET_COLS.forEach((c, i) => { o[c] = r[i] == null ? "" : r[i]; });
+        return o;
+      });
+    }
+    return { list: data.list, sheets, rev: entry.rev || "" };
+  }
+
   async function loadRouteTrains(ctx, onProgress, force) {
     const par = (ctx.parallelRoutes || []).filter(p => p.route && p.route !== ctx.routeVal);
-    const cacheKey = "tp_trains8_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
+    const cacheKey = "tp_trains9_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
     if (force) { try { localStorage.removeItem("tuts4_diagram_list_cache"); } catch (e) { /* ignore */ } }
+
+    // マニフェスト（rev 一覧）。取れなければ null → 全部スプシから
+    let manifest = null;
+    try { manifest = await getManifest(!!force); } catch (e) { manifest = null; }
+    const findEntry = (route, company) => manifest && manifest.files.find(f =>
+      f && f.file && f.route === route && (!company || f.company === company));
+    const targets = [{ route: ctx.routeVal, company: ctx.company, via: false }, ...par.map(p => ({ route: p.route, company: p.company, via: true }))];
+    targets.forEach(t => { t.entry = findEntry(t.route, t.company) || null; });
+    const sig = targets.map(t => t.entry ? t.entry.rev || "?" : "-").join(",");
+
     if (idb() && !force) {
       const c = await idb().get(cacheKey);
-      if (c && Array.isArray(c.trains) && Date.now() - c.fetchedAt < TRAINS_TTL_MS) return c.trains;
+      if (c && Array.isArray(c.trains) && Date.now() - c.fetchedAt < TRAINS_TTL_MS && (!manifest || c.sig === sig)) return c.trains;
     }
-    const list = await getDiagramList();
-    const pick = (route, company) => filterLatestRevision(list.filter(d =>
-      (!company || d["会社"] === company) &&
-      String(d["路線"] || "").split(",").map(x => x.trim()).includes(route)));
 
-    // この路線のダイヤ＋並走路線のダイヤ（同じ運用シートが両方に載っていたら1回だけ読む）
+    // 路線ごとに静的JSONを試す。失敗した路線だけスプシ直取りに切り替える
+    await Promise.all(targets.map(async t => {
+      if (!t.entry) return;
+      try { t.stat = await loadStaticRoute(t.entry); }
+      catch (e) { console.warn("[trainpos] 静的JSON失敗 → スプシから取得:", t.route, e && e.message); t.stat = null; }
+    }));
+    let sheetList = null;
+    if (targets.some(t => !t.stat)) sheetList = await getDiagramList();
+
     const jobs = [];
     const seen = new Set();
-    const add = (d, viaParallel) => {
+    const add = (d, viaParallel, sheets) => {
       const k = `${d["ID"] || ""}_${d["運番"] || ""}_${d["曜日区分"] || ""}_${d["適用開始日"] || ""}`;
       if (seen.has(k)) return;
       seen.add(k);
-      jobs.push({ d, viaParallel });
+      jobs.push({ d, viaParallel, sheets });
     };
-    pick(ctx.routeVal, ctx.company).forEach(d => add(d, false));
-    par.forEach(p => pick(p.route, p.company).forEach(d => add(d, true)));
+    targets.forEach(t => {
+      const src = t.stat ? t.stat.list : sheetList;
+      const rows = filterLatestRevision(src.filter(d =>
+        (!t.company || d["会社"] === t.company) &&
+        String(d["路線"] || "").split(",").map(x => x.trim()).includes(t.route)));
+      rows.forEach(d => add(d, t.via, t.stat ? t.stat.sheets : null));
+    });
 
-    // シートを同時に取る。列車は取れた順ではなく、ダイヤ一覧の順に並べる（毎回同じ並びになる）
+    // シートを同時に取る（静的JSONぶんは即座）。列車はダイヤ一覧の順に並べる
     const perJob = new Array(jobs.length).fill(null);
     let done = 0, idx = 0;
     const worker = async () => {
       while (idx < jobs.length) {
         const i = idx++;
-        const { d, viaParallel } = jobs[i];
+        const { d, viaParallel, sheets } = jobs[i];
         try {
-          const rows = await fetchSheet(d["ID"], d["運番"], d["最終更新"]);
-          perJob[i] = compactSheet(rows, d, viaParallel);
+          const rows = sheets ? sheets[`${d["ID"] || ""}_${d["運番"] || ""}`] : await fetchSheet(d["ID"], d["運番"], d["最終更新"]);
+          perJob[i] = compactSheet(rows || [], d, viaParallel);
         } catch (e) { /* この運番はスキップ */ }
         done++;
         if (onProgress) onProgress(done, jobs.length);
@@ -280,7 +347,7 @@
     };
     await Promise.all(Array.from({ length: Math.min(FETCH_CONCURRENCY, jobs.length) }, worker));
     const trains = perJob.flat().filter(Boolean);
-    if (idb()) idb().set(cacheKey, { trains, fetchedAt: Date.now() });
+    if (idb()) idb().set(cacheKey, { trains, fetchedAt: Date.now(), sig });
     return trains;
   }
 
