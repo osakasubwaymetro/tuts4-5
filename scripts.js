@@ -1,4 +1,5 @@
-// version: 1.43.0
+// version: 1.44.0
+// 1.44.0: 走行位置MAP（trainpos.js 1.22.0）のアイコン→「乗車記録を上げる」で来た時、路線・乗車駅・種別・行先・発車時刻（併結なら全部）をフォームに入れる
 // 1.43.0: ダイヤを静的JSON（diagram_static.js）から読む。無い／壊れてたら従来どおりスプシから直接取る
 // 1.42.0: マスタのsujitypeに種別が設定されている路線では、種別のプルダウンに「回送」「臨時」「団体」を足す
 // 1.41.1: 最寄り駅から選んだ後の候補で、23時台と0時台が混ざる時に0時台が先に出てしまうのを修正（今の少し前を先頭にした順で並べる）
@@ -2927,6 +2928,34 @@ async function waitForMasterDataThenRestore() {
     await new Promise(r => setTimeout(r, 150));
   }
   restoreDraft();
+  if (new URLSearchParams(location.search).get("prefill") === "1") applyTrainPrefillFromMap();
+}
+
+// 走行位置MAPのアイコンから来た時：その列車の内容をフォームに入れて、車両形式の入力に進める
+async function applyTrainPrefillFromMap() {
+  let p = null;
+  try { p = JSON.parse(localStorage.getItem("tuts4_prefill") || "null"); localStorage.removeItem("tuts4_prefill"); } catch (e) { /* ignore */ }
+  if (!p || !p.route || Date.now() - (p.t || 0) > 5 * 60 * 1000) return;
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const fire = (el, v) => { el.value = v; el.dispatchEvent(new Event("change", { bubbles: true })); };
+  try {
+    resetRideBlocksToOne();
+    await jumpToRoute(p.route);
+    await wait(700);
+    const stSel = document.querySelector(".station-select");
+    if (stSel && p.station) { fire(stSel, p.station); await wait(500); }
+    const d = new Date();
+    if (p.sec != null) d.setHours(Math.floor(p.sec / 3600) % 24, Math.floor((p.sec % 3600) / 60), 0, 0);
+    applyHistoryCandidate({
+      isDiagram: true, time: d, isExtra: !!p.isExtra, type: p.type || "", bound: p.bound || "",
+      coupled: p.coupled && p.coupled.length >= 2 ? p.coupled : null
+    });
+    await wait(400);
+    // 車両形式を選ぶポップ（→選ぶと車番のポップへ進む）をそのまま開く
+    const btn = document.getElementById("modelTriggerBtn");
+    if (btn) btn.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (typeof openModelPicker === "function") openModelPicker();
+  } catch (e) { console.warn("走行位置からの入力に失敗:", e); }
 }
 
 
