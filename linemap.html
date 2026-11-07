@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.31.0 -->
+<!-- version: 1.32.0 -->
+<!-- 1.32.0: UTL点検対応：並走線の端を駅で終わらせる・継ぎ目の隙間を消す・主線を太く／並走線を細くして凡例を追加・直通先の幹を駅までつなぐ・駅間の空テールを無くす・直通ピルを列車より前に出す・駅名と駅○を点線でつなぐ・路線切替でエリアも合わせる（trainpos.js 1.23.0） -->
 <!-- 1.31.0: 直通ラベル・乗換から飛んだ後、ダイヤ読み込みや行間隔の調整でズレたら、もう一度その駅まで寄せる（trainpos.js 1.22.3） -->
 <!-- 1.30.2: trainpos.js 1.22.2（読み込み時間を画面にも出す） -->
 <!-- 1.30.1: trainpos.js 1.22.1（読み込み時間をコンソールに出す） -->
@@ -241,13 +242,22 @@
   }
   .rt-row.shaded { background: #eaeaea; }
   .rt-name {
-    flex: 1;
+    flex: 0 0 calc(50% - 9px);
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
     text-align: left;
     font-weight: bold;
     color: #222;
     letter-spacing: 4px;
-    padding-right: 30px;
   }
+  /* 駅名と駅○を点線でつなぐ（駅名が線から遠くて、どの○か分かりにくかった） */
+  .rt-name::after { content: ""; flex: 1 1 14px; min-width: 14px; align-self: center; margin: 0 6px 0 8px; border-bottom: 2px dotted rgba(0,0,0,.28); }
+  /* 並走線の凡例 */
+  .par-legend { display:flex; flex-wrap:wrap; gap:4px 12px; margin:0 0 8px; font-size:12px; color:#444; }
+  .par-legend .lg { display:inline-flex; align-items:center; gap:5px; }
+  .par-legend i { display:inline-block; width:18px; border-radius:2px; }
   .parallel-badge {
     display: inline-block;
     font-weight: normal;
@@ -280,7 +290,9 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    width: 5px;
+    width: 3px;
+    margin-left: -1.5px;
+    opacity: .9;
     background: #9c6ade;
     z-index: 1;
   }
@@ -295,7 +307,7 @@
     align-items: center;
     z-index: 2;
   }
-  .rt-line-half { width: 6px; flex: 1 1 0; }
+  .rt-line-half { width: 7px; flex: 1 1 0; }
   .rt-dot {
     width: 15px;
     height: 15px;
@@ -319,13 +331,13 @@
     left: 50%;
     top: 0;
     bottom: 0;
-    width: 6px;
+    width: 7px;
     transform: translateX(-50%);
     z-index: 1;
   }
   .via-branch-end {
     position: relative;
-    z-index: 2;
+    z-index: 7;
     display: flex;
     flex-direction: column;
     align-items: flex-start;
@@ -333,13 +345,13 @@
   }
   .via-branch-end.via-flip { margin-left: 30px; }
   .via-branch-end .stub {
-    width: 5px;
+    width: 7px;
     height: 14px;
-    margin-left: 5px;
+    margin-left: -3.5px;
   }
   .via-branch-mid {
     position: relative;
-    z-index: 2;
+    z-index: 7;
     display: flex;
     align-items: center;
     align-self: flex-start;
@@ -348,11 +360,11 @@
   .via-branch-mid.via-flip { margin-left: 30px; }
   .via-fork {
     position: relative;
-    z-index: 2;
+    z-index: 7;
     align-self: flex-start;
   }
   .via-fork svg { display: block; }
-  .via-fork-svg { position: absolute; left: 0; top: 0; }
+  .via-fork-svg { position: absolute; left: -4px; top: 0; overflow: visible; }
   .via-fork-stack { display: flex; flex-direction: column; }
   .via-fork-row { display: flex; align-items: center; }
   /* 路線名が長くても段をはみ出さないよう、2行まで折り返す */
@@ -614,7 +626,7 @@
 <script src="dayrule.js?v=1.1.0"></script>
 <script src="timetable.js?v=1.19.1"></script>
 <script src="trainnavi.js?v=1.5.0"></script>
-<script src="trainpos.js?v=1.22.3"></script>
+<script src="trainpos.js?v=1.23.0"></script>
 <script>initNav("乗車路線マップ確認用");</script>
 <script>
 const username = checkLogin();
@@ -804,7 +816,10 @@ function jumpToRoute(routeName, fromStation) {
   // routeシート側にメタ情報（区分・会社・エリア）があれば、カスケード選択も合わせておく
   const meta = findRouteMeta(routeName);
   if (meta) {
-    document.getElementById("mapArea").value = meta.area;
+    // 今のエリアに同じ会社・区分があればエリアは変えない（会社が複数のエリアにある時、先頭のエリア＝東北などに変わってしまっていた）
+    const curArea = document.getElementById("mapArea").value;
+    const keepArea = allCountryData.some(r => r["えりあ"] === curArea && r["区分"] === meta.type && r["会社"] === meta.company);
+    if (!keepArea) document.getElementById("mapArea").value = meta.area;
     buildCompanySelect();
     buildRouteSelect();
     document.getElementById("mapType").value = meta.type;
@@ -1835,19 +1850,30 @@ function renderMap() {
 
   const mainColor = getRouteColor(routeVal);
   const riddenColor = mainColor;
-  const unriddenColor = lightenColor(mainColor, 0.72);
+  const unriddenColor = lightenColor(mainColor, 0.6);
 
   let html = `
     <div class="route-coverage-label">
       <span>${routeVal}</span>
       <span class="route-coverage-pct">${pct}%（${riddenCount}/${totalSegments}区間）</span>
     </div>
+    LEGEND_PLACEHOLDER
     <div class="route-line-scroll">
   `;
+  {
+    // 並走線の凡例（色＝路線名）。主線は太く、並走線は細く描いてある
+    const pars = [...new Set(activeParallelByIndex.flat().filter(Boolean))];
+    const legend = pars.length
+      ? `<div class="par-legend"><span class="lg"><i style="height:7px;background:${mainColor};"></i>${routeVal}（太線）</span>${pars.map(rt => `<span class="lg"><i style="height:3px;background:${parallelColor(rt)};"></i>${rt}</span>`).join("")}</div>`
+      : "";
+    html = html.replace("LEGEND_PLACEHOLDER", legend);
+  }
 
-  function renderViaRow(vias, passColor, parallelRoutesHere) {
+  function renderViaRow(vias, passColor, parallelRoutesHere, visibleRoutes) {
+    // 分岐の行では、隣の駅まで続く並走線だけを描く（路線の端で、駅の無い所まで線が伸びてしまっていた）
     const parallelLinesHere = (parallelRoutesHere || []).map((rt, pi) =>
-      `<div class="parallel-line" style="left:calc(50% - ${(pi+1)*12}px);background:${parallelColor(rt)};" title="${escAttr(rt)}"></div>`
+      (visibleRoutes && !visibleRoutes.includes(rt)) ? "" :
+      `<div class="parallel-line" style="left:calc(50% - ${(pi+1)*12}px);top:-1px;bottom:-1px;background:${parallelColor(rt)};" title="${escAttr(rt)}"></div>`
     ).join("");
     if (vias.length === 1) {
       const v = vias[0];
@@ -1858,10 +1884,10 @@ function renderMap() {
         const pillEl = `<button type="button" class="via-pill" style="background:${color};" data-route="${escAttr(v.route)}">${v.route}</button>`;
         inner = `<div class="via-branch-end">${v.side === "above" ? pillEl + stubEl : stubEl + pillEl}</div>`;
       } else {
-        const pathD = v.side === "above" ? "M2,22 Q2,4 26,4" : "M2,0 Q2,18 26,18";
+        const pathD = v.side === "above" ? "M4,22 Q4,4 30,4" : "M4,0 Q4,18 30,18";
         inner = `
           <div class="via-branch-mid">
-            <svg width="28" height="22" viewBox="0 0 28 22"><path d="${pathD}" stroke="${color}" stroke-width="5" fill="none"/></svg>
+            <svg width="34" height="22" viewBox="0 0 34 22" style="margin-left:-4px;"><path d="${pathD}" stroke="${color}" stroke-width="7" fill="none"/></svg>
             <button type="button" class="via-pill" style="background:${color};" data-route="${escAttr(v.route)}">${v.route}</button>
           </div>
         `;
@@ -1882,7 +1908,7 @@ function renderMap() {
     const H = 36;          // 1段の高さ
     const W = 30;          // 曲がり線を描く幅
     const total = n * H;
-    const trunkX = 2;      // 行のpadding-left:50%の位置＝中心線に合わせる（単一分岐の時と同じ起点）
+    const trunkX = 0;      // 行のpadding-left:50%の位置＝中心線に合わせる（単一分岐の時と同じ起点）
 
     // 幹線は駅に近い側から伸びる。長い線（駅から遠い段）を先に描き、駅に近い段の色が幹の上に来るようにする
     const order = vias.map((v, i) => i);
@@ -1894,7 +1920,7 @@ function renderMap() {
       const d = side === "above"
         ? `M${trunkX},${total} L${trunkX},${yc + 12} Q${trunkX},${yc} ${W - 4},${yc}`
         : `M${trunkX},0 L${trunkX},${yc - 12} Q${trunkX},${yc} ${W - 4},${yc}`;
-      paths += `<path d="${d}" stroke="${color}" stroke-width="5" fill="none"/>`;
+      paths += `<path d="${d}" stroke="${color}" stroke-width="7" fill="none"/>`;
     });
 
     const rows = vias.map(v => {
@@ -1929,16 +1955,23 @@ function renderMap() {
     const aboveIsEnd = aboveVias.some(v => v.isEnd);
     const belowIsEnd = belowVias.some(v => v.isEnd);
 
-    const upperColor = (prevRidden === null || aboveIsEnd) ? "transparent" : (prevRidden ? riddenColor : unriddenColor);
-    const lowerColor = (nextRidden === null || belowIsEnd) ? "transparent" : (nextRidden ? riddenColor : unriddenColor);
+    // 路線の端の直通は、直通先の線の色で駅○までつなぐ（幹が途中で平らに切れて宙に浮いて見えていた）
+    const endColorOf = (arr, nearIdx) => colorForRoute(arr[nearIdx].route);
+    const upperColor = aboveIsEnd ? endColorOf(aboveVias, aboveVias.length - 1) : (prevRidden === null ? "transparent" : (prevRidden ? riddenColor : unriddenColor));
+    const lowerColor = belowIsEnd ? endColorOf(belowVias, 0) : (nextRidden === null ? "transparent" : (nextRidden ? riddenColor : unriddenColor));
 
     const parallelRoutes = activeParallelByIndex[i] || [];
-    if (aboveVias.length) html += renderViaRow(aboveVias, upperColor, parallelRoutes).replace(/class="via-pill/g, `data-st="${escAttr(name)}" class="via-pill`);
+    const prevPar = activeParallelByIndex[i - 1] || [], nextPar = activeParallelByIndex[i + 1] || [];
+    const aboveVisible = parallelRoutes.filter(rt => prevPar.includes(rt));
+    const belowVisible = parallelRoutes.filter(rt => nextPar.includes(rt));
+    if (aboveVias.length) html += renderViaRow(aboveVias, upperColor, parallelRoutes, aboveVisible).replace(/class="via-pill/g, `data-st="${escAttr(name)}" class="via-pill`);
 
     const shaded = i % 2 === 1 ? " shaded" : "";
-    const parallelLines = parallelRoutes.map((rt, pi) =>
-      `<div class="parallel-line" style="left:calc(50% - ${(pi+1)*12}px);background:${parallelColor(rt)};${(startedAtIndex[i]||[]).includes(rt) ? "top:10px;" : ""}" title="${escAttr(rt)}"></div>`
-    ).join("");
+    // 並走線は、始まる駅では駅○の高さから、終わる駅では駅○の高さまで（帯の境目で平らに切れないように、続く所は1pxずつ重ねる）
+    const parallelLines = parallelRoutes.map((rt, pi) => {
+      const starts = (startedAtIndex[i] || []).includes(rt), ends = !nextPar.includes(rt);
+      return `<div class="parallel-line" style="left:calc(50% - ${(pi+1)*12}px);background:${parallelColor(rt)};top:${starts ? "50%" : "-1px"};bottom:${ends ? "50%" : "-1px"};" title="${escAttr(rt)}"></div>`;
+    }).join("");
     html += `
       <div class="rt-row${shaded}">
         ${parallelLines}
@@ -1951,7 +1984,7 @@ function renderMap() {
       </div>
     `;
 
-    if (belowVias.length) html += renderViaRow(belowVias, lowerColor, parallelRoutes).replace(/class="via-pill/g, `data-st="${escAttr(name)}" class="via-pill`);
+    if (belowVias.length) html += renderViaRow(belowVias, lowerColor, parallelRoutes, belowVisible).replace(/class="via-pill/g, `data-st="${escAttr(name)}" class="via-pill`);
   });
 
   if (isLoop) {
