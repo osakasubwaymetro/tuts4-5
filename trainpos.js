@@ -1,4 +1,5 @@
-// trainpos.js v1.23.0
+// trainpos.js v1.23.1
+// 1.23.1: 山手線と京浜東北線のように「別の路線のダイヤ」から来た列車は、並走区間で発車時刻が同じでも併結しない（同じ路線のダイヤ同士だけ併結する）
 // 1.23.0: ①並走路線から取った列車が、この路線のダイヤにも同じ列番であると二重に出る（単一列番でアイコンが2つ並ぶ）のを1本にまとめる
 //         ②アイコンを線に近づける（右側は線のすぐ脇、左側は並走線の本数ぶんだけ外へ）③直通先ピルと重なる時は外側のレーンへずらす
 // 1.22.3: 描き直しのたびに「tp-rendered」を通知する（linemap の「飛んだ先の駅まで寄せる」を、行間隔の調整後にやり直すため）
@@ -315,7 +316,7 @@
 
   async function loadRouteTrains(ctx, onProgress, force) {
     const par = (ctx.parallelRoutes || []).filter(p => p.route && p.route !== ctx.routeVal);
-    const cacheKey = "tp_trains10_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
+    const cacheKey = "tp_trains11_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
     if (force) { try { localStorage.removeItem("tuts4_diagram_list_cache"); } catch (e) { /* ignore */ } }
 
     // マニフェスト（rev 一覧）。取れなければ null → 全部スプシから
@@ -348,18 +349,18 @@
 
     const jobs = [];
     const seen = new Set();
-    const add = (d, viaParallel, sheets) => {
+    const add = (d, viaParallel, sheets, srcRoute) => {
       const k = `${d["ID"] || ""}_${d["運番"] || ""}_${d["曜日区分"] || ""}_${d["適用開始日"] || ""}`;
       if (seen.has(k)) return;
       seen.add(k);
-      jobs.push({ d, viaParallel, sheets });
+      jobs.push({ d, viaParallel, sheets, srcRoute });
     };
     targets.forEach(t => {
       const src = t.stat ? t.stat.list : sheetList;
       const rows = filterLatestRevision(src.filter(d =>
         (!t.company || d["会社"] === t.company) &&
         String(d["路線"] || "").split(",").map(x => x.trim()).includes(t.route)));
-      rows.forEach(d => add(d, t.via, t.stat ? t.stat.sheets : null));
+      rows.forEach(d => add(d, t.via, t.stat ? t.stat.sheets : null, t.route));
     });
 
     // シートを同時に取る（静的JSONぶんは即座）。列車はダイヤ一覧の順に並べる
@@ -368,10 +369,11 @@
     const worker = async () => {
       while (idx < jobs.length) {
         const i = idx++;
-        const { d, viaParallel, sheets } = jobs[i];
+        const { d, viaParallel, sheets, srcRoute } = jobs[i];
         try {
           const rows = sheets ? sheets[`${d["ID"] || ""}_${d["運番"] || ""}`] : await fetchSheet(d["ID"], d["運番"], d["最終更新"]);
           perJob[i] = compactSheet(rows || [], d, viaParallel);
+          (perJob[i] || []).forEach(tr => { tr.srcRoute = srcRoute || ""; }); // どの路線のダイヤから来たか（別路線同士は併結しない）
         } catch (e) { /* この運番はスキップ */ }
         done++;
         if (onProgress) onProgress(done, jobs.length);
@@ -388,7 +390,7 @@
       trains = trains.filter(t => {
         if (!t.viaParallel || !t.trainNumber) return true;
         if (mainKeys.has(key(t))) return false;
-        const k = key(t) + "|" + sig(t);
+        const k = key(t) + "|" + sig(t) + "|" + (t.srcRoute || "");
         if (seenPar.has(k)) return false;
         seenPar.add(k);
         return true;
@@ -1101,7 +1103,7 @@
       const gm = new Map();
       placedRaw.forEach(p => {
         const ps = p.a.pos;
-        const gk = [ps.row0, ps.row1, ps.frac.toFixed(4), ps.sign, ps.atStation ? 1 : 0, ps.sig].join("|"); // 時刻（発車・到着）も同じものだけ併結とみなす
+        const gk = [p.a.train.srcRoute || "", ps.row0, ps.row1, ps.frac.toFixed(4), ps.sign, ps.atStation ? 1 : 0, ps.sig].join("|"); // 時刻（発車・到着）も同じものだけ併結とみなす
         const g = gm.get(gk);
         if (g) { g.members.push(p.a); g.h = 67 + 55 * (g.members.length - 1); return; }
         gm.set(gk, p);
@@ -1111,13 +1113,13 @@
       const byNum = new Map();
       for (let i = 0; i < placed.length; i++) {
         const el = placed[i];
-        const nums = el.members.map(m => m.train.trainNumber).filter(Boolean);
+        const nums = el.members.map(m => m.train.trainNumber ? `${m.train.srcRoute || ""}|${m.train.trainNumber}` : "").filter(Boolean);
         const hit = nums.map(n => byNum.get(n)).find(x => x && x !== el);
         if (hit) {
           hit.members.push(...el.members);
           hit.h = 67 + 55 * (hit.members.length - 1);
           placed.splice(i, 1); i--;
-          hit.members.forEach(m => m.train.trainNumber && byNum.set(m.train.trainNumber, hit));
+          hit.members.forEach(m => m.train.trainNumber && byNum.set(`${m.train.srcRoute || ""}|${m.train.trainNumber}`, hit));
         } else {
           nums.forEach(n => byNum.set(n, el));
         }

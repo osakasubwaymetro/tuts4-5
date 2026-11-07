@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.32.0 -->
+<!-- version: 1.32.1 -->
+<!-- 1.32.1: trainpos.js 1.23.1（別路線のダイヤ同士は併結しない） -->
 <!-- 1.32.0: UTL点検対応：並走線の端を駅で終わらせる・継ぎ目の隙間を消す・主線を太く／並走線を細くして凡例を追加・直通先の幹を駅までつなぐ・駅間の空テールを無くす・直通ピルを列車より前に出す・駅名と駅○を点線でつなぐ・路線切替でエリアも合わせる（trainpos.js 1.23.0） -->
 <!-- 1.31.0: 直通ラベル・乗換から飛んだ後、ダイヤ読み込みや行間隔の調整でズレたら、もう一度その駅まで寄せる（trainpos.js 1.22.3） -->
 <!-- 1.30.2: trainpos.js 1.22.2（読み込み時間を画面にも出す） -->
@@ -626,7 +627,7 @@
 <script src="dayrule.js?v=1.1.0"></script>
 <script src="timetable.js?v=1.19.1"></script>
 <script src="trainnavi.js?v=1.5.0"></script>
-<script src="trainpos.js?v=1.23.0"></script>
+<script src="trainpos.js?v=1.23.1"></script>
 <script>initNav("乗車路線マップ確認用");</script>
 <script>
 const username = checkLogin();
