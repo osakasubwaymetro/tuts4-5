@@ -1,4 +1,5 @@
-// trainpos.js v1.22.2
+// trainpos.js v1.22.3
+// 1.22.3: 描き直しのたびに「tp-rendered」を通知する（linemap の「飛んだ先の駅まで寄せる」を、行間隔の調整後にやり直すため）
 // 1.22.2: 読み込みの所要時間を、画面の左下にも小さく出す（スマホ用。タップで消える）
 // 1.22.1: どこで時間がかかってるか分かるよう、読み込みの所要時間をコンソールに出す（[trainpos] 読み込み…）。マニフェスト取得とキャッシュ確認を同時に行う
 // 1.22.0: 列車のアイコンを押すと「時刻表を見る／乗車記録を上げる」を選べる。乗車記録は index の投稿フォームを、その列車の路線・駅・種別・行先・時刻（併結なら全部）入りで開く
@@ -1241,6 +1242,7 @@
 
     const status = document.getElementById("tpStatus");
     if (status && !st.loading) status.textContent = `運行中 ${placed.reduce((n, p) => n + p.members.length, 0)}本` + (rideOnly.length ? `（乗車記録のみ ${rideOnly.length}本）` : "");
+    document.dispatchEvent(new Event("tp-rendered"));
   }
 
   // この列車のいまの種別・行先（併結のまとめ判定と表示で共通）
