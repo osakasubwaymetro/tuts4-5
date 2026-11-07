@@ -1,4 +1,5 @@
-// version: 1.44.0
+// version: 1.44.1
+// 1.44.1: 走行位置からの入力で、エリア・区分が入らないことがあったのを修正（プルダウンの選択肢が出そろうのを待ってから入れる／複数エリアの会社は順に試す）
 // 1.44.0: 走行位置MAP（trainpos.js 1.22.0）のアイコン→「乗車記録を上げる」で来た時、路線・乗車駅・種別・行先・発車時刻（併結なら全部）をフォームに入れる
 // 1.43.0: ダイヤを静的JSON（diagram_static.js）から読む。無い／壊れてたら従来どおりスプシから直接取る
 // 1.42.0: マスタのsujitypeに種別が設定されている路線では、種別のプルダウンに「回送」「臨時」「団体」を足す
@@ -2940,7 +2941,31 @@ async function applyTrainPrefillFromMap() {
   const fire = (el, v) => { el.value = v; el.dispatchEvent(new Event("change", { bubbles: true })); };
   try {
     resetRideBlocksToOne();
-    await jumpToRoute(p.route);
+    // プルダウンは選択肢が出そろってから1つずつ入れる（固定時間待ちだと間に合わず、エリア・区分が入らないことがあった）
+    const setWhenReady = async (id, v, ms) => {
+      const el = document.getElementById(id);
+      if (!el || !v) return false;
+      const end = Date.now() + (ms || 4000);
+      while (Date.now() < end) {
+        if ([...el.options].some(o => o.value === v)) { fire(el, v); return el.value === v; }
+        await wait(100);
+      }
+      return false;
+    };
+    const routeRows = (allrouteData || []).filter(r => r["路線"] === p.route);
+    const routeRow = routeRows.find(r => !p.company || r["会社"] === p.company) || routeRows[0];
+    if (!routeRow) return;
+    const typeVal = routeRow["区分"], companyVal = routeRow["会社"];
+    // 同じ会社・区分が複数のエリアにまたがる場合に備えて、候補のエリアを順に試す
+    const areas = [...new Set((allCountryData || []).filter(r => r["区分"] === typeVal && r["会社"] === companyVal).map(r => r["えりあ"]))];
+    let ok = false;
+    for (const area of areas) {
+      if (!(await setWhenReady("area", area))) continue;
+      if (!(await setWhenReady("type", typeVal))) continue;
+      if (await setWhenReady("country", companyVal, 1500)) { ok = true; break; }
+    }
+    if (!ok) return;
+    if (!(await setWhenReady("route", p.route))) return;
     await wait(700);
     const stSel = document.querySelector(".station-select");
     if (stSel && p.station) { fire(stSel, p.station); await wait(500); }
