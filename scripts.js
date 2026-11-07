@@ -1,4 +1,5 @@
-// version: 1.42.0
+// version: 1.43.0
+// 1.43.0: ダイヤを静的JSON（diagram_static.js）から読む。無い／壊れてたら従来どおりスプシから直接取る
 // 1.42.0: マスタのsujitypeに種別が設定されている路線では、種別のプルダウンに「回送」「臨時」「団体」を足す
 // 1.41.1: 最寄り駅から選んだ後の候補で、23時台と0時台が混ざる時に0時台が先に出てしまうのを修正（今の少し前を先頭にした順で並べる）
 // 1.41.0: ダイヤから選ばず、過去の乗車記録から選んだ時や、手動で時刻を変えた時は、メモに「ダイヤなし」と入れる（ダイヤの候補を選んだ時は外す）
@@ -1737,6 +1738,8 @@ async function runDiagramPool(items, limit, fn) {
 }
 const _diagramSheetMemo = new Map(); // シート名 → { t, promise }
 function fetchDiagramSheet(id, unban, listRowLastUpdated) {
+  const st = window.DiagramStatic && DiagramStatic.sheet(id, unban); // 静的JSONで取れていればそれを使う
+  if (st) return Promise.resolve(st);
   const sheetName = `${id}_${unban}`;
   const m = _diagramSheetMemo.get(sheetName);
   if (m && Date.now() - m.t < DIAGRAM_SHEET_MEMO_MS) return m.promise;
@@ -1786,9 +1789,15 @@ function diagramRowMatchesRoute(row, routeVal) {
   return String(row["路線"] || "").split(",").map(s => s.trim()).includes(routeVal);
 }
 
+// 静的JSON（無ければnull）→ダメならスプシのダイヤ一覧
+async function getDiagramListForRoute(companyVal, routeVal) {
+  const s = window.DiagramStatic ? await DiagramStatic.routeList(companyVal, routeVal) : null;
+  return s || await getDiagramList();
+}
+
 async function prefetchDiagramDataForRoute(companyVal, routeVal) {
   try {
-    const list = await getDiagramList();
+    const list = await getDiagramListForRoute(companyVal, routeVal);
     const matches = list.filter(d => d["会社"] === companyVal && diagramRowMatchesRoute(d, routeVal));
     await runDiagramPool(matches, DIAGRAM_FETCH_CONCURRENCY, d => fetchDiagramSheet(d["ID"], d["運番"], d["最終更新"]));
   } catch (e) { /* ignore */ }
@@ -1824,7 +1833,7 @@ function isFlaggedExtraGeneric(v) {
 // （同じ運用番号のシート内に同じ駅名が複数回出てきてもOK＝折り返しに対応）
 async function getDiagramCandidates(routeVal, boardingStation, todayIsWeekendType, svcDate, holidaySet) {
   const companyVal = document.getElementById("country")?.value || "";
-  const list = await getDiagramList();
+  const list = await getDiagramListForRoute(companyVal, routeVal);
   const matches = list.filter(d => {
     if (d["会社"] !== companyVal || !diagramRowMatchesRoute(d, routeVal)) return false;
     const dayType = String(d["曜日区分"] || "").trim();

@@ -1,5 +1,6 @@
 // timetable.js
-// version: 1.19.1
+// version: 1.20.0
+// 1.20.0: ダイヤを静的JSON（diagram_static.js）から読む。無い／壊れてたら従来どおりスプシから直接取る
 // 1.19.1: スタフの両数の枠を、実物のスタフに近いデザインに（影つきの白い枠に大きい数字、右下に小さく「両」。前後に縦線）
 // 1.19.0: ダイヤ一覧の「両数」列を読み、スタフの「両」の枠に自動で入れる（entry.cars。併結の時は、呼び出し側が足した値を渡す）
 // 1.18.0: スタフの「着後」に、同じ運用の次の列車番号（へ乗継）とボタンを出し、押すとその列車のスタフに飛ぶ。前の列車（より乗継）にも飛べる
@@ -224,6 +225,8 @@ function ttFetchJsonWithTimeout(url, ms) {
 // 同じシートを60秒以内に取っていれば、その結果（または取得中の通信）を使い回す
 const ttSheetMemo = new Map(); // sheetName -> { t, promise }
 function ttFetchDiagramSheet(id, unban, listRowLastUpdated) {
+  const st = window.DiagramStatic && DiagramStatic.sheet(id, unban); // 静的JSONで取れていればそれを使う
+  if (st) return Promise.resolve(st);
   const sheetName = `${id}_${unban}`;
   const m = ttSheetMemo.get(sheetName);
   if (m && Date.now() - m.t < TT_SHEET_MEMO_MS) return m.promise;
@@ -470,7 +473,8 @@ function ttCircularDirLabel(routeVal, sign) {
 async function ttGetRouteDiagramRows(routeVal) {
   const routeRow = ttRouteRow(routeVal);
   const companyVal = routeRow ? routeRow["会社"] : "";
-  const list = await ttGetDiagramList();
+  const sList = window.DiagramStatic ? await DiagramStatic.routeList(companyVal, routeVal) : null;
+  const list = sList || await ttGetDiagramList();
   const rawMatches = list.filter(d => d["会社"] === companyVal && ttDiagramRowMatchesRoute(d, routeVal));
   return ttFilterLatestRevision(rawMatches);
 }

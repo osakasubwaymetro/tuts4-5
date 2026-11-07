@@ -1,0 +1,80 @@
+// diagram_static.js
+// version: 1.0.0
+// 1.0.0: 新規作成。ダイヤ（ダイヤ一覧＋運番シート）を、Cloudflare Pages の静的JSONから読む共通部品。
+//        無い／壊れてる／形がおかしい時は null を返すので、呼び出し側は従来どおりスプシ(opensheet)から取る。
+//        window.DiagramStatic.routeList(会社, 路線) → ダイヤ一覧の行の配列 or null（取れたシートはメモリに保持）
+//        window.DiagramStatic.sheet(ID, 運番)       → 運用シートの行（{列車番号,駅名,発車時刻,行先,種別}の配列）or null
+(function () {
+  "use strict";
+  const BASE = "https://tuts4-data.pages.dev/";
+  const TIMEOUT_MS = 15000;
+  const MANIFEST_MEMO_MS = 60 * 1000;
+  const COLS = ["列車番号", "駅名", "発車時刻", "行先", "種別"];
+
+  const sheets = new Map();   // "ID_運番" → 行(オブジェクト)の配列
+  const routes = new Map();   // "会社\t路線\trev" → Promise<list|null>
+  let manifestP = null, manifestAt = 0;
+
+  async function getJson(url, opt) {
+    const ctl = typeof AbortController === "function" ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), TIMEOUT_MS) : null;
+    try {
+      const res = await fetch(url, Object.assign({}, opt || {}, ctl ? { signal: ctl.signal } : {}));
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return await res.json();
+    } finally { if (timer) clearTimeout(timer); }
+  }
+
+  function getManifest() {
+    if (manifestP && Date.now() - manifestAt < MANIFEST_MEMO_MS) return manifestP;
+    manifestAt = Date.now();
+    manifestP = getJson(BASE + "manifest.json?t=" + Date.now(), { cache: "no-cache" }).then(m => {
+      if (!m || !Array.isArray(m.files)) throw new Error("bad manifest");
+      return m;
+    });
+    manifestP.catch(() => { manifestP = null; });
+    return manifestP;
+  }
+
+  async function loadRoute(entry) {
+    const data = await getJson(BASE + entry.file + "?v=" + encodeURIComponent(entry.rev || ""));
+    if (!data || !Array.isArray(data.list) || !data.sheets || typeof data.sheets !== "object") throw new Error("bad shape");
+    const local = new Map();
+    for (const d of data.list) {
+      if (!d || typeof d !== "object") throw new Error("bad list row");
+      const k = `${d["ID"] || ""}_${d["運番"] || ""}`;
+      if (local.has(k)) continue;
+      const raw = data.sheets[k];
+      if (!Array.isArray(raw)) throw new Error("missing sheet " + k);
+      local.set(k, raw.map(r => {
+        if (!Array.isArray(r)) throw new Error("bad row " + k);
+        const o = {};
+        COLS.forEach((c, i) => { o[c] = r[i] == null ? "" : r[i]; });
+        return o;
+      }));
+    }
+    // 全部そろって初めて公開する（途中で壊れてたら何も入れない）
+    local.forEach((v, k) => sheets.set(k, v));
+    return data.list;
+  }
+
+  window.DiagramStatic = {
+    async routeList(company, route) {
+      try {
+        const m = await getManifest();
+        const entry = m.files.find(f => f && f.file && f.route === route && (!company || f.company === company));
+        if (!entry) return null;
+        const key = `${company}\t${route}\t${entry.rev || ""}`;
+        if (!routes.has(key)) {
+          const p = loadRoute(entry).catch(e => { console.warn("[DiagramStatic] 失敗 → スプシから取得:", route, e && e.message); routes.delete(key); return null; });
+          routes.set(key, p);
+        }
+        return await routes.get(key);
+      } catch (e) {
+        console.warn("[DiagramStatic] manifest 失敗 → スプシから取得:", e && e.message);
+        return null;
+      }
+    },
+    sheet(id, unban) { return sheets.get(`${id || ""}_${unban || ""}`) || null; }
+  };
+})();
