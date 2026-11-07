@@ -1,4 +1,6 @@
-// trainpos.js v1.22.0
+// trainpos.js v1.22.2
+// 1.22.2: 読み込みの所要時間を、画面の左下にも小さく出す（スマホ用。タップで消える）
+// 1.22.1: どこで時間がかかってるか分かるよう、読み込みの所要時間をコンソールに出す（[trainpos] 読み込み…）。マニフェスト取得とキャッシュ確認を同時に行う
 // 1.22.0: 列車のアイコンを押すと「時刻表を見る／乗車記録を上げる」を選べる。乗車記録は index の投稿フォームを、その列車の路線・駅・種別・行先・時刻（併結なら全部）入りで開く
 // 1.20.0: ダイヤ一覧の「両数」列を読み、列車詳細・スタフ・Train Naviに渡す。併結（同じ位置にまとめた複数の列車）から開く時は、それぞれの両数を足した値を渡す
 // 1.19.0: 現在時刻を指定する時に、時刻だけでなく日付も変えられるようにした（日時の入力欄）。指定した日の曜日・祝日でダイヤを選ぶ
@@ -287,33 +289,59 @@
     return { list: data.list, sheets, rev: entry.rev || "" };
   }
 
+  // 画面の左下に小さく出す（スマホはコンソールが見れないため）。タップで消える／20秒で自動で消える
+  function diagShow(msg) {
+    try {
+      console.info(msg);
+      let box = document.getElementById("diagLogBox");
+      if (!box) {
+        box = document.createElement("div");
+        box.id = "diagLogBox";
+        box.style.cssText = "position:fixed;left:6px;bottom:6px;z-index:99999;max-width:92vw;background:rgba(0,0,0,.78);color:#9f9;font:11px/1.4 monospace;padding:6px 8px;border-radius:8px;white-space:pre-wrap;word-break:break-all;";
+        box.onclick = () => box.remove();
+        (document.body || document.documentElement).appendChild(box);
+      }
+      const line = document.createElement("div");
+      line.textContent = msg;
+      box.appendChild(line);
+      while (box.children.length > 8) box.removeChild(box.firstChild);
+      clearTimeout(box._t);
+      box._t = setTimeout(() => box.remove(), 20000);
+    } catch (e) { /* ignore */ }
+  }
+
   async function loadRouteTrains(ctx, onProgress, force) {
     const par = (ctx.parallelRoutes || []).filter(p => p.route && p.route !== ctx.routeVal);
     const cacheKey = "tp_trains9_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
     if (force) { try { localStorage.removeItem("tuts4_diagram_list_cache"); } catch (e) { /* ignore */ } }
 
     // マニフェスト（rev 一覧）。取れなければ null → 全部スプシから
+    const T0 = performance.now(), lap = {};
     let manifest = null;
-    try { manifest = await getManifest(!!force); } catch (e) { manifest = null; }
+    const manP = getManifest(!!force).catch(() => null);
+    const cachedP = (idb() && !force) ? idb().get(cacheKey) : Promise.resolve(null);
+    manifest = await manP; lap.manifest = Math.round(performance.now() - T0);
     const findEntry = (route, company) => manifest && manifest.files.find(f =>
       f && f.file && f.route === route && (!company || f.company === company));
     const targets = [{ route: ctx.routeVal, company: ctx.company, via: false }, ...par.map(p => ({ route: p.route, company: p.company, via: true }))];
     targets.forEach(t => { t.entry = findEntry(t.route, t.company) || null; });
     const sig = targets.map(t => t.entry ? t.entry.rev || "?" : "-").join(",");
 
-    if (idb() && !force) {
-      const c = await idb().get(cacheKey);
-      if (c && Array.isArray(c.trains) && Date.now() - c.fetchedAt < TRAINS_TTL_MS && (!manifest || c.sig === sig)) return c.trains;
+    {
+      const c = await cachedP;
+      if (c && Array.isArray(c.trains) && Date.now() - c.fetchedAt < TRAINS_TTL_MS && (!manifest || c.sig === sig)) { diagShow(`[trainpos] 読み込み: キャッシュ ${Math.round(performance.now() - T0)}ms`); return c.trains; }
     }
 
     // 路線ごとに静的JSONを試す。失敗した路線だけスプシ直取りに切り替える
     await Promise.all(targets.map(async t => {
       if (!t.entry) return;
       try { t.stat = await loadStaticRoute(t.entry); }
-      catch (e) { console.warn("[trainpos] 静的JSON失敗 → スプシから取得:", t.route, e && e.message); t.stat = null; }
+      catch (e) { diagShow("[trainpos] 静的JSON失敗→スプシ: " + t.route + " " + (e && e.message)); t.stat = null; }
     }));
+    lap.files = Math.round(performance.now() - T0);
     let sheetList = null;
     if (targets.some(t => !t.stat)) sheetList = await getDiagramList();
+    lap.list = Math.round(performance.now() - T0);
 
     const jobs = [];
     const seen = new Set();
@@ -348,6 +376,7 @@
     };
     await Promise.all(Array.from({ length: Math.min(FETCH_CONCURRENCY, jobs.length) }, worker));
     const trains = perJob.flat().filter(Boolean);
+    diagShow(`[trainpos] 読み込み: 静的JSON ${targets.filter(t => t.stat).length}/${targets.length}路線 マニフェスト${lap.manifest}ms → ファイル${lap.files}ms → 一覧${lap.list}ms → 完了${Math.round(performance.now() - T0)}ms（列車${trains.length}本・シート${jobs.length}枚）`);
     if (idb()) idb().set(cacheKey, { trains, fetchedAt: Date.now(), sig });
     return trains;
   }
