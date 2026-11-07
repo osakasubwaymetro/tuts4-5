@@ -1,4 +1,6 @@
-// trainpos.js v1.22.3
+// trainpos.js v1.23.0
+// 1.23.0: ①並走路線から取った列車が、この路線のダイヤにも同じ列番であると二重に出る（単一列番でアイコンが2つ並ぶ）のを1本にまとめる
+//         ②アイコンを線に近づける（右側は線のすぐ脇、左側は並走線の本数ぶんだけ外へ）③直通先ピルと重なる時は外側のレーンへずらす
 // 1.22.3: 描き直しのたびに「tp-rendered」を通知する（linemap の「飛んだ先の駅まで寄せる」を、行間隔の調整後にやり直すため）
 // 1.22.2: 読み込みの所要時間を、画面の左下にも小さく出す（スマホ用。タップで消える）
 // 1.22.1: どこで時間がかかってるか分かるよう、読み込みの所要時間をコンソールに出す（[trainpos] 読み込み…）。マニフェスト取得とキャッシュ確認を同時に行う
@@ -313,7 +315,7 @@
 
   async function loadRouteTrains(ctx, onProgress, force) {
     const par = (ctx.parallelRoutes || []).filter(p => p.route && p.route !== ctx.routeVal);
-    const cacheKey = "tp_trains9_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
+    const cacheKey = "tp_trains10_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
     if (force) { try { localStorage.removeItem("tuts4_diagram_list_cache"); } catch (e) { /* ignore */ } }
 
     // マニフェスト（rev 一覧）。取れなければ null → 全部スプシから
@@ -376,7 +378,22 @@
       }
     };
     await Promise.all(Array.from({ length: Math.min(FETCH_CONCURRENCY, jobs.length) }, worker));
-    const trains = perJob.flat().filter(Boolean);
+    let trains = perJob.flat().filter(Boolean);
+    {
+      // 同じ列車が「この路線」と「並走路線」の両方のダイヤに載っていると、二重に出て併結に見えてしまう。1本にまとめる
+      const key = t => `${t.trainNumber}|${t.dayRaw || t.dayType || ""}`;
+      const sig = t => { const s0 = t.stops && t.stops[0]; return s0 ? `${s0.s}@${s0.d != null ? s0.d : s0.a}` : ""; };
+      const mainKeys = new Set(trains.filter(t => !t.viaParallel && t.trainNumber).map(key));
+      const seenPar = new Set();
+      trains = trains.filter(t => {
+        if (!t.viaParallel || !t.trainNumber) return true;
+        if (mainKeys.has(key(t))) return false;
+        const k = key(t) + "|" + sig(t);
+        if (seenPar.has(k)) return false;
+        seenPar.add(k);
+        return true;
+      });
+    }
     diagShow(`[trainpos] 読み込み: 静的JSON ${targets.filter(t => t.stat).length}/${targets.length}路線 マニフェスト${lap.manifest}ms → ファイル${lap.files}ms → 一覧${lap.list}ms → 完了${Math.round(performance.now() - T0)}ms（列車${trains.length}本・シート${jobs.length}枚）`);
     if (idb()) idb().set(cacheKey, { trains, fetchedAt: Date.now(), sig });
     return trains;
@@ -1152,13 +1169,25 @@
     scroll.appendChild(layer);
 
     const slots = { left: [], right: [] }; // 同じ側で近い列車を横にずらすための記録
+    const scrollRect = scroll.getBoundingClientRect();
+    const pills = [...scroll.querySelectorAll(".via-pill")].map(b => { const r = b.getBoundingClientRect(); return { l: r.left - scrollRect.left, r: r.right - scrollRect.left, t: r.top - scrollRect.top, b: r.bottom - scrollRect.top }; });
 
     all.forEach(p => {
       const side = p.sign < 0 ? "left" : "right";
       let k = 0;
       while (slots[side].some(s => s.k === k && Math.abs(s.y - p.y) < (s.h + p.h) / 2 + 7)) k++;
+      // 線から離す距離：右側は線のすぐ脇、左側は並走線の本数ぶんだけ外へ（並走線に重ならないように）
+      const nPar = side === "left" ? Math.max(0, ...(p.kind === "ride" ? [p.r.row] : [p.a.pos.row0, p.a.pos.row1]).map(r => rows[r] ? rows[r].querySelectorAll(".parallel-line").length : 0)) : 0;
+      const baseOff = 10 + 12 * nPar;
+      // 直通先ピルと重なる時は、外側のレーンへずらす（最大3つ先まで）
+      const pillHit = kk => {
+        const o = baseOff + 66 * kk, W = scrollRect.width;
+        const x0 = side === "left" ? W / 2 - o - 64 : W / 2 + o, x1 = x0 + 64;
+        return pills.some(b => x1 > b.l && x0 < b.r && p.y + p.h / 2 > b.t && p.y - p.h / 2 < b.b);
+      };
+      for (let kk = k; kk <= k + 3; kk++) { if (!pillHit(kk)) { k = kk; break; } }
       slots[side].push({ y: p.y, k, h: p.h });
-      const off = 18 + 66 * k; // 線から離す距離。同じ側が混む時は外側へずらす
+      const off = baseOff + 66 * k;
       const el = document.createElement("div");
       el.style.top = p.y + "px";
       // 上り（index減少）は線の左側、下り（index増加）は右側に置く
