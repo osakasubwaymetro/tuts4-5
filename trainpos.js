@@ -1,4 +1,5 @@
-// trainpos.js v1.21.0
+// trainpos.js v1.22.0
+// 1.22.0: 列車のアイコンを押すと「時刻表を見る／乗車記録を上げる」を選べる。乗車記録は index の投稿フォームを、その列車の路線・駅・種別・行先・時刻（併結なら全部）入りで開く
 // 1.20.0: ダイヤ一覧の「両数」列を読み、列車詳細・スタフ・Train Naviに渡す。併結（同じ位置にまとめた複数の列車）から開く時は、それぞれの両数を足した値を渡す
 // 1.19.0: 現在時刻を指定する時に、時刻だけでなく日付も変えられるようにした（日時の入力欄）。指定した日の曜日・祝日でダイヤを選ぶ
 // 1.18.0: 黒いラベル（列車番号・種別行先）の文字が見切れる時は、ラベルの中で文字を左右にスクロールして全部読めるようにした
@@ -903,6 +904,55 @@
     return { unban: train.unban, trainNumber: train.trainNumber, type: first.type || "", bound: first.bound || "", stops, cars: train.cars || 0 };
   }
   // trains：併結でまとめた列車たち（あれば両数を足した値を渡す）
+  // アイコンを押した時の選択（時刻表／乗車記録を上げる）
+  function prefillFor(members, pos) {
+    const ctx = st.ctx; if (!ctx) return null;
+    const train = members[0];
+    let name = ctx.stationsOnRoute[pos && pos.row0 != null ? pos.row0 : -1] || "";
+    let stop = train.stops.find(s => s.s === name);
+    if (!stop) { stop = train.stops.find(s => s.d != null) || train.stops[0]; name = stop ? stop.s : ""; }
+    const pick = t => {
+      const sp = t.stops.find(s => s.s === name && (s.type || s.bound)) || t.stops.find(s => s.type || s.bound) || {};
+      return { type: sp.type || "", bound: sp.bound || "" };
+    };
+    const first = pick(train);
+    return {
+      t: Date.now(), company: ctx.company || "", route: ctx.routeVal, station: name,
+      sec: stop && (stop.d != null ? stop.d : stop.a), isExtra: !!train.isExtra,
+      type: first.type, bound: first.bound, trainNumber: train.trainNumber || "",
+      coupled: members.length > 1 ? members.map(pick) : null
+    };
+  }
+  function askIconAction(train, members, pos) {
+    const old = document.getElementById("tpActSheet"); if (old) old.remove();
+    const ov = document.createElement("div");
+    ov.id = "tpActSheet";
+    ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:10000;display:flex;align-items:flex-end;justify-content:center;";
+    const box = document.createElement("div");
+    box.style.cssText = "background:#fff;color:#222;width:min(420px,100%);border-radius:14px 14px 0 0;padding:14px 14px 18px;box-shadow:0 -4px 20px rgba(0,0,0,.25);";
+    const btn = (label, bg, fg, fn) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = label;
+      b.style.cssText = `display:block;width:100%;margin:8px 0 0;padding:13px;border:0;border-radius:10px;font-size:16px;font-weight:700;background:${bg};color:${fg};`;
+      b.onclick = ev => { ev.stopPropagation(); ov.remove(); if (fn) fn(); };
+      return b;
+    };
+    const title = document.createElement("div");
+    title.style.cssText = "font-weight:700;text-align:center;font-size:15px;";
+    title.textContent = [train.trainNumber, (train.stops.find(s => s.bound) || {}).bound].filter(Boolean).join(" ");
+    box.appendChild(title);
+    box.appendChild(btn("🕒 時刻表を見る", "#eef2f7", "#222", () => openDetail(train, members)));
+    box.appendChild(btn("📝 乗車記録を上げる", "#1e6fd9", "#fff", () => {
+      const pf = prefillFor(members, pos);
+      if (!pf) return;
+      try { localStorage.setItem("tuts4_prefill", JSON.stringify(pf)); } catch (e) { /* ignore */ }
+      location.href = "index.html?prefill=1";
+    }));
+    box.appendChild(btn("キャンセル", "transparent", "#666", null));
+    ov.appendChild(box);
+    ov.onclick = () => ov.remove();
+    document.body.appendChild(ov);
+  }
   function openDetail(train, trains) {
     if (typeof window.ttOpenTrainDetail !== "function") return;
     const entry = trainToEntry(train);
@@ -1137,9 +1187,9 @@
         ${labels.map(t => `<div class="tp-label">${esc(t)}</div>`).join("")}
         ${nums.map((n, i) => `<div class="tp-num">${esc(n)}${i < nums.length - 1 ? "+" : ""}</div>`).join("")}`;
       el.onclick = () => openDetail(p.a.train, p.members.map(m => m.train));
-      // 併結：アイコンを押すと、その列車の時刻表（列車詳細）を出す
+      // アイコンを押すと、その列車の「時刻表／乗車記録を上げる」を選べる
       el.querySelectorAll(".tp-icon[data-mi]").forEach(ic => {
-        ic.onclick = ev => { ev.stopPropagation(); const m = p.members[+ic.dataset.mi]; if (m) openDetail(m.train, p.members.map(x => x.train)); };
+        ic.onclick = ev => { ev.stopPropagation(); const m = p.members[+ic.dataset.mi]; if (m) askIconAction(m.train, p.members.map(x => x.train), p.a.pos); };
       });
       layer.appendChild(el);
     });
