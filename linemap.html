@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.32.1 -->
+<!-- version: 1.33.0 -->
+<!-- 1.33.0: 乗換・直通ラベルで路線を変える時、飛んだ駅の都道府県（HeartRails）からエリアを自動で切り替えてから、区分・会社・路線を合わせる -->
 <!-- 1.32.1: trainpos.js 1.23.1（別路線のダイヤ同士は併結しない） -->
 <!-- 1.32.0: UTL点検対応：並走線の端を駅で終わらせる・継ぎ目の隙間を消す・主線を太く／並走線を細くして凡例を追加・直通先の幹を駅までつなぐ・駅間の空テールを無くす・直通ピルを列車より前に出す・駅名と駅○を点線でつなぐ・路線切替でエリアも合わせる（trainpos.js 1.23.0） -->
 <!-- 1.31.0: 直通ラベル・乗換から飛んだ後、ダイヤ読み込みや行間隔の調整でズレたら、もう一度その駅まで寄せる（trainpos.js 1.22.3） -->
@@ -806,7 +807,42 @@ function findRouteMeta(routeName) {
   return { area: countryRow ? countryRow["えりあ"] : "", type, company, route: routeName };
 }
 
-function jumpToRoute(routeName, fromStation) {
+// ---------- 駅の都道府県 → エリア（地方）。乗換・直通ラベルで飛ぶ時に、エリアも合わせるために使う ----------
+const PREF_REGION = (() => {
+  const m = {};
+  const add = (region, list) => list.split(",").forEach(p => { m[p] = region; });
+  add("北海道", "北海道");
+  add("東北", "青森県,岩手県,宮城県,秋田県,山形県,福島県");
+  add("関東", "茨城県,栃木県,群馬県,埼玉県,千葉県,東京都,神奈川県");
+  add("北陸", "新潟県,富山県,石川県,福井県");
+  add("東海", "山梨県,長野県,岐阜県,静岡県,愛知県");
+  add("関西", "三重県,滋賀県,京都府,大阪府,兵庫県,奈良県,和歌山県");
+  add("中国", "鳥取県,島根県,岡山県,広島県,山口県");
+  add("四国", "徳島県,香川県,愛媛県,高知県");
+  add("九州", "福岡県,佐賀県,長崎県,熊本県,大分県,宮崎県,鹿児島県,沖縄県");
+  return m;
+})();
+const _prefMem = {};
+// その路線のその駅がある都道府県からエリアを返す（隣駅が一致する候補だけ採用＝別の県の同じ駅名を避ける）。分からなければ ""
+async function xfRegionOf(route, name) {
+  const key = route + "|" + name;
+  if (key in _prefMem) return _prefMem[key];
+  let region = "";
+  try {
+    const nb = xfNeighbors(route, name);
+    for (const q of xfNameVariants(name)) {
+      const ents = await xfApi("method=getStations&name=" + encodeURIComponent(q));
+      if (ents === null) return "";   // 繋がらない時は覚えない
+      const ok = e => (!nb.prev && !nb.next) || [e.prev, e.next].some(x => x && (xfSame(x, nb.prev) || xfSame(x, nb.next)));
+      const hit = ents.find(ok);
+      if (hit) { region = PREF_REGION[hit.prefecture] || ""; break; }
+    }
+  } catch (e) { return ""; }
+  _prefMem[key] = region;
+  return region;
+}
+
+async function jumpToRoute(routeName, fromStation) {
   // 「飛べるかどうか」は route シートではなく station シートにその路線の駅データがあるかで判定する
   const hasStationData = allstationData.some(r => r["路線"] === routeName);
   if (!hasStationData) {
@@ -818,9 +854,12 @@ function jumpToRoute(routeName, fromStation) {
   const meta = findRouteMeta(routeName);
   if (meta) {
     // 今のエリアに同じ会社・区分があればエリアは変えない（会社が複数のエリアにある時、先頭のエリア＝東北などに変わってしまっていた）
+    const has = a => allCountryData.some(r => r["えりあ"] === a && r["区分"] === meta.type && r["会社"] === meta.company);
+    // ①飛んだ駅の都道府県のエリア ②今のエリア（同じ会社・区分があれば） ③マスタの先頭のエリア、の順で決める
+    const region = fromStation ? await xfRegionOf(routeName, fromStation) : "";
     const curArea = document.getElementById("mapArea").value;
-    const keepArea = allCountryData.some(r => r["えりあ"] === curArea && r["区分"] === meta.type && r["会社"] === meta.company);
-    if (!keepArea) document.getElementById("mapArea").value = meta.area;
+    const area = (region && has(region)) ? region : (has(curArea) ? curArea : meta.area);
+    document.getElementById("mapArea").value = area;
     buildCompanySelect();
     buildRouteSelect();
     document.getElementById("mapType").value = meta.type;
