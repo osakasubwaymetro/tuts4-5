@@ -1,4 +1,5 @@
-// trainpos.js v1.23.1
+// trainpos.js v1.24.0
+// 1.24.0: 走行位置のアイコンが動き出す秒を、毎分00秒から一律30秒に変更（発車・到着とも、ダイヤ時刻の30秒後に動く）
 // 1.23.1: 山手線と京浜東北線のように「別の路線のダイヤ」から来た列車は、並走区間で発車時刻が同じでも併結しない（同じ路線のダイヤ同士だけ併結する）
 // 1.23.0: ①並走路線から取った列車が、この路線のダイヤにも同じ列番であると二重に出る（単一列番でアイコンが2つ並ぶ）のを1本にまとめる
 //         ②アイコンを線に近づける（右側は線のすぐ脇、左側は並走線の本数ぶんだけ外へ）③直通先ピルと重なる時は外側のレーンへずらす
@@ -74,6 +75,7 @@
   const RIDES_REFRESH_MS = 3 * 60 * 1000;    // 乗車記録の取り直し間隔
   const TICK_MS = 5000;
   const WAIT_SEC = 10 * 60;                  // 始発駅の発車の何秒前から在線表示するか（10分）
+  const MOVE_OFFSET_SEC = 30;                // アイコンの動き出しを遅らせる秒数（発車・到着とも一律30秒＝毎分30秒に動く）
   const LS_ON = "tuts4_trainpos_on";
 
   const st = {
@@ -1061,9 +1063,10 @@
     if (!rows.length) return;
 
     const { date, sec } = currentNow();
-    const active = computeActive(ctx, sec, date);
+    const posSec = st.live ? sec - MOVE_OFFSET_SEC : sec; // ライブ表示は位置の判定を一律30秒遅らせる（時計表示は現在時刻のまま）
+    const active = computeActive(ctx, posSec, date);
     const ridesIdx = indexRides(st.rides);
-    const rideOnlyList = computeRideOnly(ctx, sec, date);
+    const rideOnlyList = computeRideOnly(ctx, posSec, date);
     const fmMemo = new Map();
     const fmCache = new Map();
     const fmOf = a => {

@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.33.0 -->
+<!-- version: 1.33.1 -->
+<!-- 1.33.1: trainpos.js 1.24.0（走行位置のアイコンの動き出しを毎分30秒に変更） -->
 <!-- 1.33.0: 乗換・直通ラベルで路線を変える時、飛んだ駅の都道府県（HeartRails）からエリアを自動で切り替えてから、区分・会社・路線を合わせる -->
 <!-- 1.32.1: trainpos.js 1.23.1（別路線のダイヤ同士は併結しない） -->
 <!-- 1.32.0: UTL点検対応：並走線の端を駅で終わらせる・継ぎ目の隙間を消す・主線を太く／並走線を細くして凡例を追加・直通先の幹を駅までつなぐ・駅間の空テールを無くす・直通ピルを列車より前に出す・駅名と駅○を点線でつなぐ・路線切替でエリアも合わせる（trainpos.js 1.23.0） -->
@@ -628,7 +629,7 @@
 <script src="dayrule.js?v=1.1.0"></script>
 <script src="timetable.js?v=1.19.1"></script>
 <script src="trainnavi.js?v=1.5.0"></script>
-<script src="trainpos.js?v=1.23.1"></script>
+<script src="trainpos.js?v=1.24.0"></script>
 <script>initNav("乗車路線マップ確認用");</script>
 <script>
 const username = checkLogin();
