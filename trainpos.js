@@ -1,4 +1,5 @@
-// trainpos.js v1.25.0
+// trainpos.js v1.26.0
+// 1.26.0: 臨時ダイヤのパターンを汎用化。曜日区分が特定の日付（例「2025-12-31」）のダイヤがある路線では、パターンのプルダウンにその臨時ダイヤが出て、日付を指定すると自動で選ばれる。その運行日に臨時ダイヤが使われている路線では、平日・土休日の指定でも臨時ダイヤだけを表示する。路線を変えたら、その路線にある臨時ダイヤでプルダウンを組み直す
 // 1.25.0: パターンに「コミケ臨ダイヤ」を追加（曜日区分が「2025-12-31」のダイヤだけを表示する。その日は平日ダイヤより臨時ダイヤを優先）。日時の入力で 2025-12-31 を指定するとパターンが自動でコミケ臨ダイヤに切り替わり、別の日に変えると「自動」に戻る
 // 1.24.1: 直通先ピル（直通ラベル）を避けて車両アイコンを外側のレーンへずらすのをやめた（ピルとアイコンが重なってもよい）
 // 1.24.0: 走行位置のアイコンが動き出す秒を、毎分00秒から一律30秒に変更（発車・到着とも、ダイヤ時刻の30秒後に動く）
@@ -78,7 +79,6 @@
   const TICK_MS = 5000;
   const WAIT_SEC = 10 * 60;                  // 始発駅の発車の何秒前から在線表示するか（10分）
   const MOVE_OFFSET_SEC = 30;                // アイコンの動き出しを遅らせる秒数（発車・到着とも一律30秒＝毎分30秒に動く）
-  const COMIKET_DAYRAW = "2025-12-31";       // コミケ臨ダイヤの曜日区分（この日だけ運転する臨時ダイヤ）
   const LS_ON = "tuts4_trainpos_on";
 
   const st = {
@@ -888,10 +888,40 @@
     return null;
   }
 
+  // 曜日区分の表記ゆれ（2025/12/31 など）をそろえる
+  function normDayRaw(s) { return String(s || "").trim().replace(/\//g, "-"); }
+  // その路線のダイヤにある「特定の日付だけ」の曜日区分（＝臨時ダイヤの日）の一覧
+  function specialDatesOf() {
+    const set = new Set();
+    (st.trains || []).forEach(tr => { const d = normDayRaw(tr.dayRaw); if (/^\d{4}-\d{2}-\d{2}$/.test(d)) set.add(d); });
+    return [...set].sort();
+  }
+  // 日付だけでは名前が分からない臨時ダイヤの表示名（無いものは「臨時ダイヤ（M/D）」）
+  const SPECIAL_LABELS = { "2025-12-31": "コミケ臨ダイヤ" };
+  // パターンのプルダウンを、今の路線にある臨時ダイヤで組み直す（路線のダイヤを読み直すたびに呼ぶ）
+  function refreshPatternOptions() {
+    st._specials = new Set(specialDatesOf());
+    if (st.pattern && st.pattern.startsWith("date:") && !st._specials.has(st.pattern.slice(5))) st.pattern = "auto";
+    const sel = document.getElementById("tpPattern");
+    if (!sel) return;
+    let html = `<option value="auto">自動（今日）</option><option value="weekday">平日ダイヤ</option><option value="holiday">土日祝ダイヤ</option>`;
+    st._specials.forEach(d => {
+      const p = d.split("-").map(Number);
+      html += `<option value="date:${d}">${SPECIAL_LABELS[d] || "臨時ダイヤ"}（${p[1]}/${p[2]}）</option>`;
+    });
+    sel.innerHTML = html;
+    sel.value = st.pattern;
+  }
+
   // その運行日（sd）にこの列車が運転するか。曜日区分の細かい指定は dayrule.js、無い時は平日／土休日だけで判定
   function runsOn(tr, sd, hol) {
-    // コミケ臨ダイヤのパターンでは、その日の臨時ダイヤだけを出す（平日ダイヤは出さない）
-    if (st.pattern === "comiket") return String(tr.dayRaw || "").trim().replace(/\//g, "-") === COMIKET_DAYRAW;
+    // 臨時ダイヤのパターン（プルダウンで選択中）：その日のダイヤだけを出す
+    if (st.pattern && st.pattern.startsWith("date:")) return normDayRaw(tr.dayRaw) === st.pattern.slice(5);
+    // その運行日に臨時ダイヤが使われている路線では、平日でも休日でも臨時ダイヤが使われているので、それだけを出す
+    if (st._specials && st._specials.size) {
+      const key = `${sd.getFullYear()}-${pad(sd.getMonth() + 1)}-${pad(sd.getDate())}`;
+      if (st._specials.has(key)) return normDayRaw(tr.dayRaw) === key;
+    }
     if (window.DayRule && tr.dayRaw) return DayRule.matches(tr.dayRaw, sd, st.holidaySet || new Set());
     return tr.dayType === "both" || tr.dayType === (hol ? "holiday" : "weekday");
   }
@@ -1032,8 +1062,11 @@
     const base = manual && st.manualDate ? st.manualDate : now; // 指定した日（無ければ今日）
     let date = base;
     if (sec < DAY_START) { date = new Date(base.getFullYear(), base.getMonth(), base.getDate() - 1); sec += 86400; }
-    // コミケ臨ダイヤ：表示する日を 2025-12-31 に固定する（時刻は今のまま）
-    if (st.pattern === "comiket") date = new Date(2025, 11, 31);
+    // 臨時ダイヤのパターン：表示する日をその日に固定する（時刻は今のまま）
+    if (st.pattern && st.pattern.startsWith("date:")) {
+      const p = st.pattern.slice(5).split("-").map(Number);
+      date = new Date(p[0], p[1] - 1, p[2]);
+    }
     // パターン指定（平日／土日祝）：その日がパターンに合わなければ、合ういちばん近い日で代用する
     if (st.pattern === "weekday" || st.pattern === "holiday") {
       const want = st.pattern === "holiday";
@@ -1318,7 +1351,6 @@
           <option value="auto">自動（今日）</option>
           <option value="weekday">平日ダイヤ</option>
           <option value="holiday">土日祝ダイヤ</option>
-          <option value="comiket">コミケ臨ダイヤ</option>
         </select>
         <span class="tp-clock">🕐 <span id="tpClock">--:--:--</span></span>
       </span>
@@ -1351,18 +1383,18 @@
       if (m) {
         st.manualDate = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
         st.manualSec = Number(m[4]) * 3600 + Number(m[5]) * 60;
-        // コミケ臨ダイヤの日を指定したら、パターンを自動でコミケ臨ダイヤにする（別の日にしたら「自動」に戻す）
+        // その日に臨時ダイヤがある路線では、パターンを自動でその臨時ダイヤにする（別の日にしたら「自動」に戻す）
         const sel = document.getElementById("tpPattern");
-        const isComiketDay = `${m[1]}-${m[2]}-${m[3]}` === COMIKET_DAYRAW;
-        if (isComiketDay && st.pattern !== "comiket") {
-          st.pattern = "comiket"; if (sel) sel.value = "comiket";
+        const dateStr = `${m[1]}-${m[2]}-${m[3]}`;
+        if (st._specials && st._specials.has(dateStr) && st.pattern !== "date:" + dateStr) {
+          st.pattern = "date:" + dateStr; if (sel) sel.value = st.pattern;
           // パターンを変えた時と同じく、ダイヤと乗車記録を取り直す
           st.force = true; st.trains = []; st.trainsRoute = ""; st.pending = null;
           renderLayer();
           ensureData().then(renderLayer);
           return;
         }
-        if (!isComiketDay && st.pattern === "comiket") { st.pattern = "auto"; if (sel) sel.value = "auto"; }
+        if (st.pattern && st.pattern.startsWith("date:") && st.pattern !== "date:" + dateStr) { st.pattern = "auto"; if (sel) sel.value = "auto"; }
         renderLayer();
       }
     };
@@ -1408,6 +1440,7 @@
     if (st.trainsRoute !== ctx.routeVal) {
       st.loading = true;
       st.trains = []; st.trainsRoute = "";
+      refreshPatternOptions();
       if (status) status.textContent = "ダイヤを読み込み中…";
       // 乗車記録・祝日・車両マスタは、列車の読み込みと同時に取りに行く（順番待ちしない）
       const others = Promise.all([getHolidaySet(), loadRides(force), loadMasters()]);
@@ -1416,6 +1449,7 @@
       }, force);
       if (seq !== st.loadSeq) return; // 路線が切り替わっていたら捨てる
       st.trains = trains; st.trainsRoute = ctx.routeVal;
+      refreshPatternOptions();
       if (status) status.textContent = "乗車記録を確認中…";
       await others;
       if (seq !== st.loadSeq) return;
