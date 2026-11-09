@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.33.4 -->
+<!-- version: 1.33.5 -->
+<!-- 1.33.5: trainpos.js 1.27.0（臨時列車と臨時ダイヤの区別） -->
 <!-- 1.33.4: trainpos.js 1.26.0（臨時ダイヤのパターンを汎用化。特定日付のダイヤがある路線ではプルダウンに出て、その日は自動でも臨時ダイヤだけ表示） -->
 <!-- 1.33.3: trainpos.js 1.25.0（パターンにコミケ臨ダイヤを追加。2025-12-31を指定すると自動で切り替わる） -->
 <!-- 1.33.2: trainpos.js 1.24.1（直通ラベルを避けて車両アイコンを外側へずらすのをやめた） -->
@@ -632,7 +633,7 @@
 <script src="dayrule.js?v=1.1.0"></script>
 <script src="timetable.js?v=1.19.1"></script>
 <script src="trainnavi.js?v=1.5.0"></script>
-<script src="trainpos.js?v=1.26.0"></script>
+<script src="trainpos.js?v=1.27.0"></script>
 <script>initNav("乗車路線マップ確認用");</script>
 <script>
 const username = checkLogin();

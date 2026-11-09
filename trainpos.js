@@ -1,4 +1,7 @@
-// trainpos.js v1.26.0
+// trainpos.js v1.27.0
+// 1.27.0: 臨時列車と臨時ダイヤを区別する。ダイヤ一覧の新列「臨時ダイヤ名」に値がある行だけが臨時ダイヤ（パターンのプルダウンにその名前で出る）。
+//         臨時ダイヤの日は「臨時ダイヤ＋その日の臨時列車（曜日区分が日付で、臨時ダイヤ名が空）」だけを表示して、定期（平日・土休日）は入れない。
+//         臨時ダイヤの日でなければ、臨時列車は通常ダイヤと一緒にその日だけ表示する（プルダウンには出さない）。
 // 1.26.0: 臨時ダイヤのパターンを汎用化。曜日区分が特定の日付（例「2025-12-31」）のダイヤがある路線では、パターンのプルダウンにその臨時ダイヤが出て、日付を指定すると自動で選ばれる。その運行日に臨時ダイヤが使われている路線では、平日・土休日の指定でも臨時ダイヤだけを表示する。路線を変えたら、その路線にある臨時ダイヤでプルダウンを組み直す
 // 1.25.0: パターンに「コミケ臨ダイヤ」を追加（曜日区分が「2025-12-31」のダイヤだけを表示する。その日は平日ダイヤより臨時ダイヤを優先）。日時の入力で 2025-12-31 を指定するとパターンが自動でコミケ臨ダイヤに切り替わり、別の日に変えると「自動」に戻る
 // 1.24.1: 直通先ピル（直通ラベル）を避けて車両アイコンを外側のレーンへずらすのをやめた（ピルとアイコンが重なってもよい）
@@ -240,6 +243,7 @@
         unban: listRow["運番"] || "",
         trainNumber: group[0]["列車番号"] || "",
         dayType, dayRaw, isExtra: isTrue(listRow["臨時"]),
+        extraDiaName: String(listRow["臨時ダイヤ名"] || "").trim(), // 値がある行＝臨時ダイヤ（空なら臨時列車か通常ダイヤ）
         sheetKey: `${listRow["ID"] || ""}_${listRow["運番"] || ""}_${dayRaw || dayType}`, // 同じ運用（＝同じ編成が走り続ける）の目印
         bounds: [...bounds], stops,
         cars: parseInt(listRow["両数"], 10) || 0, // ダイヤ一覧の「両数」列（スタフ・Train Naviの両数に使う）
@@ -321,7 +325,7 @@
 
   async function loadRouteTrains(ctx, onProgress, force) {
     const par = (ctx.parallelRoutes || []).filter(p => p.route && p.route !== ctx.routeVal);
-    const cacheKey = "tp_trains11_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
+    const cacheKey = "tp_trains12_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
     if (force) { try { localStorage.removeItem("tuts4_diagram_list_cache"); } catch (e) { /* ignore */ } }
 
     // マニフェスト（rev 一覧）。取れなければ null → 全部スプシから
@@ -888,40 +892,76 @@
     return null;
   }
 
-  // 曜日区分の表記ゆれ（2025/12/31 など）をそろえる
-  function normDayRaw(s) { return String(s || "").trim().replace(/\//g, "-"); }
-  // その路線のダイヤにある「特定の日付だけ」の曜日区分（＝臨時ダイヤの日）の一覧
-  function specialDatesOf() {
+  // ---------- 臨時ダイヤ／臨時列車 ----------
+  // 臨時ダイヤ＝ダイヤ一覧の「臨時ダイヤ名」に値がある行。臨時列車＝臨時ダイヤ名が空で、曜日区分が日付の列車
+  const DATE_LIKE = /\d{1,2}\s*[\/\-月]\s*\d{1,2}/;
+  function isTempTrain(tr) { return !tr.extraDiaName && DATE_LIKE.test(String(tr.dayRaw || "")); }
+  function ruleHit(tr, d) { return !!(window.DayRule && tr.dayRaw && DayRule.matches(tr.dayRaw, d, st.holidaySet || new Set())); }
+  const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  // この路線のダイヤにある臨時ダイヤの名前の一覧
+  function diaNamesOf() {
     const set = new Set();
-    (st.trains || []).forEach(tr => { const d = normDayRaw(tr.dayRaw); if (/^\d{4}-\d{2}-\d{2}$/.test(d)) set.add(d); });
-    return [...set].sort();
+    (st.trains || []).forEach(tr => { if (tr.extraDiaName) set.add(tr.extraDiaName); });
+    return [...set];
   }
-  // 日付だけでは名前が分からない臨時ダイヤの表示名（無いものは「臨時ダイヤ（M/D）」）
-  const SPECIAL_LABELS = { "2025-12-31": "コミケ臨ダイヤ" };
+  // その運行日（d）に走る臨時ダイヤの名前（いちど調べた日は覚えておく）
+  function activeDiasOn(d) {
+    if (st._actFor !== st.trains) { st._act = new Map(); st._actFor = st.trains; }
+    const key = ymd(d);
+    if (st._act.has(key)) return st._act.get(key);
+    const set = new Set();
+    (st.trains || []).forEach(tr => { if (tr.extraDiaName && ruleHit(tr, d)) set.add(tr.extraDiaName); });
+    st._act.set(key, set);
+    return set;
+  }
+  // 臨時ダイヤのパターンで表示する日：指定した日（無ければ今日）がその臨時ダイヤの日ならその日、違えば今日以降でいちばん近い運行日
+  function diaDateFor(name) {
+    const base0 = st.manualDate || new Date();
+    const base = new Date(base0.getFullYear(), base0.getMonth(), base0.getDate());
+    const key = name + "|" + ymd(base);
+    if (st._diaDates && st._diaDates.key === key && st._diaDates.f === st.trains) return st._diaDates.d;
+    let hit = null;
+    for (let i = 0; i <= 400 && !hit; i++) {
+      const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i);
+      if (activeDiasOn(d).has(name)) hit = d;
+    }
+    if (!hit) for (let i = 1; i <= 400 && !hit; i++) {
+      const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() - i);
+      if (activeDiasOn(d).has(name)) hit = d;
+    }
+    hit = hit || base;
+    st._diaDates = { key, f: st.trains, d: hit };
+    return hit;
+  }
   // パターンのプルダウンを、今の路線にある臨時ダイヤで組み直す（路線のダイヤを読み直すたびに呼ぶ）
   function refreshPatternOptions() {
-    st._specials = new Set(specialDatesOf());
-    if (st.pattern && st.pattern.startsWith("date:") && !st._specials.has(st.pattern.slice(5))) st.pattern = "auto";
+    const names = diaNamesOf();
+    if (st.pattern && st.pattern.startsWith("dia:") && !names.includes(st.pattern.slice(4))) st.pattern = "auto";
     const sel = document.getElementById("tpPattern");
     if (!sel) return;
+    const esc = s => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
     let html = `<option value="auto">自動（今日）</option><option value="weekday">平日ダイヤ</option><option value="holiday">土日祝ダイヤ</option>`;
-    st._specials.forEach(d => {
-      const p = d.split("-").map(Number);
-      html += `<option value="date:${d}">${SPECIAL_LABELS[d] || "臨時ダイヤ"}（${p[1]}/${p[2]}）</option>`;
-    });
+    names.forEach(n => { html += `<option value="dia:${esc(n)}">${esc(n)}</option>`; });
     sel.innerHTML = html;
     sel.value = st.pattern;
   }
 
   // その運行日（sd）にこの列車が運転するか。曜日区分の細かい指定は dayrule.js、無い時は平日／土休日だけで判定
   function runsOn(tr, sd, hol) {
-    // 臨時ダイヤのパターン（プルダウンで選択中）：その日のダイヤだけを出す
-    if (st.pattern && st.pattern.startsWith("date:")) return normDayRaw(tr.dayRaw) === st.pattern.slice(5);
-    // その運行日に臨時ダイヤが使われている路線では、平日でも休日でも臨時ダイヤが使われているので、それだけを出す
-    if (st._specials && st._specials.size) {
-      const key = `${sd.getFullYear()}-${pad(sd.getMonth() + 1)}-${pad(sd.getDate())}`;
-      if (st._specials.has(key)) return normDayRaw(tr.dayRaw) === key;
+    // 臨時ダイヤのパターン（プルダウンで選択中）：その臨時ダイヤ＋その日の臨時列車だけを出す（定期は出さない）
+    if (st.pattern && st.pattern.startsWith("dia:")) {
+      const name = st.pattern.slice(4);
+      if (tr.extraDiaName) return tr.extraDiaName === name && ymd(sd) === ymd(diaDateFor(name));
+      return isTempTrain(tr) && ruleHit(tr, sd);
     }
+    // その運行日に臨時ダイヤが走る路線では、定期（平日・土休日）は出さず、臨時ダイヤ＋その日の臨時列車だけを出す
+    const act = activeDiasOn(sd);
+    if (act.size) {
+      if (tr.extraDiaName) return act.has(tr.extraDiaName) && (!tr.dayRaw || ruleHit(tr, sd));
+      return isTempTrain(tr) && ruleHit(tr, sd);
+    }
+    // 臨時ダイヤの日でなければ、臨時ダイヤの列車は出さない（臨時列車は、下の曜日区分の判定でその日だけ通常ダイヤと一緒に出る）
+    if (tr.extraDiaName) return false;
     if (window.DayRule && tr.dayRaw) return DayRule.matches(tr.dayRaw, sd, st.holidaySet || new Set());
     return tr.dayType === "both" || tr.dayType === (hol ? "holiday" : "weekday");
   }
@@ -1063,10 +1103,7 @@
     let date = base;
     if (sec < DAY_START) { date = new Date(base.getFullYear(), base.getMonth(), base.getDate() - 1); sec += 86400; }
     // 臨時ダイヤのパターン：表示する日をその日に固定する（時刻は今のまま）
-    if (st.pattern && st.pattern.startsWith("date:")) {
-      const p = st.pattern.slice(5).split("-").map(Number);
-      date = new Date(p[0], p[1] - 1, p[2]);
-    }
+    if (st.pattern && st.pattern.startsWith("dia:")) date = diaDateFor(st.pattern.slice(4));
     // パターン指定（平日／土日祝）：その日がパターンに合わなければ、合ういちばん近い日で代用する
     if (st.pattern === "weekday" || st.pattern === "holiday") {
       const want = st.pattern === "holiday";
@@ -1383,18 +1420,19 @@
       if (m) {
         st.manualDate = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
         st.manualSec = Number(m[4]) * 3600 + Number(m[5]) * 60;
-        // その日に臨時ダイヤがある路線では、パターンを自動でその臨時ダイヤにする（別の日にしたら「自動」に戻す）
+        // その日に臨時ダイヤが走る路線では、パターンを自動でその臨時ダイヤにする（別の日にしたら「自動」に戻す）
         const sel = document.getElementById("tpPattern");
-        const dateStr = `${m[1]}-${m[2]}-${m[3]}`;
-        if (st._specials && st._specials.has(dateStr) && st.pattern !== "date:" + dateStr) {
-          st.pattern = "date:" + dateStr; if (sel) sel.value = st.pattern;
+        const act = activeDiasOn(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+        const cur = st.pattern && st.pattern.startsWith("dia:") ? st.pattern.slice(4) : "";
+        if (act.size && !(cur && act.has(cur))) {
+          st.pattern = "dia:" + [...act][0]; if (sel) sel.value = st.pattern;
           // パターンを変えた時と同じく、ダイヤと乗車記録を取り直す
           st.force = true; st.trains = []; st.trainsRoute = ""; st.pending = null;
           renderLayer();
           ensureData().then(renderLayer);
           return;
         }
-        if (st.pattern && st.pattern.startsWith("date:") && st.pattern !== "date:" + dateStr) { st.pattern = "auto"; if (sel) sel.value = "auto"; }
+        if (cur && !act.has(cur)) { st.pattern = "auto"; if (sel) sel.value = "auto"; }
         renderLayer();
       }
     };

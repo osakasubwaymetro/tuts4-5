@@ -1,4 +1,5 @@
-// version: 1.45.0
+// version: 1.46.0
+// 1.46.0: 臨時列車と臨時ダイヤを区別（ダイヤ一覧の新列「臨時ダイヤ名」）。臨時ダイヤの日は「臨時ダイヤ＋その日の臨時列車」だけを候補に出し、定期は出さない。臨時ダイヤの日でなければ、臨時ダイヤの行は出さず、臨時列車は通常ダイヤと一緒に出す
 // 1.45.0: 特定の日付だけの臨時ダイヤ（例：コミケ臨ダイヤ＝曜日区分「2025-12-31」）が運行日に使われている路線では、その日は平日・土休日ではなく、その臨時ダイヤだけを候補に出す（平日でも休日でも、使われているダイヤを優先）
 // 1.44.1: 走行位置からの入力で、エリア・区分が入らないことがあったのを修正（プルダウンの選択肢が出そろうのを待ってから入れる／複数エリアの会社は順に試す）
 // 1.44.0: 走行位置MAP（trainpos.js 1.22.0）のアイコン→「乗車記録を上げる」で来た時、路線・乗車駅・種別・行先・発車時刻（併結なら全部）をフォームに入れる
@@ -1838,23 +1839,27 @@ async function getDiagramCandidates(routeVal, boardingStation, todayIsWeekendTyp
   const companyVal = document.getElementById("country")?.value || "";
   const list = await getDiagramListForRoute(companyVal, routeVal);
   const routeRows = list.filter(d => d["会社"] === companyVal && diagramRowMatchesRoute(d, routeVal));
-  // 特定の日付だけの臨時ダイヤ（例：コミケ臨ダイヤ＝曜日区分「2025-12-31」）が運行日に使われている路線では、
-  // その日は平日・土休日ではなく臨時ダイヤが使われているので、それだけを対象にする
-  const specialRows = svcDate ? routeRows.filter(d => {
+  // 臨時ダイヤ（ダイヤ一覧の「臨時ダイヤ名」に値がある行）が運行日に走る路線では、その日は定期（平日・土休日）は走らないので、
+  // 「臨時ダイヤ＋その日の臨時列車（臨時ダイヤ名が空で、曜日区分が日付の列車）」だけを対象にする。
+  // 臨時ダイヤの日でなければ、臨時ダイヤの行は対象外にして、臨時列車は通常ダイヤと一緒にその日だけ対象にする
+  const ruleHitRow = d => {
     const dayType = String(d["曜日区分"] || "").trim();
     if (!dayType) return false;
-    const dm = dayType.match(/(\d{4})\s*(?:[-/]|年)\s*(\d{1,2})\s*(?:[-/]|月)\s*(\d{1,2})/);
-    if (!dm) return false;
-    if (Number(dm[1]) !== svcDate.getFullYear() || Number(dm[2]) !== svcDate.getMonth() + 1 || Number(dm[3]) !== svcDate.getDate()) return false;
-    return window.DayRule && holidaySet ? DayRule.matches(dayType, svcDate, holidaySet) : true;
-  }) : [];
-  const matches = specialRows.length ? specialRows : routeRows.filter(d => {
-    const dayType = String(d["曜日区分"] || "").trim();
-    if (!dayType) return true; // 未指定なら平日・土休日を問わず対象
-    if (window.DayRule && svcDate && holidaySet) return DayRule.matches(dayType, svcDate, holidaySet);
-    const isHolidayRow = dayType.includes("土") || dayType.includes("休");
-    return isHolidayRow === todayIsWeekendType;
-  });
+    return window.DayRule && holidaySet && svcDate ? DayRule.matches(dayType, svcDate, holidaySet) : false;
+  };
+  const diaNameOf = d => String(d["臨時ダイヤ名"] || "").trim();
+  const isTempTrainRow = d => !diaNameOf(d) && /\d{1,2}\s*[\/\-月]\s*\d{1,2}/.test(String(d["曜日区分"] || ""));
+  const activeDiaRows = svcDate ? routeRows.filter(d => diaNameOf(d) && ruleHitRow(d)) : [];
+  const matches = activeDiaRows.length
+    ? routeRows.filter(d => activeDiaRows.includes(d) || (isTempTrainRow(d) && ruleHitRow(d)))
+    : routeRows.filter(d => {
+        if (diaNameOf(d)) return false;
+        const dayType = String(d["曜日区分"] || "").trim();
+        if (!dayType) return true; // 未指定なら平日・土休日を問わず対象
+        if (window.DayRule && svcDate && holidaySet) return DayRule.matches(dayType, svcDate, holidaySet);
+        const isHolidayRow = dayType.includes("土") || dayType.includes("休");
+        return isHolidayRow === todayIsWeekendType;
+      });
 
   // 運番シートを同時に取る。結果は取れた順ではなく、ダイヤ一覧の順に並べる（毎回同じ並びになる）
   const perSheet = new Array(matches.length).fill(null);
