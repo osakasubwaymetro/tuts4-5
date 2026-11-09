@@ -1,4 +1,5 @@
-// version: 1.44.1
+// version: 1.45.0
+// 1.45.0: 特定の日付だけの臨時ダイヤ（例：コミケ臨ダイヤ＝曜日区分「2025-12-31」）が運行日に使われている路線では、その日は平日・土休日ではなく、その臨時ダイヤだけを候補に出す（平日でも休日でも、使われているダイヤを優先）
 // 1.44.1: 走行位置からの入力で、エリア・区分が入らないことがあったのを修正（プルダウンの選択肢が出そろうのを待ってから入れる／複数エリアの会社は順に試す）
 // 1.44.0: 走行位置MAP（trainpos.js 1.22.0）のアイコン→「乗車記録を上げる」で来た時、路線・乗車駅・種別・行先・発車時刻（併結なら全部）をフォームに入れる
 // 1.43.0: ダイヤを静的JSON（diagram_static.js）から読む。無い／壊れてたら従来どおりスプシから直接取る
@@ -1836,8 +1837,18 @@ function isFlaggedExtraGeneric(v) {
 async function getDiagramCandidates(routeVal, boardingStation, todayIsWeekendType, svcDate, holidaySet) {
   const companyVal = document.getElementById("country")?.value || "";
   const list = await getDiagramListForRoute(companyVal, routeVal);
-  const matches = list.filter(d => {
-    if (d["会社"] !== companyVal || !diagramRowMatchesRoute(d, routeVal)) return false;
+  const routeRows = list.filter(d => d["会社"] === companyVal && diagramRowMatchesRoute(d, routeVal));
+  // 特定の日付だけの臨時ダイヤ（例：コミケ臨ダイヤ＝曜日区分「2025-12-31」）が運行日に使われている路線では、
+  // その日は平日・土休日ではなく臨時ダイヤが使われているので、それだけを対象にする
+  const specialRows = svcDate ? routeRows.filter(d => {
+    const dayType = String(d["曜日区分"] || "").trim();
+    if (!dayType) return false;
+    const dm = dayType.match(/(\d{4})\s*(?:[-/]|年)\s*(\d{1,2})\s*(?:[-/]|月)\s*(\d{1,2})/);
+    if (!dm) return false;
+    if (Number(dm[1]) !== svcDate.getFullYear() || Number(dm[2]) !== svcDate.getMonth() + 1 || Number(dm[3]) !== svcDate.getDate()) return false;
+    return window.DayRule && holidaySet ? DayRule.matches(dayType, svcDate, holidaySet) : true;
+  }) : [];
+  const matches = specialRows.length ? specialRows : routeRows.filter(d => {
     const dayType = String(d["曜日区分"] || "").trim();
     if (!dayType) return true; // 未指定なら平日・土休日を問わず対象
     if (window.DayRule && svcDate && holidaySet) return DayRule.matches(dayType, svcDate, holidaySet);
