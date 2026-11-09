@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ダイヤJSONジェネレーター v1.0.0</title>
+<title>ダイヤJSONジェネレーター v1.2.0</title>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--tx:#1b1f24;--sub:#667;--bd:#d5d9df;--ac:#1f6feb;--ng:#c62828;--ok:#2e7d32;--wn:#b26a00}
 @media (prefers-color-scheme:dark){:root{--bg:#14171b;--card:#1d2127;--tx:#e6e8eb;--sub:#9aa3ad;--bd:#343b44;--ac:#5b9dff;--ng:#ff6b6b;--ok:#6fcf7a;--wn:#f0b050}}
@@ -23,12 +23,11 @@ progress{width:100%}
 </style>
 </head>
 <body>
-<h1>ダイヤJSONジェネレーター <span class="mut">v1.0.0</span></h1>
+<h1>ダイヤJSONジェネレーター <span class="mut">v1.2.0</span></h1>
 
 <div class="card" id="c1">
   <h2>1. 接続</h2>
   <div class="row">
-    <div><label>Worker のURL</label><input id="base" placeholder="https://tuts4-gen.xxx.workers.dev" style="width:100%"></div>
     <div><label>合言葉(このタブを閉じるまで保持)</label><input id="key" type="password" autocomplete="off" style="width:100%"></div>
     <div><button id="btnConn">接続テスト</button></div>
   </div>
@@ -66,6 +65,7 @@ progress{width:100%}
   <h2 style="margin-top:10px">ダイヤ(<span id="nDia"></span>件)</h2>
   <div class="scroll"><table id="tblDia"></table></div>
   <div class="row" style="margin-top:8px"><button id="btnConv">時刻を取得して変換</button><button class="sub" id="btnStop" disabled>中止</button></div>
+  <div id="convMsg" class="ng"></div>
   <progress id="prog" value="0" max="1" hidden></progress>
 </div>
 
@@ -82,10 +82,10 @@ progress{width:100%}
 
 <div class="card"><h2>ログ</h2><div id="log"></div></div>
 
-<script src="generator_core.js?v=1.0.0"></script>
+<script src="generator_core.js?v=1.1.0"></script>
 <script>
 "use strict";
-const VER="1.0.0";
+const VER="1.2.0";
 const MASTER_SHEET="1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s";
 const ICON_BASE="https://img.elesite-next.com";
 const $=id=>document.getElementById(id);
@@ -108,7 +108,8 @@ async function cget(k){try{const d=await idb();return await new Promise(r=>{cons
 async function cset(k,v){try{const d=await idb();d.transaction("c","readwrite").objectStore("c").put(v,k);}catch(e){}}
 
 /* ---------- Worker API ---------- */
-const baseUrl=()=>$("base").value.trim().replace(/\/+$/,"");
+const WORKER_URL="https://tuts4-gen.osakasubwaymetro.workers.dev";
+const baseUrl=()=>WORKER_URL;
 const keyVal=()=>$("key").value;
 async function api(path,{method="GET",body=null,auth=true}={}){
   const h={}; if(auth)h["X-Tuts4-Key"]=keyVal(); if(body)h["Content-Type"]="application/json";
@@ -122,9 +123,10 @@ const ele=(ep,body)=>api("/api/ele/"+ep,{method:"POST",body});
 async function eleRetry(ep,body,n=3){let last;for(let i=0;i<n;i++){try{return await ele(ep,body);}catch(e){last=e;if(e.code==="unauthorized"||e.status===400)throw e;await sleep(1500*(i+1));}}throw last;}
 
 /* ---------- 1. 接続 ---------- */
-$("base").value=lsGet("gen_base")||""; $("key").value=ssGet("gen_key")||"";
+$("key").value=ssGet("gen_key")||"";
+$("key").addEventListener("keydown",e=>{if(e.key==="Enter")$("btnConn").click();});
 $("btnConn").onclick=async()=>{
-  lsSet("gen_base",baseUrl()); ssSet("gen_key",keyVal());
+  ssSet("gen_key",keyVal());
   try{const m=await api("/api/manifest");S.manifest=m;$("connMsg").innerHTML=`<span class="ok">接続OK</span> 路線ファイル ${m.files.length} 件 / generated ${esc(m.generated)}`;log("接続OK");}
   catch(e){$("connMsg").innerHTML=`<span class="ng">${esc(e.message)}</span>`;log("接続NG: "+e.message);}
 };
@@ -224,7 +226,8 @@ $("fileSup").onchange=async e=>{
 async function loadMaster(){
   if(S.master)return S.master;
   let rows=null;
-  try{const r=await fetch(`https://opensheet.elk.sh/${MASTER_SHEET}/station`);const j=await r.json();if(Array.isArray(j)){rows=j;lsSet("gen_master",JSON.stringify(j));}}catch(e){}
+  try{const r=await fetch(baseUrl()+"/master/stations.json",{cache:"no-cache"});const j=await r.json();if(r.ok&&Array.isArray(j)&&j.length){rows=j;lsSet("gen_master",JSON.stringify(j));log(`マスタ: Worker から ${j.length} 件`);}}catch(e){}
+  if(!rows)try{const r=await fetch(`https://opensheet.elk.sh/${MASTER_SHEET}/station`);const j=await r.json();if(Array.isArray(j)){rows=j;lsSet("gen_master",JSON.stringify(j));}}catch(e){}
   if(!rows){try{rows=JSON.parse(lsGet("gen_master")||"null");if(rows)log("マスタは前回の控えを使用");}catch(e){}}
   if(!rows)throw new Error("stationマスタを取得できません");
   const m={};for(const r of rows){const rt=r["路線"],st=r["駅名"];if(!rt||!st||String(st).startsWith("via_"))continue;(m[rt]=m[rt]||[]).push(st);}
@@ -234,11 +237,16 @@ async function loadMaster(){
 /* ---------- 変換(時刻取得) ---------- */
 $("btnStop").onclick=()=>{S.stopFlag=true;};
 $("btnConv").onclick=async()=>{
-  if(!baseUrl()||!keyVal()){alert("接続の欄を入力してください");return;}
+  const cm=$("convMsg");cm.textContent="";
+  const stop=m=>{cm.textContent=m;log("入力不足: "+m);try{alert(m)}catch(e){}cm.scrollIntoView({block:"center"});};
+  if(!baseUrl()||!keyVal()){stop("接続の欄(合言葉)を入力してください");return;}
   const sup=readSup();
   const targets=sup.diagrams.filter(d=>!d.skip);
   const bad=targets.filter(d=>{const g=sup.groups.find(g=>g.shotei===d.shotei)||{};return !(d.prefix||g.prefix)||!(d.company||g.company);});
-  if(bad.length){alert(`接頭辞または会社が未入力のダイヤがあります(運用ID ${bad.slice(0,5).map(d=>d.unyou_id).join(",")} ほか)`);return;}
+  if(!targets.length){stop("変換するダイヤが選ばれていません");return;}
+  if(bad.length){const sh=[...new Set(bad.map(d=>d.shotei))];stop(`ID接頭辞または会社が未入力です。所定ごとの設定を埋めてください(未入力の所定: ${sh.join("、")} / ${bad.length}件)`);return;}
+  const miss=[];if(!(sup.defaults.weekday))miss.push("曜日区分");if(!(sup.defaults.start_date))miss.push("適用開始日");if(!(sup.defaults.rinji))miss.push("臨時");
+  if(miss.length){stop(`補足情報の ${miss.join("、")} が空です`);return;}
   $("btnConv").disabled=true;$("btnStop").disabled=false;S.stopFlag=false;$("prog").hidden=false;
   let master;try{master=await loadMaster();}catch(e){log(e.message);alert(e.message);$("btnConv").disabled=false;$("btnStop").disabled=true;return;}
   S.results=[];const rid=sup.route_id,date=sup.date;

@@ -1,5 +1,7 @@
 // diagram_static.js
-// version: 1.0.2
+// version: 1.1.0
+// 1.1.0: 取得先を複数持てるようにした。Cloudflare Worker（tuts4-gen）を先に試し、だめなら従来の tuts4-data.pages.dev に戻す。
+//        新しく getManifest(force) / fetchRoute(entry) を公開（trainpos.js もここを使う＝読み込み処理を一本化）。
 // 1.0.2: 所要時間・失敗を画面の左下にも小さく出す（スマホ用。タップで消える）
 // 1.0.1: 取得にかかった時間とサイズをコンソールに出す（[DiagramStatic]）
 // 1.0.0: 新規作成。ダイヤ（ダイヤ一覧＋運番シート）を、Cloudflare Pages の静的JSONから読む共通部品。
@@ -8,7 +10,11 @@
 //        window.DiagramStatic.sheet(ID, 運番)       → 運用シートの行（{列車番号,駅名,発車時刻,行先,種別}の配列）or null
 (function () {
   "use strict";
-  const BASE = "https://tuts4-data.pages.dev/";
+  // 先頭ほど優先。1つ目が落ちていても2つ目で読めるようにしてある
+  const BASES = [
+    "https://tuts4-gen.osakasubwaymetro.workers.dev/",
+    "https://tuts4-data.pages.dev/"
+  ];
   const TIMEOUT_MS = 15000;
   const MANIFEST_MEMO_MS = 60 * 1000;
   const COLS = ["列車番号", "駅名", "発車時刻", "行先", "種別"];
@@ -48,22 +54,60 @@
     } finally { if (timer) clearTimeout(timer); }
   }
 
-  function getManifest() {
-    if (manifestP && Date.now() - manifestAt < MANIFEST_MEMO_MS) return manifestP;
-    manifestAt = Date.now();
-    manifestP = getJson(BASE + "manifest.json?t=" + Date.now(), { cache: "no-cache" }).then(m => {
-      if (!m || !Array.isArray(m.files)) throw new Error("bad manifest");
-      return m;
+  // 取得先ごとのマニフェスト（1分だけ覚える）
+  const manifestMemo = new Map(); // base → { p, at }
+  function manifestOf(base, force) {
+    const m = manifestMemo.get(base);
+    if (m && !force && Date.now() - m.at < MANIFEST_MEMO_MS) return m.p;
+    const p = getJson(base + "manifest.json?t=" + Date.now(), { cache: "no-cache" }).then(j => {
+      if (!j || !Array.isArray(j.files)) throw new Error("bad manifest");
+      j.files.forEach(f => { if (f && typeof f === "object") f._base = base; });
+      return j;
     });
-    manifestP.catch(() => { manifestP = null; });
-    return manifestP;
+    manifestMemo.set(base, { p, at: Date.now() });
+    p.catch(() => { const cur = manifestMemo.get(base); if (cur && cur.p === p) manifestMemo.delete(base); });
+    return p;
+  }
+
+  // 取得先を順に試して、最初に読めたマニフェストを返す（全部だめなら例外）
+  async function getManifest(force) {
+    let last = null;
+    for (const base of BASES) {
+      try { return await manifestOf(base, force); }
+      catch (e) { last = e; diagShow(`[DiagramStatic] manifest失敗(${hostOf(base)}): ${e && e.message}`); }
+    }
+    throw last || new Error("no manifest");
+  }
+  const hostOf = u => { try { return new URL(u).host; } catch (e) { return u; } };
+
+  function checkShape(data) {
+    if (!data || !Array.isArray(data.list) || !data.sheets || typeof data.sheets !== "object") throw new Error("bad shape");
+  }
+
+  // 1路線ぶんの生データ { list, sheets }。entry の取得先を先に、だめなら他の取得先の同じ路線を試す。全部だめなら例外
+  async function fetchRoute(entry) {
+    const t0 = performance.now();
+    const order = [entry._base, ...BASES.filter(b => b !== entry._base)].filter(Boolean);
+    let last = null;
+    for (const base of order) {
+      try {
+        let e = entry;
+        if (base !== entry._base) {
+          const m = await manifestOf(base);
+          e = m.files.find(f => f && f.file && f.route === entry.route && f.company === entry.company);
+          if (!e) continue;
+        }
+        const data = await getJson(base + e.file + "?v=" + encodeURIComponent(e.rev || ""));
+        checkShape(data);
+        diagShow(`[DiagramStatic] ${entry.route} 取得 ${Math.round(performance.now() - t0)}ms (${hostOf(base)})`);
+        return data;
+      } catch (err) { last = err; diagShow(`[DiagramStatic] ${entry.route} 失敗(${hostOf(base)}): ${err && err.message}`); }
+    }
+    throw last || new Error("route not found");
   }
 
   async function loadRoute(entry) {
-    const t0 = performance.now();
-    const data = await getJson(BASE + entry.file + "?v=" + encodeURIComponent(entry.rev || ""));
-    diagShow(`[DiagramStatic] ${entry.route} 取得 ${Math.round(performance.now() - t0)}ms`);
-    if (!data || !Array.isArray(data.list) || !data.sheets || typeof data.sheets !== "object") throw new Error("bad shape");
+    const data = await fetchRoute(entry);
     const local = new Map();
     for (const d of data.list) {
       if (!d || typeof d !== "object") throw new Error("bad list row");
@@ -100,6 +144,8 @@
         return null;
       }
     },
+    getManifest,
+    fetchRoute,
     sheet(id, unban) { return sheets.get(`${id || ""}_${unban || ""}`) || null; }
   };
 })();

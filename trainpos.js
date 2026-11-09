@@ -1,4 +1,5 @@
-// trainpos.js v1.27.0
+// trainpos.js v1.28.0
+// 1.28.0: 静的JSONの読み込みを diagram_static.js 1.1.0 に一本化（Cloudflare Worker を先に、だめなら pages.dev）。diagram_static.js が無い時は従来どおり pages.dev だけ。
 // 1.27.0: 臨時列車と臨時ダイヤを区別する。ダイヤ一覧の新列「臨時ダイヤ名」に値がある行だけが臨時ダイヤ（パターンのプルダウンにその名前で出る）。
 //         臨時ダイヤの日は「臨時ダイヤ＋その日の臨時列車（曜日区分が日付で、臨時ダイヤ名が空）」だけを表示して、定期（平日・土休日）は入れない。
 //         臨時ダイヤの日でなければ、臨時列車は通常ダイヤと一緒にその日だけ表示する（プルダウンには出さない）。
@@ -271,6 +272,7 @@
   }
 
   function getManifest(force) {
+    if (window.DiagramStatic && window.DiagramStatic.getManifest) return window.DiagramStatic.getManifest(!!force);
     if (!manifestP || force) {
       manifestP = fetchJsonTimeout(STATIC_BASE + "manifest.json?t=" + Date.now(), { cache: "no-cache" }).then(m => {
         if (!m || !Array.isArray(m.files)) throw new Error("bad manifest");
@@ -283,7 +285,9 @@
 
   // 1路線ぶんの静的データ → { list, sheets(オブジェクト行に変換済み), rev }。壊れてたら例外
   async function loadStaticRoute(entry) {
-    const data = await fetchJsonTimeout(STATIC_BASE + entry.file + "?v=" + encodeURIComponent(entry.rev || ""));
+    const data = (window.DiagramStatic && window.DiagramStatic.fetchRoute)
+      ? await window.DiagramStatic.fetchRoute(entry)
+      : await fetchJsonTimeout(STATIC_BASE + entry.file + "?v=" + encodeURIComponent(entry.rev || ""));
     if (!data || !Array.isArray(data.list) || !data.sheets || typeof data.sheets !== "object") throw new Error("bad shape");
     const sheets = {};
     for (const d of data.list) {

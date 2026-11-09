@@ -1,4 +1,4 @@
-/* generator_core.js v1.0.0
+/* generator_core.js v1.1.0
  * elesite の生レスポンス → tuts4 静的JSON の変換ロジック(fetch_saikyo.py / convert.py の JS 移植)。
  * ブラウザ(window.GenCore)と Node(module.exports)の両方で使える。DOM・通信には触らない。
  */
@@ -118,29 +118,45 @@
   }
 
   /**
-   * 路線帰属。stationsByRoute: { 路線名: [駅名,...] } (マスタ station シートから作る)。
-   * 判定: その路線にしか無い駅を通る、または その路線の駅を連続2駅以上通る → 帰属。
+   * 路線帰属(1.1.0)。stationsByRoute: { 路線名: [駅名,...] } (マスタ station シートから。並びは路線の駅順)。
+   * 列車が通った「隣り合う2駅(区間)」のうち、その路線の駅順でも隣り合っている区間(上り下りは同じ区間として数える)を、その路線が説明できる区間とみなす。
+   * 全区間を少ない路線で説明できるように貪欲に選ぶ(同点なら駅数の少ない=専用の路線を優先)。
+   * 新しく説明できる区間が2つ未満の路線は採らない(境界駅だけ触れた路線を除くため)。
    * 並びは最初に現れた順。unknown = どの路線にも無い駅。
    */
   function attributeRoutes(stations, stationsByRoute) {
-    const sets = {}; const owners = {};
-    for (const [r, list] of Object.entries(stationsByRoute)) {
-      sets[r] = new Set(list);
-      for (const s of list) (owners[s] = owners[s] || new Set()).add(r);
-    }
-    const seq = []; // 連続重複を除去
+    const seq = [];
     for (const s of stations) if (seq[seq.length - 1] !== s) seq.push(s);
-    const first = {};
-    seq.forEach((s, i) => {
-      for (const r of (owners[s] || [])) {
-        const uniq = owners[s].size === 1;
-        const next = seq[i + 1], prev = seq[i - 1];
-        const consec = (next && sets[r].has(next)) || (prev && sets[r].has(prev));
-        if (uniq || consec) { if (!(r in first)) first[r] = i; }
+    const known = new Set();
+    const cover = {}; // 路線 → 説明できる区間(index)の集合
+    const size = {};
+    for (const [r, list] of Object.entries(stationsByRoute)) {
+      size[r] = list.length;
+      const adj = new Set();
+      for (let i = 0; i + 1 < list.length; i++) { adj.add(list[i] + "\t" + list[i + 1]); adj.add(list[i + 1] + "\t" + list[i]); }
+      list.forEach(x => known.add(x));
+      const cs = new Set();
+      for (let i = 0; i + 1 < seq.length; i++) if (adj.has(seq[i] + "\t" + seq[i + 1])) cs.add(seq[i] < seq[i + 1] ? seq[i] + "\t" + seq[i + 1] : seq[i + 1] + "\t" + seq[i]);
+      if (cs.size) cover[r] = cs;
+    }
+    const unknown = [...new Set(seq.filter(s => !known.has(s)))];
+    const covered = new Set(), chosen = [];
+    for (const minGain of [2, 1]) {
+      if (chosen.length) break;
+      for (;;) {
+        let best = null, bg = 0;
+        for (const r of Object.keys(cover)) {
+          if (chosen.includes(r)) continue;
+          let g = 0; for (const i of cover[r]) if (!covered.has(i)) g++;
+          if (g < minGain) continue;
+          if (g > bg || (g === bg && best !== null && size[r] < size[best])) { best = r; bg = g; }
+        }
+        if (!best) break;
+        chosen.push(best); for (const i of cover[best]) covered.add(i);
       }
-    });
-    const routes = Object.keys(first).sort((a, b) => first[a] - first[b]);
-    const unknown = [...new Set(seq.filter(s => !owners[s]))];
+    }
+    const firstOf = r => { for (let i = 0; i + 1 < seq.length; i++) { const k = seq[i] < seq[i + 1] ? seq[i] + "\t" + seq[i + 1] : seq[i + 1] + "\t" + seq[i]; if (cover[r].has(k)) return i; } return 1e9; };
+    const routes = chosen.sort((a, b) => firstOf(a) - firstOf(b));
     return { routes, unknown };
   }
 
