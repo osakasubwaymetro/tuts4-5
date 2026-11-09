@@ -1,4 +1,5 @@
-// trainpos.js v1.24.0
+// trainpos.js v1.24.1
+// 1.24.1: 直通先ピル（直通ラベル）を避けて車両アイコンを外側のレーンへずらすのをやめた（ピルとアイコンが重なってもよい）
 // 1.24.0: 走行位置のアイコンが動き出す秒を、毎分00秒から一律30秒に変更（発車・到着とも、ダイヤ時刻の30秒後に動く）
 // 1.23.1: 山手線と京浜東北線のように「別の路線のダイヤ」から来た列車は、並走区間で発車時刻が同じでも併結しない（同じ路線のダイヤ同士だけ併結する）
 // 1.23.0: ①並走路線から取った列車が、この路線のダイヤにも同じ列番であると二重に出る（単一列番でアイコンが2つ並ぶ）のを1本にまとめる
@@ -1174,8 +1175,6 @@
     scroll.appendChild(layer);
 
     const slots = { left: [], right: [] }; // 同じ側で近い列車を横にずらすための記録
-    const scrollRect = scroll.getBoundingClientRect();
-    const pills = [...scroll.querySelectorAll(".via-pill")].map(b => { const r = b.getBoundingClientRect(); return { l: r.left - scrollRect.left, r: r.right - scrollRect.left, t: r.top - scrollRect.top, b: r.bottom - scrollRect.top }; });
 
     all.forEach(p => {
       const side = p.sign < 0 ? "left" : "right";
@@ -1184,13 +1183,6 @@
       // 線から離す距離：右側は線のすぐ脇、左側は並走線の本数ぶんだけ外へ（並走線に重ならないように）
       const nPar = side === "left" ? Math.max(0, ...(p.kind === "ride" ? [p.r.row] : [p.a.pos.row0, p.a.pos.row1]).map(r => rows[r] ? rows[r].querySelectorAll(".parallel-line").length : 0)) : 0;
       const baseOff = 10 + 12 * nPar;
-      // 直通先ピルと重なる時は、外側のレーンへずらす（最大3つ先まで）
-      const pillHit = kk => {
-        const o = baseOff + 66 * kk, W = scrollRect.width;
-        const x0 = side === "left" ? W / 2 - o - 64 : W / 2 + o, x1 = x0 + 64;
-        return pills.some(b => x1 > b.l && x0 < b.r && p.y + p.h / 2 > b.t && p.y - p.h / 2 < b.b);
-      };
-      for (let kk = k; kk <= k + 3; kk++) { if (!pillHit(kk)) { k = kk; break; } }
       slots[side].push({ y: p.y, k, h: p.h });
       const off = baseOff + 66 * k;
       const el = document.createElement("div");
