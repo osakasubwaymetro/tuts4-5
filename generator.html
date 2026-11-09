@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ダイヤJSONジェネレーター v1.0.0</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1b1f24;--sub:#667;--bd:#d5d9df;--ac:#1f6feb;--ng:#c62828;--ok:#2e7d32;--wn:#b26a00}
+@media (prefers-color-scheme:dark){:root{--bg:#14171b;--card:#1d2127;--tx:#e6e8eb;--sub:#9aa3ad;--bd:#343b44;--ac:#5b9dff;--ng:#ff6b6b;--ok:#6fcf7a;--wn:#f0b050}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.5 system-ui,sans-serif;padding:12px 16px 80px}
+h1{font-size:18px;margin:4px 0 12px}h2{font-size:15px;margin:0 0 8px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px;margin-bottom:12px}
+label{display:block;font-size:12px;color:var(--sub);margin:6px 0 2px}
+input,select,button,textarea{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:6px 8px;max-width:100%}
+input[type=checkbox]{padding:0}
+button{background:var(--ac);color:#fff;border:0;padding:8px 14px;cursor:pointer}button.sub{background:var(--bg);color:var(--tx);border:1px solid var(--bd)}button:disabled{opacity:.5}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}.row>div{flex:1 1 150px}
+table{border-collapse:collapse;width:100%;font-size:12px}th,td{border-bottom:1px solid var(--bd);padding:4px;text-align:left;vertical-align:top}
+td input{width:100%;min-width:60px}.scroll{overflow-x:auto}
+.ok{color:var(--ok)}.ng{color:var(--ng)}.wn{color:var(--wn)}.mut{color:var(--sub);font-size:12px}
+#log{white-space:pre-wrap;font:12px/1.4 ui-monospace,monospace;max-height:200px;overflow:auto;background:var(--bg);border-radius:6px;padding:6px}
+progress{width:100%}
+</style>
+</head>
+<body>
+<h1>ダイヤJSONジェネレーター <span class="mut">v1.0.0</span></h1>
+
+<div class="card" id="c1">
+  <h2>1. 接続</h2>
+  <div class="row">
+    <div><label>Worker のURL</label><input id="base" placeholder="https://tuts4-gen.xxx.workers.dev" style="width:100%"></div>
+    <div><label>合言葉(このタブを閉じるまで保持)</label><input id="key" type="password" autocomplete="off" style="width:100%"></div>
+    <div><button id="btnConn">接続テスト</button></div>
+  </div>
+  <div id="connMsg" class="mut"></div>
+</div>
+
+<div class="card" id="c2">
+  <h2>2. 路線と日付</h2>
+  <div class="row">
+    <div><label>エリア</label><select id="selArea"></select></div>
+    <div><label>種別</label><select id="selKind"></select></div>
+    <div><label>会社</label><select id="selComp"></select></div>
+    <div><label>路線</label><select id="selRosen"></select></div>
+    <div><label>日付</label><input type="date" id="date"></div>
+  </div>
+  <div class="mut" id="rosenInfo"></div>
+  <div class="row" style="margin-top:8px">
+    <button id="btnList">ダイヤ一覧を取得</button>
+    <button class="sub" id="btnImport">補足ファイルを読み込む</button>
+    <button class="sub" id="btnExport">補足ファイルを書き出す</button>
+    <input type="file" id="fileSup" accept=".json" hidden>
+  </div>
+</div>
+
+<div class="card" id="c3" hidden>
+  <h2>3. 補足情報 <span class="mut" id="patName"></span></h2>
+  <div class="row">
+    <div><label>曜日区分</label><input id="dWeekday"></div>
+    <div><label>臨時(TRUE/FALSE)</label><input id="dRinji"></div>
+    <div><label>適用開始日</label><input id="dStart"></div>
+    <div><label>臨時ダイヤ名(臨時ダイヤの時だけ)</label><input id="dPat"></div>
+  </div>
+  <h2 style="margin-top:10px">所定ごとの設定</h2>
+  <div class="scroll"><table id="tblGroups"></table></div>
+  <h2 style="margin-top:10px">ダイヤ(<span id="nDia"></span>件)</h2>
+  <div class="scroll"><table id="tblDia"></table></div>
+  <div class="row" style="margin-top:8px"><button id="btnConv">時刻を取得して変換</button><button class="sub" id="btnStop" disabled>中止</button></div>
+  <progress id="prog" value="0" max="1" hidden></progress>
+</div>
+
+<div class="card" id="c4" hidden>
+  <h2>4. プレビュー</h2>
+  <div class="scroll"><table id="tblPrev"></table></div>
+</div>
+
+<div class="card" id="c5" hidden>
+  <h2>5. 保存</h2>
+  <div class="row"><button id="btnDry">保存せず確認(dry run)</button><button id="btnSave" disabled>保存する</button></div>
+  <div id="saveRes"></div>
+</div>
+
+<div class="card"><h2>ログ</h2><div id="log"></div></div>
+
+<script src="generator_core.js?v=1.0.0"></script>
+<script>
+"use strict";
+const VER="1.0.0";
+const MASTER_SHEET="1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s";
+const ICON_BASE="https://img.elesite-next.com";
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const log=m=>{const l=$("log");l.textContent+=`[${new Date().toLocaleTimeString()}] ${m}\n`;l.scrollTop=l.scrollHeight;};
+const lsGet=k=>{try{return localStorage.getItem(k)}catch(e){return null}};
+const lsSet=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
+const ssGet=k=>{try{return sessionStorage.getItem(k)}catch(e){return null}};
+const ssSet=(k,v)=>{try{sessionStorage.setItem(k,v)}catch(e){}};
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const jstDate=()=>new Date(Date.now()+9*3600e3).toISOString().slice(0,10);
+
+/* ---------- 状態 ---------- */
+const S={rosenTree:null,rosen:null,sup:null,results:[],manifest:null,stopFlag:false,master:null,lastPlan:null};
+
+/* ---------- IndexedDB キャッシュ(時刻・流れ) ---------- */
+let _db=null;
+function idb(){return _db||(_db=new Promise((res,rej)=>{try{const q=indexedDB.open("tuts4_gen",1);q.onupgradeneeded=()=>q.result.createObjectStore("c");q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error);}catch(e){rej(e)}}));}
+async function cget(k){try{const d=await idb();return await new Promise(r=>{const q=d.transaction("c").objectStore("c").get(k);q.onsuccess=()=>r(q.result);q.onerror=()=>r(undefined);});}catch(e){return undefined}}
+async function cset(k,v){try{const d=await idb();d.transaction("c","readwrite").objectStore("c").put(v,k);}catch(e){}}
+
+/* ---------- Worker API ---------- */
+const baseUrl=()=>$("base").value.trim().replace(/\/+$/,"");
+const keyVal=()=>$("key").value;
+async function api(path,{method="GET",body=null,auth=true}={}){
+  const h={}; if(auth)h["X-Tuts4-Key"]=keyVal(); if(body)h["Content-Type"]="application/json";
+  let r; try{r=await fetch(baseUrl()+path,{method,headers:h,body:body?JSON.stringify(body):undefined});}
+  catch(e){throw {code:"network",message:"Workerに繋がりません: "+e.message};}
+  let j=null; try{j=await r.json();}catch(e){}
+  if(!r.ok||(j&&j.ok===false)){const er=(j&&j.error)||{};throw {status:r.status,code:er.code||("http"+r.status),message:er.message||("HTTP "+r.status),details:er.details};}
+  return j;
+}
+const ele=(ep,body)=>api("/api/ele/"+ep,{method:"POST",body});
+async function eleRetry(ep,body,n=3){let last;for(let i=0;i<n;i++){try{return await ele(ep,body);}catch(e){last=e;if(e.code==="unauthorized"||e.status===400)throw e;await sleep(1500*(i+1));}}throw last;}
+
+/* ---------- 1. 接続 ---------- */
+$("base").value=lsGet("gen_base")||""; $("key").value=ssGet("gen_key")||"";
+$("btnConn").onclick=async()=>{
+  lsSet("gen_base",baseUrl()); ssSet("gen_key",keyVal());
+  try{const m=await api("/api/manifest");S.manifest=m;$("connMsg").innerHTML=`<span class="ok">接続OK</span> 路線ファイル ${m.files.length} 件 / generated ${esc(m.generated)}`;log("接続OK");}
+  catch(e){$("connMsg").innerHTML=`<span class="ng">${esc(e.message)}</span>`;log("接続NG: "+e.message);}
+};
+
+/* ---------- 2. 路線選択 ---------- */
+function fill(sel,arr){sel.innerHTML=arr.map(a=>`<option>${esc(a)}</option>`).join("");}
+async function loadRosen(){
+  const r=await fetch("rosen_list.json");S.rosenTree=await r.json();
+  fill($("selArea"),Object.keys(S.rosenTree));onArea();
+}
+function onArea(){const t=S.rosenTree[$("selArea").value]||{};fill($("selKind"),Object.keys(t));onKind();}
+function onKind(){const t=(S.rosenTree[$("selArea").value]||{})[$("selKind").value]||{};fill($("selComp"),Object.keys(t));onComp();}
+function onComp(){const l=(((S.rosenTree[$("selArea").value]||{})[$("selKind").value]||{})[$("selComp").value])||[];
+  $("selRosen").innerHTML=l.map((x,i)=>`<option value="${i}">${esc(x.rosen_name)}</option>`).join("");onRosen();}
+function onRosen(){const l=(((S.rosenTree[$("selArea").value]||{})[$("selKind").value]||{})[$("selComp").value])||[];
+  S.rosen=l[+$("selRosen").value]||null;
+  $("rosenInfo").textContent=S.rosen?`rosen_code=${S.rosen.rosen_code} / route_id=${S.rosen.route_id}`+(S.rosen.concat_route_ids?` / 連結 ${S.rosen.concat_route_ids.join(",")}`:""):"";}
+$("selArea").onchange=onArea;$("selKind").onchange=onKind;$("selComp").onchange=onComp;$("selRosen").onchange=onRosen;
+$("date").value=lsGet("gen_date")||jstDate();
+
+/* ---------- 補足情報(make_supplement.py の移植) ---------- */
+function deriveDefaults(name,date){
+  let start="",base=name||"";const m=/#(\d{4})(\d{2})(\d{2})\s*$/.exec(base);
+  if(m){start=`${m[1]}-${m[2]}-${m[3]}`;base=base.slice(0,m.index);}
+  let weekday,rinji;
+  if(base.includes("平日")){weekday="平日";rinji="FALSE";}
+  else if(base.includes("休日")||base.includes("土休")){weekday="土休日";rinji="FALSE";}
+  else{weekday=date;rinji="TRUE";}
+  return {weekday,rinji,start_date:start};
+}
+const pyQuote=p=>encodeURIComponent(p).replace(/%2F/g,"/").replace(/[!'()*]/g,c=>"%"+c.charCodeAt(0).toString(16).toUpperCase());
+const iconUrls=l=>(l||[]).map(p=>ICON_BASE+pyQuote(p)).join("\n");
+
+$("btnList").onclick=async()=>{
+  if(!S.rosen){alert("路線を選んでください");return;}
+  const date=$("date").value;lsSet("gen_date",date);
+  $("btnList").disabled=true;
+  try{
+    const rc=S.rosen.rosen_code,rid=S.rosen.route_id;
+    log(`パターン取得: ${rc} ${date}`);
+    const pat=await ele("get_today_dia_pattern",{rosen_code:rc,select_date:date});
+    log(`パターン: ${pat.name} (day_id=${pat.day_id})`);
+    const table=await ele("get_unyoutable",{rosen_code:rc,route_id:rid,day_id:pat.day_id,select_date:date});
+    const groups=[],diagrams=[],seen=new Set();
+    for(const b of (table.unyou_table||[])){
+      const sh=b.shotei||"";
+      if(!groups.some(g=>g.shotei===sh))groups.push({shotei:sh,prefix:"",company:"",cars:""});
+      for(const g of (b.unyou_group||[])){
+        if(seen.has(g.unyou_id))continue;seen.add(g.unyou_id);
+        const d={unyou_id:g.unyou_id,unban:String(g.unban||""),shotei:sh,trains:(g.retsuban_list||[]).length,icons:iconUrls(g.icon_path_list)};
+        if(g.formation!=null&&g.formation!==""&&!(Array.isArray(g.formation)&&!g.formation.length))d.cars=Array.isArray(g.formation)?g.formation.join(", "):String(g.formation);
+        diagrams.push(d);
+      }
+    }
+    setSup({rosen_code:rc,route_id:rid,date,day_id:pat.day_id,pattern:pat.name||"",defaults:deriveDefaults(pat.name,date),groups,diagrams});
+    log(`ダイヤ ${diagrams.length} 件 / 所定 ${groups.length} 件`);
+  }catch(e){log("一覧取得失敗: "+e.message);alert(e.message);}
+  $("btnList").disabled=false;
+};
+
+function setSup(sup){
+  S.sup=sup;S.results=[];$("c4").hidden=true;$("c5").hidden=true;
+  $("c3").hidden=false;$("patName").textContent=sup.pattern?`(${sup.pattern})`:"";
+  const d=sup.defaults||{};$("dWeekday").value=d.weekday||"";$("dRinji").value=d.rinji||"";$("dStart").value=d.start_date||"";$("dPat").value=d.pattern_name||"";
+  $("tblGroups").innerHTML=`<tr><th>所定</th><th>ID接頭辞</th><th>会社</th><th>両数</th></tr>`+sup.groups.map((g,i)=>
+    `<tr><td>${esc(g.shotei)}</td><td><input data-g="${i}" data-f="prefix" value="${esc(g.prefix)}"></td><td><input data-g="${i}" data-f="company" value="${esc(g.company)}"></td><td><input data-g="${i}" data-f="cars" value="${esc(g.cars)}"></td></tr>`).join("");
+  $("nDia").textContent=sup.diagrams.length;
+  $("tblDia").innerHTML=`<tr><th><input type="checkbox" id="chkAll" checked></th><th>運用ID</th><th>運番</th><th>所定</th><th>列車数</th><th>個別 接頭辞</th><th>個別 両数</th></tr>`+sup.diagrams.map((x,i)=>
+    `<tr><td><input type="checkbox" class="chk" data-i="${i}" ${x.skip?"":"checked"}></td><td>${esc(x.unyou_id)}</td><td><input data-d="${i}" data-f="unban" value="${esc(x.unban)}" style="width:50px"></td><td>${esc(x.shotei)}</td><td>${esc(x.trains)}</td><td><input data-d="${i}" data-f="prefix" value="${esc(x.prefix||"")}"></td><td><input data-d="${i}" data-f="cars" value="${esc(x.cars||"")}"></td></tr>`).join("");
+  $("chkAll").onchange=e=>document.querySelectorAll(".chk").forEach(c=>c.checked=e.target.checked);
+}
+function readSup(){
+  const s=S.sup;
+  s.defaults={weekday:$("dWeekday").value.trim(),rinji:$("dRinji").value.trim(),start_date:$("dStart").value.trim()};
+  const pn=$("dPat").value.trim();if(pn)s.defaults.pattern_name=pn;
+  document.querySelectorAll("[data-g]").forEach(i=>{s.groups[+i.dataset.g][i.dataset.f]=i.value.trim();});
+  document.querySelectorAll("[data-d]").forEach(i=>{const d=s.diagrams[+i.dataset.d];const v=i.value.trim();if(i.dataset.f==="unban")d.unban=v;else if(v)d[i.dataset.f]=v;else delete d[i.dataset.f];});
+  document.querySelectorAll(".chk").forEach(c=>{const d=s.diagrams[+c.dataset.i];if(c.checked)delete d.skip;else d.skip=true;});
+  return s;
+}
+$("btnExport").onclick=()=>{
+  if(!S.sup){alert("先にダイヤ一覧を取得してください");return;}
+  const s=readSup();const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(s,null,1)],{type:"application/json"}));
+  a.download=`supplement_${s.rosen_code}_${s.date}.json`;a.click();
+};
+$("btnImport").onclick=()=>$("fileSup").click();
+$("fileSup").onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;
+  try{const s=JSON.parse(await f.text());if(!s.diagrams||!s.rosen_code)throw new Error("補足ファイルの形式が違います");
+    s.groups=s.groups||[];s.defaults=s.defaults||{};setSup(s);$("date").value=s.date||$("date").value;log("補足ファイルを読み込み: "+f.name);}
+  catch(err){alert(err.message);}
+  e.target.value="";
+};
+
+/* ---------- マスタ(路線→駅) ---------- */
+async function loadMaster(){
+  if(S.master)return S.master;
+  let rows=null;
+  try{const r=await fetch(`https://opensheet.elk.sh/${MASTER_SHEET}/station`);const j=await r.json();if(Array.isArray(j)){rows=j;lsSet("gen_master",JSON.stringify(j));}}catch(e){}
+  if(!rows){try{rows=JSON.parse(lsGet("gen_master")||"null");if(rows)log("マスタは前回の控えを使用");}catch(e){}}
+  if(!rows)throw new Error("stationマスタを取得できません");
+  const m={};for(const r of rows){const rt=r["路線"],st=r["駅名"];if(!rt||!st||String(st).startsWith("via_"))continue;(m[rt]=m[rt]||[]).push(st);}
+  return (S.master=m);
+}
+
+/* ---------- 変換(時刻取得) ---------- */
+$("btnStop").onclick=()=>{S.stopFlag=true;};
+$("btnConv").onclick=async()=>{
+  if(!baseUrl()||!keyVal()){alert("接続の欄を入力してください");return;}
+  const sup=readSup();
+  const targets=sup.diagrams.filter(d=>!d.skip);
+  const bad=targets.filter(d=>{const g=sup.groups.find(g=>g.shotei===d.shotei)||{};return !(d.prefix||g.prefix)||!(d.company||g.company);});
+  if(bad.length){alert(`接頭辞または会社が未入力のダイヤがあります(運用ID ${bad.slice(0,5).map(d=>d.unyou_id).join(",")} ほか)`);return;}
+  $("btnConv").disabled=true;$("btnStop").disabled=false;S.stopFlag=false;$("prog").hidden=false;
+  let master;try{master=await loadMaster();}catch(e){log(e.message);alert(e.message);$("btnConv").disabled=false;$("btnStop").disabled=true;return;}
+  S.results=[];const rid=sup.route_id,date=sup.date;
+  // 1) 流れを全部取って、必要な列車を数える
+  const flows={};let need=new Map();
+  $("prog").max=targets.length;$("prog").value=0;
+  for(let i=0;i<targets.length&&!S.stopFlag;i++){
+    const d=targets[i];const ck=`f:${d.unyou_id}:${date}:${rid}`;
+    let fl=await cget(ck);
+    if(!fl){fl=await eleRetry("get_daily_unyou_by_unyou_id",{unyou_id:d.unyou_id,route_id:rid,select_date:date});delete fl._cached;await cset(ck,fl);}
+    flows[d.unyou_id]=fl;
+    for(const s of GenCore.pickSegments(fl))need.set(s.retsuban_id,1);
+    $("prog").value=i+1;
+  }
+  // 2) 列車ごとの時刻
+  const ids=[...need.keys()];const tts={};let done=0,fetched=0;$("prog").max=ids.length||1;$("prog").value=0;
+  for(const id of ids){
+    if(S.stopFlag)break;
+    const ck=`t:${id}:${date}:${rid}`;let tt=await cget(ck);
+    if(!tt){try{tt=await eleRetry("get_retsuban_time_by_id",{retsuban_id:id,route_id:rid,select_date:date});delete tt._cached;await cset(ck,tt);fetched++;}catch(e){log(`列車 ${id} 取得失敗: ${e.message}`);tt={code:-1};}}
+    tts[id]=tt;done++;$("prog").value=done;
+    if(done%25===0)log(`時刻取得 ${done}/${ids.length}(新規 ${fetched})`);
+  }
+  if(S.stopFlag){log("中止しました");$("btnConv").disabled=false;$("btnStop").disabled=true;return;}
+  // 3) 変換
+  const last=jstDate();
+  for(const d of targets){
+    const g=sup.groups.find(g=>g.shotei===d.shotei)||{};
+    const eff=GenCore.resolveFields(d,g,sup.defaults);
+    const c=GenCore.convertUnyou(flows[d.unyou_id],tts);
+    const at=GenCore.attributeRoutes(c.stations,master);
+    S.results.push({d,eff,conv:c,routes:at.routes.join(", "),unknown:at.unknown,mono:GenCore.monotonicViolations(c.rows)});
+  }
+  log(`変換完了: ${S.results.length} ダイヤ`);
+  $("btnConv").disabled=false;$("btnStop").disabled=true;
+  renderPrev();
+};
+
+function renderPrev(){
+  $("c4").hidden=false;$("c5").hidden=false;$("btnSave").disabled=true;$("saveRes").innerHTML="";
+  $("tblPrev").innerHTML=`<tr><th>キー</th><th>行数</th><th>確認</th><th>路線(直せます)</th></tr>`+S.results.map((r,i)=>{
+    const key=`${r.eff.prefix}_${r.d.unban}`;const w=[];
+    if(r.conv.skipped.length)w.push(`<span class="ng">時刻なし ${esc(r.conv.skipped.join(","))}</span>`);
+    if(r.mono)w.push(`<span class="ng">時刻逆行 ${r.mono}</span>`);
+    if(r.unknown.length)w.push(`<span class="wn">マスタに無い駅 ${esc(r.unknown.join(","))}</span>`);
+    if(!r.routes)w.push(`<span class="ng">路線を判定できません</span>`);
+    return `<tr><td>${esc(key)}</td><td>${r.conv.rows.length-1}</td><td>${w.join("<br>")||'<span class="ok">OK</span>'}</td><td><input data-r="${i}" value="${esc(r.routes)}"></td></tr>`;}).join("");
+}
+
+/* ---------- 保存 ---------- */
+function buildPlan(){
+  document.querySelectorAll("[data-r]").forEach(i=>{S.results[+i.dataset.r].routes=i.value.trim();});
+  const last=jstDate();const items=[];const keys=new Set();
+  for(const r of S.results){
+    if(!r.routes)throw new Error(`${r.eff.prefix}_${r.d.unban}: 路線が空です`);
+    const k=`${r.eff.prefix}_${r.d.unban}`;if(keys.has(k))throw new Error(`キーが重複しています: ${k}`);keys.add(k);
+    const obj=GenCore.buildRegistryRow(r.eff,r.routes,r.d.unban,last);
+    items.push({obj,rows:GenCore.toOutputRows(r.conv.rows).slice(1)});
+  }
+  return GenCore.groupByRoute(items);
+}
+async function doSave(dry,modes){
+  const groups=buildPlan();
+  const m=await api("/api/manifest");S.manifest=m;
+  return api("/api/save",{method:"POST",body:{source:"generator",dry_run:dry,base_generated:m.generated,modes:modes||{},groups}});
+}
+function showRes(res,dry){
+  const rows=(res.results||[]).map(x=>`<tr><td>${esc(x.company)} / ${esc(x.route)}</td><td>${esc(x.file)}</td><td class="ok">追加 ${(x.added||[]).length}</td><td>${(x.skipped||[]).length?`<span class="wn">既存あり ${esc((x.skipped||[]).join(", "))}</span>`:""}${(x.replaced||[]).length?` <span class="wn">上書き ${esc(x.replaced.join(", "))}</span>`:""}</td></tr>`).join("");
+  S.lastPlan=res;
+  const sk=(res.results||[]).flatMap(x=>x.skipped||[]);
+  $("saveRes").innerHTML=`<div class="${dry?"mut":"ok"}">${dry?"確認のみ(まだ保存していません)":"保存しました generated "+esc(res.generated)}</div><div class="scroll"><table>${rows}</table></div>`+
+    (sk.length?`<div style="margin-top:8px"><label><input type="checkbox" id="chkRep"> 既存のキーを今回の内容で上書きする(${sk.length}件)</label><div class="mut">スプシ由来のキーはWorkerが拒否します。上書き前の内容は履歴に残ります。</div></div>`:"");
+  $("btnSave").disabled=!dry;
+}
+function errTxt(e){return `${e.message}${e.details?"\n"+JSON.stringify(e.details).slice(0,400):""}`;}
+$("btnDry").onclick=async()=>{
+  try{const r=await doSave(true);showRes(r,true);log("dry run OK");}
+  catch(e){$("saveRes").innerHTML=`<pre class="ng">${esc(errTxt(e))}</pre>`;log("dry run NG: "+e.message);}
+};
+$("btnSave").onclick=async()=>{
+  const rep=$("chkRep")&&$("chkRep").checked;const modes={};
+  if(rep)for(const x of (S.lastPlan.results||[]))for(const k of (x.skipped||[]))modes[k]="replace";
+  if(rep&&!confirm(`${Object.keys(modes).length} 件の既存データを上書きします。よろしいですか?`))return;
+  $("btnSave").disabled=true;
+  try{const r=await doSave(false,modes);showRes(r,false);$("btnSave").disabled=true;log("保存OK");}
+  catch(e){
+    if(e.code==="manifest_changed"){$("saveRes").innerHTML=`<div class="wn">他の更新と重なりました。もう一度「保存せず確認」から進めてください。</div>`;}
+    else $("saveRes").innerHTML=`<pre class="ng">${esc(errTxt(e))}</pre>`;
+    $("btnSave").disabled=false;log("保存NG: "+e.message);
+  }
+};
+
+loadRosen().catch(e=>log("rosen_list.json を読めません: "+e.message));
+</script>
+</body>
+</html>
