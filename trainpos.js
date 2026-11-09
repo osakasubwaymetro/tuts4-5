@@ -1,4 +1,5 @@
-// trainpos.js v1.24.1
+// trainpos.js v1.25.0
+// 1.25.0: パターンに「コミケ臨ダイヤ」を追加（曜日区分が「2025-12-31」のダイヤだけを表示する。その日は平日ダイヤより臨時ダイヤを優先）。日時の入力で 2025-12-31 を指定するとパターンが自動でコミケ臨ダイヤに切り替わり、別の日に変えると「自動」に戻る
 // 1.24.1: 直通先ピル（直通ラベル）を避けて車両アイコンを外側のレーンへずらすのをやめた（ピルとアイコンが重なってもよい）
 // 1.24.0: 走行位置のアイコンが動き出す秒を、毎分00秒から一律30秒に変更（発車・到着とも、ダイヤ時刻の30秒後に動く）
 // 1.23.1: 山手線と京浜東北線のように「別の路線のダイヤ」から来た列車は、並走区間で発車時刻が同じでも併結しない（同じ路線のダイヤ同士だけ併結する）
@@ -77,6 +78,7 @@
   const TICK_MS = 5000;
   const WAIT_SEC = 10 * 60;                  // 始発駅の発車の何秒前から在線表示するか（10分）
   const MOVE_OFFSET_SEC = 30;                // アイコンの動き出しを遅らせる秒数（発車・到着とも一律30秒＝毎分30秒に動く）
+  const COMIKET_DAYRAW = "2025-12-31";       // コミケ臨ダイヤの曜日区分（この日だけ運転する臨時ダイヤ）
   const LS_ON = "tuts4_trainpos_on";
 
   const st = {
@@ -888,6 +890,8 @@
 
   // その運行日（sd）にこの列車が運転するか。曜日区分の細かい指定は dayrule.js、無い時は平日／土休日だけで判定
   function runsOn(tr, sd, hol) {
+    // コミケ臨ダイヤのパターンでは、その日の臨時ダイヤだけを出す（平日ダイヤは出さない）
+    if (st.pattern === "comiket") return String(tr.dayRaw || "").trim().replace(/\//g, "-") === COMIKET_DAYRAW;
     if (window.DayRule && tr.dayRaw) return DayRule.matches(tr.dayRaw, sd, st.holidaySet || new Set());
     return tr.dayType === "both" || tr.dayType === (hol ? "holiday" : "weekday");
   }
@@ -1028,6 +1032,8 @@
     const base = manual && st.manualDate ? st.manualDate : now; // 指定した日（無ければ今日）
     let date = base;
     if (sec < DAY_START) { date = new Date(base.getFullYear(), base.getMonth(), base.getDate() - 1); sec += 86400; }
+    // コミケ臨ダイヤ：表示する日を 2025-12-31 に固定する（時刻は今のまま）
+    if (st.pattern === "comiket") date = new Date(2025, 11, 31);
     // パターン指定（平日／土日祝）：その日がパターンに合わなければ、合ういちばん近い日で代用する
     if (st.pattern === "weekday" || st.pattern === "holiday") {
       const want = st.pattern === "holiday";
@@ -1312,6 +1318,7 @@
           <option value="auto">自動（今日）</option>
           <option value="weekday">平日ダイヤ</option>
           <option value="holiday">土日祝ダイヤ</option>
+          <option value="comiket">コミケ臨ダイヤ</option>
         </select>
         <span class="tp-clock">🕐 <span id="tpClock">--:--:--</span></span>
       </span>
@@ -1344,6 +1351,18 @@
       if (m) {
         st.manualDate = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
         st.manualSec = Number(m[4]) * 3600 + Number(m[5]) * 60;
+        // コミケ臨ダイヤの日を指定したら、パターンを自動でコミケ臨ダイヤにする（別の日にしたら「自動」に戻す）
+        const sel = document.getElementById("tpPattern");
+        const isComiketDay = `${m[1]}-${m[2]}-${m[3]}` === COMIKET_DAYRAW;
+        if (isComiketDay && st.pattern !== "comiket") {
+          st.pattern = "comiket"; if (sel) sel.value = "comiket";
+          // パターンを変えた時と同じく、ダイヤと乗車記録を取り直す
+          st.force = true; st.trains = []; st.trainsRoute = ""; st.pending = null;
+          renderLayer();
+          ensureData().then(renderLayer);
+          return;
+        }
+        if (!isComiketDay && st.pattern === "comiket") { st.pattern = "auto"; if (sel) sel.value = "auto"; }
         renderLayer();
       }
     };
