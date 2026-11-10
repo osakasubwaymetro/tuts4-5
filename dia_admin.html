@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ダイヤ管理</title>
+<!-- version: 1.0.0 -->
+<!-- 1.0.0: 新規作成。配信中のダイヤJSON（路線ファイル）を、サイト上で編集・追加・削除する運営用ページ。接続はジェネレーターと同じ（合言葉→Worker）。 -->
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1b1f24;--sub:#667;--bd:#d5d9df;--ac:#1f6feb;--ng:#c62828;--ok:#2e7d32;--wn:#b26a00;--chg:#fff6d6;--del:#fde4e4;--new:#e3f6e6}
+@media (prefers-color-scheme:dark){:root{--bg:#14171b;--card:#1d2127;--tx:#e6e8eb;--sub:#9aa3ad;--bd:#343b44;--ac:#5b9dff;--ng:#ff6b6b;--ok:#6fcf7a;--wn:#f0b050;--chg:#3a3320;--del:#3d2326;--new:#1f3324}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.5 system-ui,sans-serif}
+main{padding:12px 16px 90px}h2{font-size:15px;margin:0 0 8px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px;margin-bottom:12px}
+label{display:block;font-size:12px;color:var(--sub);margin:6px 0 2px}
+input,select,button,textarea{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:5px 7px;max-width:100%}
+button{background:var(--ac);color:#fff;border:0;padding:7px 12px;cursor:pointer}button.sub{background:var(--bg);color:var(--tx);border:1px solid var(--bd)}button.ng{background:var(--ng)}button.sm{padding:3px 8px;font-size:12px}button:disabled{opacity:.5}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}.row>div{flex:1 1 150px}
+table{border-collapse:collapse;width:100%;font-size:12px}th,td{border-bottom:1px solid var(--bd);padding:3px;text-align:left;vertical-align:top}
+td input,td textarea{width:100%;min-width:56px;padding:3px 5px}td textarea{resize:vertical;min-height:26px;white-space:pre}
+.scroll{overflow-x:auto}.mut{color:var(--sub);font-size:12px}.ok{color:var(--ok)}.ngt{color:var(--ng)}.wn{color:var(--wn)}
+tr.chg td{background:var(--chg)}tr.del td{background:var(--del);text-decoration:line-through}tr.new td{background:var(--new)}tr.sel td:first-child{box-shadow:inset 3px 0 var(--ac)}
+.tag{display:inline-block;border-radius:4px;padding:0 5px;font-size:11px;background:var(--bd)}
+#gate{padding:40px 16px;text-align:center}
+#sheetBox{max-height:70vh;overflow:auto}
+th.stick{position:sticky;top:0;background:var(--card)}
+pre{white-space:pre-wrap;font:12px/1.4 ui-monospace,monospace}
+</style>
+</head>
+<body>
+<main id="app">
+<div class="card">
+  <h2>1. 接続</h2>
+  <div class="row">
+    <div><label>合言葉(このタブを閉じるまで保持。ジェネレーターと共通)</label><input id="key" type="password" autocomplete="off" style="width:100%"></div>
+    <div><button id="btnConn">接続テスト</button> <a href="generator.html" class="mut">→ JSONジェネレーター</a></div>
+  </div>
+  <div id="connMsg" class="mut"></div>
+</div>
+
+<div class="card" id="cFile" hidden>
+  <h2>2. 路線ファイルを選ぶ</h2>
+  <div class="row">
+    <div><label>会社</label><select id="selComp"></select></div>
+    <div><label>路線</label><select id="selRoute"></select></div>
+    <div><button id="btnLoad">読み込む</button></div>
+  </div>
+  <div class="mut" id="fileInfo"></div>
+</div>
+
+<div class="card" id="cList" hidden>
+  <h2>3. ダイヤ一覧 <span class="mut" id="listCount"></span></h2>
+  <div class="mut">黄色=編集済み／緑=新規／赤=削除予定。ID・運番・会社・路線は変えられません(変えたい時は「複製」してから元を削除)。</div>
+  <div class="scroll"><table id="tblList"></table></div>
+  <details style="margin-top:8px"><summary>＋ 新規ダイヤを追加</summary>
+    <div class="row">
+      <div><label>会社</label><input id="nCompany"></div>
+      <div><label>路線(複数なら , 区切り)</label><input id="nRoute"></div>
+      <div><label>ID(接頭辞)</label><input id="nId"></div>
+      <div><label>運番</label><input id="nUnban"></div>
+      <div><label>曜日区分</label><input id="nWeekday"></div>
+      <div><label>臨時</label><input id="nRinji" value="FALSE"></div>
+      <div><label>適用開始日</label><input id="nStart"></div>
+      <div><label>両数</label><input id="nCars"></div>
+      <div><label>所定形式(URL)</label><input id="nIcons"></div>
+      <div><label>臨時ダイヤ名</label><input id="nPat"></div>
+    </div>
+    <div style="margin-top:6px"><button id="btnAdd">空のシートで追加</button></div>
+  </details>
+</div>
+
+<div class="card" id="cSheet" hidden>
+  <h2>4. シート <span id="sheetTitle"></span></h2>
+  <div class="row">
+    <div><label>列車番号で絞り込み</label><input id="fltTrain"></div>
+    <div><button class="sub sm" id="btnAddRow">＋ 末尾に行を追加</button> <button class="sub sm" id="btnTsvOut">TSVを書き出す</button> <button class="sub sm" id="btnTsvIn">TSVを反映(全行置換)</button></div>
+  </div>
+  <textarea id="tsv" rows="3" style="width:100%;display:none;margin-top:6px" placeholder="列車番号⇥駅名⇥発車時刻⇥行先⇥種別(時刻の中の改行は \n と書く)"></textarea>
+  <div class="mut" id="sheetWarn"></div>
+  <div class="scroll" id="sheetBox"><table id="tblSheet"></table></div>
+</div>
+
+<div class="card" id="cSave" hidden>
+  <h2>5. 保存</h2>
+  <div id="changes" class="mut"></div>
+  <div class="row" style="margin-top:6px"><button id="btnDry">保存せず確認(dry run)</button><button id="btnSave" disabled>保存する</button><button class="sub" id="btnDiscard">変更を全部破棄</button></div>
+  <div id="saveRes"></div>
+</div>
+
+<div class="card"><h2>ログ</h2><pre id="log" style="max-height:160px;overflow:auto;margin:0"></pre></div>
+</main>
+<div id="gate" hidden>このページは運営アカウント専用です。</div>
+
+<script src="nav.js"></script>
+<script>initNav("ダイヤ管理");</script>
+<script>
+"use strict";
+const WORKER_URL="https://tuts4-gen.osakasubwaymetro.workers.dev";
+const HEAD=["会社","路線","ID","運番","曜日区分","臨時","適用開始日","最終更新","両数","所定形式","臨時ダイヤ名"];
+const EDITABLE=["曜日区分","臨時","適用開始日","両数","所定形式","臨時ダイヤ名"];
+const COLS=["列車番号","駅名","発車時刻","行先","種別"];
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const log=m=>{const l=$("log");l.textContent+=`[${new Date().toLocaleTimeString()}] ${m}\n`;l.scrollTop=l.scrollHeight;};
+const ssGet=k=>{try{return sessionStorage.getItem(k)}catch(e){return null}};
+const ssSet=(k,v)=>{try{sessionStorage.setItem(k,v)}catch(e){}};
+const jstDate=()=>new Date(Date.now()+9*3600e3).toISOString().slice(0,10);
+const clone=o=>JSON.parse(JSON.stringify(o));
+const keyOf=r=>`${r["ID"]||""}_${r["運番"]||""}`;
+const routesOf=r=>String(r["路線"]||"").split(",").map(x=>x.trim()).filter(Boolean);
+
+/* 運営だけ(見た目の入口の制限。実際の保護は合言葉) */
+if(localStorage.getItem("username")!=="運営"){$("app").hidden=true;$("gate").hidden=false;}
+
+const S={manifest:null,cur:null,edits:{},deleted:new Set(),openKey:null,lastDry:null};
+
+/* ---------- Worker ---------- */
+async function api(path,{method="GET",body=null}={}){
+  const h={"X-Tuts4-Key":$("key").value}; if(body)h["Content-Type"]="application/json";
+  let r; try{r=await fetch(WORKER_URL+path,{method,headers:h,body:body?JSON.stringify(body):undefined});}
+  catch(e){throw {code:"network",message:"Workerに繋がりません: "+e.message};}
+  let j=null; try{j=await r.json();}catch(e){}
+  if(!r.ok||(j&&j.ok===false)){const er=(j&&j.error)||{};throw {status:r.status,code:er.code||("http"+r.status),message:er.message||("HTTP "+r.status),details:er.details};}
+  return j;
+}
+const errTxt=e=>`${e.message}${e.details?"\n"+JSON.stringify(e.details).slice(0,600):""}`;
+
+/* ---------- 1. 接続 ---------- */
+$("key").value=ssGet("gen_key")||"";
+$("key").addEventListener("keydown",e=>{if(e.key==="Enter")$("btnConn").click();});
+$("btnConn").onclick=async()=>{
+  ssSet("gen_key",$("key").value);
+  try{S.manifest=await api("/api/manifest");
+    $("connMsg").innerHTML=`<span class="ok">接続OK</span> 路線ファイル ${S.manifest.files.length} 件 / generated ${esc(S.manifest.generated)}`;
+    const comps=[...new Set(S.manifest.files.map(f=>f.company))];
+    $("selComp").innerHTML=comps.map(c=>`<option>${esc(c)}</option>`).join("");onComp();$("cFile").hidden=false;log("接続OK");}
+  catch(e){$("connMsg").innerHTML=`<span class="ngt">${esc(e.message)}</span>`;log("接続NG: "+e.message);}
+};
+
+/* ---------- 2. ファイル選択 ---------- */
+function onComp(){const c=$("selComp").value;$("selRoute").innerHTML=S.manifest.files.filter(f=>f.company===c).map(f=>`<option value="${esc(f.file)}">${esc(f.route)}</option>`).join("");}
+$("selComp").onchange=onComp;
+$("btnLoad").onclick=async()=>{
+  if(hasChanges()&&!confirm("未保存の変更があります。破棄して別のファイルを読み込みますか?"))return;
+  const file=$("selRoute").value;const entry=S.manifest.files.find(f=>f.file===file);if(!entry)return;
+  $("btnLoad").disabled=true;
+  try{await loadFile(entry);}catch(e){log("読み込み失敗: "+e.message);alert(e.message);}
+  $("btnLoad").disabled=false;
+};
+async function loadFile(entry){
+  const m=await api("/api/manifest");S.manifest=m;
+  const e2=m.files.find(f=>f.file===entry.file)||entry;
+  const d=await api("/api/"+e2.file);
+  S.cur={entry:e2,list:d.list||[],sheets:d.sheets||{},sources:d._sources||d.sources||null};
+  S.edits={};S.deleted=new Set();S.openKey=null;S.lastDry=null;
+  $("fileInfo").textContent=`${e2.file}(ダイヤ ${new Set(S.cur.list.map(keyOf)).size} 件 / rev ${e2.rev})`;
+  $("nCompany").value=e2.company;$("nRoute").value=e2.route;
+  $("cList").hidden=false;$("cSave").hidden=false;$("cSheet").hidden=true;
+  renderList();renderChanges();log(`読み込み: ${e2.company} / ${e2.route}`);
+}
+
+/* ---------- 有効な一覧(元データ＋編集の重ね合わせ) ---------- */
+function effRows(){
+  const out=[],seen=new Set(),c=S.cur,cnt={};
+  for(const r of c.list){
+    const k=keyOf(r);const n=cnt[k]=(cnt[k]==null?0:cnt[k]+1);
+    if(S.deleted.has(k)){out.push({row:r,key:k,st:"del",i:n});continue;}
+    const ed=S.edits[k];
+    if(ed&&!ed.isNew){if(!seen.has(k)){seen.add(k);ed.rows.forEach((row,i)=>out.push({row,key:k,st:"chg",i}));}continue;}
+    out.push({row:r,key:k,st:"",i:n});
+  }
+  for(const [k,ed] of Object.entries(S.edits)){
+    if(!ed.isNew)continue;
+    ed.rows.forEach((row,i)=>{if(row["会社"]===c.entry.company&&routesOf(row).includes(c.entry.route))out.push({row,key:k,st:"new",i});});
+  }
+  return out;
+}
+function ensureEdit(k){
+  if(!S.edits[k]){const c=S.cur;S.edits[k]={isNew:false,rows:c.list.filter(r=>keyOf(r)===k).map(clone),sheet:clone(c.sheets[k]||[])};}
+  return S.edits[k];
+}
+function sheetOf(k){return S.edits[k]?S.edits[k].sheet:(S.cur.sheets[k]||[]);}
+const hasChanges=()=>Object.keys(S.edits).length>0||S.deleted.size>0;
+
+/* ---------- 3. 一覧 ---------- */
+function renderList(){
+  const rows=effRows();const src=S.cur.sources||{};
+  $("listCount").textContent=`(${new Set(rows.map(x=>x.key)).size}件)`;
+  $("tblList").innerHTML=`<tr><th>状態</th><th>ID</th><th>運番</th>${EDITABLE.map(f=>`<th>${f}</th>`).join("")}<th>最終更新</th><th>行数</th><th>出所</th><th></th></tr>`+
+  rows.map((x,n)=>{
+    const r=x.row,k=x.key,dis=x.st==="del"?"disabled":"";
+    const tag=x.st==="chg"?"編集":x.st==="new"?"新規":x.st==="del"?"削除":"";
+    return `<tr class="${x.st}${S.openKey===k?" sel":""}"><td>${tag?`<span class="tag">${tag}</span>`:""}</td><td>${esc(r["ID"])}</td><td>${esc(r["運番"])}</td>`+
+      EDITABLE.map(f=>`<td><input data-k="${esc(k)}" data-i="${x.i==null?-1:x.i}" data-f="${f}" value="${esc(r[f])}" ${dis}></td>`).join("")+
+      `<td>${esc(r["最終更新"])}</td><td>${sheetOf(k).length}</td><td class="mut">${esc(src[k]||"")}</td><td style="white-space:nowrap">`+
+      (x.st==="del"?`<button class="sub sm" data-undo="${esc(k)}">戻す</button>`:`<button class="sm" data-open="${esc(k)}">開く</button> <button class="sub sm" data-dup="${esc(k)}">複製</button> <button class="ng sm" data-del="${esc(k)}">削除</button>`)+
+      `</td></tr>`;}).join("");
+}
+$("tblList").addEventListener("change",e=>{
+  const t=e.target;if(!t.dataset||!t.dataset.f)return;
+  const k=t.dataset.k;const i=+t.dataset.i;const ed=ensureEdit(k);
+  ed.rows[i][t.dataset.f]=t.value;ed.rows[i]["最終更新"]=jstDate();
+  renderList();renderChanges();
+});
+$("tblList").addEventListener("click",e=>{
+  const b=e.target.closest("button");if(!b)return;
+  if(b.dataset.open)openSheet(b.dataset.open);
+  else if(b.dataset.del)delDia(b.dataset.del);
+  else if(b.dataset.undo){S.deleted.delete(b.dataset.undo);renderList();renderChanges();}
+  else if(b.dataset.dup)dupDia(b.dataset.dup);
+});
+function delDia(k){
+  if(!confirm(`ダイヤ「${k}」を削除します(保存するまで実際には消えません)。よろしいですか?`))return;
+  const ed=S.edits[k];
+  if(ed&&ed.isNew)delete S.edits[k];else{delete S.edits[k];S.deleted.add(k);}
+  if(S.openKey===k){S.openKey=null;$("cSheet").hidden=true;}
+  renderList();renderChanges();
+}
+function dupDia(k){
+  const nid=prompt("複製先の ID(接頭辞)",k.split("_")[0]);if(nid==null)return;
+  const nun=prompt("複製先の運番",k.split("_")[1]);if(nun==null)return;
+  const nk=`${nid}_${nun}`;
+  if(S.cur.list.some(r=>keyOf(r)===nk)||S.edits[nk]){alert(`「${nk}」は既にあります`);return;}
+  const src=S.edits[k]?S.edits[k].rows:S.cur.list.filter(r=>keyOf(r)===k);
+  const rows=clone(src).map(r=>{r["ID"]=nid;r["運番"]=nun;r["最終更新"]=jstDate();return r;});
+  S.edits[nk]={isNew:true,rows,sheet:clone(sheetOf(k))};
+  renderList();renderChanges();openSheet(nk);
+}
+$("btnAdd").onclick=()=>{
+  const v=id=>$(id).value.trim();
+  const row={"会社":v("nCompany"),"路線":v("nRoute").split(",").map(s=>s.trim()).filter(Boolean).join(", "),"ID":v("nId"),"運番":v("nUnban"),"曜日区分":v("nWeekday"),"臨時":v("nRinji")||"FALSE","適用開始日":v("nStart"),"最終更新":jstDate(),"両数":v("nCars"),"所定形式":v("nIcons"),"臨時ダイヤ名":v("nPat")};
+  const miss=["会社","路線","ID","運番","曜日区分","適用開始日"].filter(f=>!row[f]);
+  if(miss.length){alert(`未入力: ${miss.join("、")}`);return;}
+  const k=keyOf(row);
+  if(S.cur.list.some(r=>keyOf(r)===k)||S.edits[k]){alert(`「${k}」は既にあります`);return;}
+  S.edits[k]={isNew:true,rows:[row],sheet:[]};
+  renderList();renderChanges();openSheet(k);
+};
+
+/* ---------- 4. シート ---------- */
+function openSheet(k){
+  S.openKey=k;$("cSheet").hidden=false;$("sheetTitle").textContent=`「${k}」`;$("tsv").style.display="none";$("fltTrain").value="";
+  renderList();renderSheet();$("cSheet").scrollIntoView({block:"start"});
+}
+function renderSheet(){
+  const k=S.openKey;if(!k)return;
+  const rows=sheetOf(k);const f=$("fltTrain").value.trim();
+  let h=`<tr><th class="stick">#</th>${COLS.map(c=>`<th class="stick">${c}</th>`).join("")}<th class="stick"></th></tr>`;
+  rows.forEach((r,i)=>{
+    if(f&&!String(r[0]).includes(f))return;
+    h+=`<tr><td>${i+1}</td>`+COLS.map((c,j)=>j===2?`<td><textarea rows="1" data-r="${i}" data-c="${j}">${esc(r[j])}</textarea></td>`:`<td><input data-r="${i}" data-c="${j}" value="${esc(r[j])}"></td>`).join("")+
+      `<td style="white-space:nowrap"><button class="sub sm" data-up="${i}">↑</button><button class="sub sm" data-dn="${i}">↓</button><button class="sub sm" data-ins="${i}">＋</button><button class="ng sm" data-rm="${i}">✕</button></td></tr>`;});
+  $("tblSheet").innerHTML=h;checkSheet();
+}
+function checkSheet(){
+  const rows=sheetOf(S.openKey);const w=[];
+  const bad=rows.filter(r=>!/^\d{1,2}:\d{2}(\n\d{1,2}:\d{2})?$/.test(String(r[2]||""))).length;
+  if(bad)w.push(`時刻の形式が違う行 ${bad} 件(例 5:22 / 05:22⏎05:25)`);
+  const emp=rows.filter(r=>!r[0]||!r[1]).length;if(emp)w.push(`列車番号か駅名が空の行 ${emp} 件`);
+  const mv=GenCoreMono([COLS].concat(rows));if(mv)w.push(`時刻が逆行している箇所 ${mv} 件`);
+  $("sheetWarn").innerHTML=w.length?`<span class="wn">${w.join(" / ")}</span>`:`<span class="ok">${rows.length}行</span>`;
+}
+function GenCoreMono(rows){
+  const mins=t=>{const p=String(t).split("\n").pop().split(":");return (+p[0])*60+(+p[1]);};
+  let bad=0,prev=-1;for(const r of rows.slice(1)){const v=mins(r[2]);if(isNaN(v))continue;if(v<prev&&!(prev>20*60&&v<5*60))bad++;prev=v;}return bad;
+}
+$("tblSheet").addEventListener("change",e=>{
+  const t=e.target;if(t.dataset.r==null)return;
+  const ed=ensureEdit(S.openKey);ed.sheet[+t.dataset.r][+t.dataset.c]=t.value;markChanged();checkSheet();
+});
+$("tblSheet").addEventListener("click",e=>{
+  const b=e.target.closest("button");if(!b)return;const ed=ensureEdit(S.openKey),s=ed.sheet;
+  if(b.dataset.rm!=null)s.splice(+b.dataset.rm,1);
+  else if(b.dataset.ins!=null){const i=+b.dataset.ins;const base=s[i]||["","","","",""];s.splice(i+1,0,[base[0],"","",base[3],base[4]]);}
+  else if(b.dataset.up!=null){const i=+b.dataset.up;if(i>0)[s[i-1],s[i]]=[s[i],s[i-1]];}
+  else if(b.dataset.dn!=null){const i=+b.dataset.dn;if(i<s.length-1)[s[i+1],s[i]]=[s[i],s[i+1]];}
+  markChanged();renderSheet();
+});
+function markChanged(){const ed=S.edits[S.openKey];if(ed)ed.rows.forEach(r=>r["最終更新"]=jstDate());renderList();renderChanges();}
+$("fltTrain").oninput=renderSheet;
+$("btnAddRow").onclick=()=>{const ed=ensureEdit(S.openKey);const l=ed.sheet[ed.sheet.length-1]||["","","","",""];ed.sheet.push([l[0],"","",l[3],l[4]]);markChanged();renderSheet();};
+$("btnTsvOut").onclick=()=>{const t=$("tsv");t.style.display="block";t.value=sheetOf(S.openKey).map(r=>r.map(c=>String(c).replace(/\n/g,"\\n")).join("\t")).join("\n");t.select();};
+$("btnTsvIn").onclick=()=>{
+  const t=$("tsv");if(t.style.display==="none"){t.style.display="block";alert("下の欄にTSVを貼ってから、もう一度押してください");return;}
+  const lines=t.value.split(/\r?\n/).filter(x=>x.trim());
+  let rows=lines.map(l=>{const c=l.split("\t").map(x=>x.replace(/\\n/g,"\n"));while(c.length<5)c.push("");return c.slice(0,5);});
+  if(rows.length&&rows[0][0]==="列車番号")rows=rows.slice(1);
+  if(!confirm(`${rows.length} 行で、このシートを全部置き換えます。よろしいですか?`))return;
+  ensureEdit(S.openKey).sheet=rows;markChanged();renderSheet();
+};
+
+/* ---------- 5. 保存 ---------- */
+function renderChanges(){
+  const e=Object.entries(S.edits);
+  const lines=[...e.map(([k,v])=>`${v.isNew?"新規":"編集"}: ${k}(${v.sheet.length}行)`),...[...S.deleted].map(k=>`削除: ${k}`)];
+  $("changes").innerHTML=lines.length?lines.map(esc).join("<br>"):"変更はありません";
+  $("btnSave").disabled=true;
+}
+function buildPlan(){
+  const groups={},modes={};const today=jstDate();
+  const grp=(company,route)=>{const gk=company+"\t"+route;return groups[gk]||(groups[gk]={company,route,list:[],sheets:{}});};
+  for(const [k,ed] of Object.entries(S.edits)){
+    for(const r of ed.rows)if(HEAD.some(h=>r[h]==null))HEAD.forEach(h=>{if(r[h]==null)r[h]="";});
+    const base=ed.rows[0];
+    if(!base["会社"]||!routesOf(base).length)throw new Error(`${k}: 会社か路線が空です`);
+    for(const route of routesOf(base)){const g=grp(base["会社"],route);ed.rows.forEach(r=>g.list.push(Object.fromEntries(HEAD.map(h=>[h,String(r[h])]))));g.sheets[k]=ed.sheet.map(r=>COLS.map((_,j)=>String(r[j]==null?"":r[j])));}
+    modes[k]=ed.isNew?"add":"replace";
+  }
+  for(const k of S.deleted){
+    const orig=S.cur.list.filter(r=>keyOf(r)===k);
+    for(const route of routesOf(orig[0]))grp(orig[0]["会社"],route);
+    modes[k]="delete";
+  }
+  return {groups:Object.values(groups),modes};
+}
+async function doSave(dry){
+  const {groups,modes}=buildPlan();
+  const m=await api("/api/manifest");
+  return api("/api/save",{method:"POST",body:{source:"site",dry_run:dry,base_generated:m.generated,modes,groups}});
+}
+function showRes(res,dry){
+  S.lastDry=res;
+  const rows=(res.results||[]).map(x=>`<tr><td>${esc(x.company)} / ${esc(x.route)}</td><td>${esc(x.file||"")}</td><td>${["added","replaced","deleted","skipped"].map(f=>(x[f]&&x[f].length)?`${{added:"追加",replaced:"上書き",deleted:"削除",skipped:"既存のため見送り"}[f]}: ${esc(x[f].join(", "))}`:"").filter(Boolean).join("<br>")||"変更なし"}</td></tr>`).join("");
+  $("saveRes").innerHTML=`<div class="${dry?"mut":"ok"}">${dry?"確認のみ(まだ保存していません)":"保存しました generated "+esc(res.generated)}</div><div class="scroll"><table>${rows}</table></div>`;
+  $("btnSave").disabled=!dry;
+}
+$("btnDry").onclick=async()=>{
+  if(!hasChanges()){alert("変更がありません");return;}
+  try{showRes(await doSave(true),true);log("dry run OK");}
+  catch(e){$("saveRes").innerHTML=`<pre class="ngt">${esc(e.message?errTxt(e):String(e))}</pre>`;log("dry run NG: "+e.message);}
+};
+$("btnSave").onclick=async()=>{
+  if(!confirm(`${Object.keys(S.edits).length} 件の編集・追加、${S.deleted.size} 件の削除を保存します。よろしいですか?`))return;
+  $("btnSave").disabled=true;
+  try{const r=await doSave(false);showRes(r,false);log("保存OK");
+    const entry=S.cur.entry;const res=$("saveRes").innerHTML;await loadFile(entry);$("saveRes").innerHTML=res;}
+  catch(e){
+    if(e.code==="manifest_changed")$("saveRes").innerHTML=`<div class="wn">他の更新と重なりました。もう一度「保存せず確認」から進めてください。</div>`;
+    else $("saveRes").innerHTML=`<pre class="ngt">${esc(e.message?errTxt(e):String(e))}</pre>`;
+    $("btnSave").disabled=false;log("保存NG: "+e.message);
+  }
+};
+$("btnDiscard").onclick=()=>{if(!hasChanges())return;if(!confirm("未保存の変更を全部破棄します。よろしいですか?"))return;S.edits={};S.deleted=new Set();renderList();renderChanges();if(S.openKey){if(S.cur.list.some(r=>keyOf(r)===S.openKey))renderSheet();else{S.openKey=null;$("cSheet").hidden=true;}}};
+window.addEventListener("beforeunload",e=>{if(hasChanges()){e.preventDefault();e.returnValue="";}});
+</script>
+</body>
+</html>
