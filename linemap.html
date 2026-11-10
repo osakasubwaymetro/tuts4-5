@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.33.6 -->
+<!-- version: 1.33.7 -->
+<!-- 1.33.7: trainpos.js 1.28.1（臨時ダイヤを選ぶと自動に戻る不具合／他の日にも選択肢が出る不具合を修正） -->
 <!-- 1.33.6: diagram_static.js 1.1.0 を読み込み、trainpos.js 1.28.0（静的JSONの取得先を Cloudflare Worker 優先・pages.dev 予備に） -->
 <!-- 1.33.5: trainpos.js 1.27.0（臨時列車と臨時ダイヤの区別） -->
 <!-- 1.33.4: trainpos.js 1.26.0（臨時ダイヤのパターンを汎用化。特定日付のダイヤがある路線ではプルダウンに出て、その日は自動でも臨時ダイヤだけ表示） -->
@@ -635,7 +636,7 @@
 <script src="timetable.js?v=1.19.1"></script>
 <script src="trainnavi.js?v=1.5.0"></script>
 <script src="diagram_static.js?v=1.1.0"></script>
-<script src="trainpos.js?v=1.28.0"></script>
+<script src="trainpos.js?v=1.28.1"></script>
 <script>initNav("乗車路線マップ確認用");</script>
 <script>
 const username = checkLogin();

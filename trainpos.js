@@ -1,4 +1,5 @@
-// trainpos.js v1.28.0
+// trainpos.js v1.28.1
+// 1.28.1: 臨時ダイヤの不具合2件。①臨時ダイヤを手で選ぶと、読み込み中に「自動」へ戻ってしまうのを直した ②臨時ダイヤの選択肢は「いま見ている日に走るもの」だけにした（他の日は出ない）。指定した日が臨時ダイヤの日なら読み込み後にも自動で選ぶ。確認用に、臨時ダイヤの曜日区分と該当／非該当を画面左下に出す。
 // 1.28.0: 静的JSONの読み込みを diagram_static.js 1.1.0 に一本化（Cloudflare Worker を先に、だめなら pages.dev）。diagram_static.js が無い時は従来どおり pages.dev だけ。
 // 1.27.0: 臨時列車と臨時ダイヤを区別する。ダイヤ一覧の新列「臨時ダイヤ名」に値がある行だけが臨時ダイヤ（パターンのプルダウンにその名前で出る）。
 //         臨時ダイヤの日は「臨時ダイヤ＋その日の臨時列車（曜日区分が日付で、臨時ダイヤ名が空）」だけを表示して、定期（平日・土休日）は入れない。
@@ -937,10 +938,32 @@
     st._diaDates = { key, f: st.trains, d: hit };
     return hit;
   }
-  // パターンのプルダウンを、今の路線にある臨時ダイヤで組み直す（路線のダイヤを読み直すたびに呼ぶ）
+  // いま見ている運行日（時刻を指定していれば指定した日、無ければ今日。3:00で切り替わる）
+  function effDate() {
+    if (st.manualDate) return st.manualDate;
+    const n = new Date(Date.now() - DAY_START * 1000);
+    return new Date(n.getFullYear(), n.getMonth(), n.getDate());
+  }
+  // パターンのプルダウンを組み直す。臨時ダイヤは「いま見ている日に走るもの」だけを出す（路線のダイヤ読み込み後・日付を変えた時に呼ぶ）
   function refreshPatternOptions() {
-    const names = diaNamesOf();
-    if (st.pattern && st.pattern.startsWith("dia:") && !names.includes(st.pattern.slice(4))) st.pattern = "auto";
+    const loaded = !!(st.trains && st.trains.length && st.ctx && st.trainsRoute === st.ctx.routeVal);
+    const cur = st.pattern && st.pattern.startsWith("dia:") ? st.pattern.slice(4) : "";
+    let names = [];
+    if (loaded) {
+      const act = activeDiasOn(effDate());
+      names = diaNamesOf().filter(n => act.has(n));
+      if (cur && !names.includes(cur)) st.pattern = "auto";
+      else if (st.pattern === "auto" && st.manualDate && names.length) st.pattern = "dia:" + names[0]; // 指定した日が臨時ダイヤの日なら自動で選ぶ
+      if (!st._diaDiag) {
+        st._diaDiag = true;
+        diaNamesOf().forEach(n => {
+          const sample = (st.trains.find(tr => tr.extraDiaName === n) || {}).dayRaw || "";
+          diagShow(`[trainpos] 臨時ダイヤ「${n}」 曜日区分="${sample}" ${ymd(effDate())}は${act.has(n) ? "該当" : "非該当"}`);
+        });
+      }
+    } else if (cur) {
+      names = [cur]; // 読み込み中は、選択中の臨時ダイヤを消さない
+    }
     const sel = document.getElementById("tpPattern");
     if (!sel) return;
     const esc = s => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
@@ -1410,6 +1433,7 @@
         st.manualSec = n.getHours() * 3600 + n.getMinutes() * 60;
         st.manualDate = new Date(n.getFullYear(), n.getMonth(), n.getDate());
       }
+      refreshPatternOptions();
       renderLayer();
     };
     document.getElementById("tpPattern").onchange = e => {
@@ -1437,6 +1461,7 @@
           return;
         }
         if (cur && !act.has(cur)) { st.pattern = "auto"; if (sel) sel.value = "auto"; }
+        refreshPatternOptions();
         renderLayer();
       }
     };
