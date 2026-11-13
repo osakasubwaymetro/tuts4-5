@@ -2,7 +2,8 @@
  * nav.js — 共通ヘッダー管理ファイル
  * 新しいページを追加するときは NAV_LINKS だけ編集してください
  *
- * version: 1.6.5
+ * version: 1.7.0
+ * 1.7.0: 運営ログイン時だけ、ヘッダーに「ダイヤ管理」ボタンを追加（押すと「ダイヤ管理ページ」「JSONジェネレーター」へのリンクが出る）
  * 1.6.5: (1) メニュー（.nav-dropdown）にmax-height + overflow-y:autoを追加。
  *        ページが増えて縦に長くなった時、スマホの画面高さを超えた分がスクロール
  *        できず「ログアウト」ボタンが見切れて押せなくなる問題を修正。
@@ -112,6 +113,42 @@ const NAV_CSS = `
     0%, 100% { opacity: 1; }
     50% { opacity: 0.6; }
   }
+  .nav-dia-wrap { position: relative; }
+  .nav-dia-btn {
+    background: #FFD700;
+    border: none;
+    color: #004C97;
+    font-size: 13px;
+    font-weight: bold;
+    padding: 6px 9px;
+    border-radius: 8px;
+    cursor: pointer;
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .nav-dia-pop {
+    display: none;
+    position: absolute;
+    top: 42px;
+    right: 0;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.22);
+    min-width: 210px;
+    padding: 6px 0;
+    z-index: 10000;
+  }
+  .nav-dia-pop.open { display: block; }
+  .nav-dia-pop a {
+    display: block;
+    padding: 11px 18px;
+    font-size: 14px;
+    color: #222;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .nav-dia-pop a:hover { background: #F0F4FA; }
+  @media (max-width: 460px) { .nav-dia-btn .nav-dia-label { display: none; } }
   .nav-menu-btn {
     background: white;
     border: none;
@@ -311,12 +348,24 @@ function initNav(pageTitle) {
     ? `<button class="nav-descent-btn" onclick="_navOpenPendingDescent()" title="前回の降車駅が未回答です">🚏 降車駅未回答</button>`
     : "";
 
+  // 運営だけ：ヘッダーの「ダイヤ管理」ボタン（ダイヤ管理ページ／JSONジェネレーターへ）
+  const diaBtnHTML = ADMIN_USERS.includes(currentUser)
+    ? `<div class="nav-dia-wrap">
+         <button class="nav-dia-btn" onclick="_navDiaToggle(event)" title="ダイヤ管理">🗂<span class="nav-dia-label"> ダイヤ管理</span></button>
+         <div class="nav-dia-pop" id="navDiaPop">
+           <a href="dia_admin.html">✏️ ダイヤ管理ページ</a>
+           <a href="generator.html">⚙️ JSONジェネレーター</a>
+         </div>
+       </div>`
+    : "";
+
   // ヘッダー全体のHTML
   const navHTML = `
     <header class="nav-header">
       <div class="nav-title">${pageTitle}</div>
       <div class="nav-right">
         ${descentBtnHTML}
+        ${diaBtnHTML}
         <span class="nav-username" id="navUsernameDisplay"></span>
         <button class="nav-menu-btn" onclick="_navToggle()" aria-label="メニュー">☰</button>
       </div>
@@ -347,6 +396,16 @@ function initNav(pageTitle) {
 }
 
 // ===== ④ 開閉ロジック =====
+function _navDiaToggle(ev) {
+  if (ev) ev.stopPropagation();
+  const pop = document.getElementById("navDiaPop");
+  if (pop) pop.classList.toggle("open");
+}
+document.addEventListener("click", () => {
+  const pop = document.getElementById("navDiaPop");
+  if (pop) pop.classList.remove("open");
+});
+
 function _navToggle() {
   document.getElementById("navDropdown").classList.toggle("open");
   document.getElementById("navBackdrop").classList.toggle("open");

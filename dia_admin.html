@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ダイヤ管理</title>
-<!-- version: 1.0.0 -->
+<!-- version: 1.1.0 -->
+<!-- 1.1.0: ブラウザ標準の confirm／prompt／alert をやめて、ページ内のダイアログに置き換えた（自動操作のブラウザなど、標準ダイアログが出ない環境でも操作できる）。保存は「保存せず確認」を通したうえで押すので、保存直前の確認は外した。 -->
 <!-- 1.0.0: 新規作成。配信中のダイヤJSON（路線ファイル）を、サイト上で編集・追加・削除する運営用ページ。接続はジェネレーターと同じ（合言葉→Worker）。 -->
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--tx:#1b1f24;--sub:#667;--bd:#d5d9df;--ac:#1f6feb;--ng:#c62828;--ok:#2e7d32;--wn:#b26a00;--chg:#fff6d6;--del:#fde4e4;--new:#e3f6e6}
@@ -24,6 +25,11 @@ tr.chg td{background:var(--chg)}tr.del td{background:var(--del);text-decoration:
 #gate{padding:40px 16px;text-align:center}
 #sheetBox{max-height:70vh;overflow:auto}
 th.stick{position:sticky;top:0;background:var(--card)}
+#dlgBack{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:20000;display:flex;align-items:center;justify-content:center;padding:16px}
+#dlgBack[hidden]{display:none}
+#dlg{background:var(--card);color:var(--tx);border-radius:12px;padding:16px;max-width:420px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.35)}
+#dlg h3{margin:0 0 8px;font-size:15px}#dlg .msg{white-space:pre-wrap;margin-bottom:8px}#dlg input{width:100%}
+#dlg .btns{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
 pre{white-space:pre-wrap;font:12px/1.4 ui-monospace,monospace}
 </style>
 </head>
@@ -89,6 +95,7 @@ pre{white-space:pre-wrap;font:12px/1.4 ui-monospace,monospace}
 
 <div class="card"><h2>ログ</h2><pre id="log" style="max-height:160px;overflow:auto;margin:0"></pre></div>
 </main>
+<div id="dlgBack" hidden><div id="dlg" role="dialog" aria-modal="true"><h3 id="dlgTitle"></h3><div class="msg" id="dlgMsg"></div><div id="dlgFields"></div><div class="btns"><button class="sub" id="dlgCancel">キャンセル</button><button id="dlgOk">OK</button></div></div></div>
 <div id="gate" hidden>このページは運営アカウント専用です。</div>
 
 <script src="nav.js"></script>
@@ -111,6 +118,24 @@ const routesOf=r=>String(r["路線"]||"").split(",").map(x=>x.trim()).filter(Boo
 
 /* 運営だけ(見た目の入口の制限。実際の保護は合言葉) */
 if(localStorage.getItem("username")!=="運営"){$("app").hidden=true;$("gate").hidden=false;}
+
+/* ---------- ページ内ダイアログ(confirm/prompt/alert の代わり) ---------- */
+// dlg({title,msg,fields:[{id,label,value}],ok,cancel,danger}) → キャンセルなら null、OKなら {id:値,...}(欄が無ければ {})
+function dlg(o){
+  return new Promise(res=>{
+    $("dlgTitle").textContent=o.title||"";$("dlgMsg").textContent=o.msg||"";
+    $("dlgFields").innerHTML=(o.fields||[]).map(f=>`<label>${esc(f.label)}</label><input data-fid="${esc(f.id)}" value="${esc(f.value||"")}">`).join("");
+    const ok=$("dlgOk"),ca=$("dlgCancel");ok.textContent=o.ok||"OK";ca.textContent=o.cancel||"キャンセル";ca.hidden=o.cancel===false;
+    ok.className=o.danger?"ng":"";$("dlgBack").hidden=false;
+    const done=v=>{$("dlgBack").hidden=true;ok.onclick=ca.onclick=null;document.removeEventListener("keydown",kd);res(v);};
+    const collect=()=>{const v={};document.querySelectorAll("#dlgFields input").forEach(i=>v[i.dataset.fid]=i.value.trim());return v;};
+    const kd=e=>{if(e.key==="Escape")done(null);else if(e.key==="Enter"&&e.target.tagName!=="TEXTAREA")done(collect());};
+    ok.onclick=()=>done(collect());ca.onclick=()=>done(null);document.addEventListener("keydown",kd);
+    const f=document.querySelector("#dlgFields input");(f||ok).focus();
+  });
+}
+const note=(msg,title)=>dlg({title:title||"確認",msg,ok:"閉じる",cancel:false});
+const yes=(msg,o)=>dlg(Object.assign({title:"確認",msg},o||{})).then(v=>v!==null);
 
 const S={manifest:null,cur:null,edits:{},deleted:new Set(),openKey:null,lastDry:null};
 
@@ -141,10 +166,10 @@ $("btnConn").onclick=async()=>{
 function onComp(){const c=$("selComp").value;$("selRoute").innerHTML=S.manifest.files.filter(f=>f.company===c).map(f=>`<option value="${esc(f.file)}">${esc(f.route)}</option>`).join("");}
 $("selComp").onchange=onComp;
 $("btnLoad").onclick=async()=>{
-  if(hasChanges()&&!confirm("未保存の変更があります。破棄して別のファイルを読み込みますか?"))return;
+  if(hasChanges()&&!await yes("未保存の変更があります。破棄して別のファイルを読み込みますか?",{ok:"破棄して読み込む",danger:true}))return;
   const file=$("selRoute").value;const entry=S.manifest.files.find(f=>f.file===file);if(!entry)return;
   $("btnLoad").disabled=true;
-  try{await loadFile(entry);}catch(e){log("読み込み失敗: "+e.message);alert(e.message);}
+  try{await loadFile(entry);}catch(e){log("読み込み失敗: "+e.message);note(e.message,"読み込みに失敗しました");}
   $("btnLoad").disabled=false;
 };
 async function loadFile(entry){
@@ -209,18 +234,19 @@ $("tblList").addEventListener("click",e=>{
   else if(b.dataset.undo){S.deleted.delete(b.dataset.undo);renderList();renderChanges();}
   else if(b.dataset.dup)dupDia(b.dataset.dup);
 });
-function delDia(k){
-  if(!confirm(`ダイヤ「${k}」を削除します(保存するまで実際には消えません)。よろしいですか?`))return;
+async function delDia(k){
+  if(!await yes(`ダイヤ「${k}」を削除します。\n(「保存する」を押すまで実際には消えません。「戻す」で取り消せます)`,{ok:"削除する",danger:true}))return;
   const ed=S.edits[k];
   if(ed&&ed.isNew)delete S.edits[k];else{delete S.edits[k];S.deleted.add(k);}
   if(S.openKey===k){S.openKey=null;$("cSheet").hidden=true;}
   renderList();renderChanges();
 }
-function dupDia(k){
-  const nid=prompt("複製先の ID(接頭辞)",k.split("_")[0]);if(nid==null)return;
-  const nun=prompt("複製先の運番",k.split("_")[1]);if(nun==null)return;
+async function dupDia(k){
+  const v=await dlg({title:`「${k}」を複製`,msg:"複製先の ID(接頭辞)と運番を入れてください",fields:[{id:"id",label:"ID(接頭辞)",value:k.split("_")[0]},{id:"un",label:"運番",value:k.split("_")[1]}],ok:"複製する"});
+  if(!v)return;const nid=v.id,nun=v.un;
+  if(!nid||!nun){note("ID と運番を入れてください");return;}
   const nk=`${nid}_${nun}`;
-  if(S.cur.list.some(r=>keyOf(r)===nk)||S.edits[nk]){alert(`「${nk}」は既にあります`);return;}
+  if(S.cur.list.some(r=>keyOf(r)===nk)||S.edits[nk]||S.deleted.has(nk)){note(`「${nk}」は既にあります`);return;}
   const src=S.edits[k]?S.edits[k].rows:S.cur.list.filter(r=>keyOf(r)===k);
   const rows=clone(src).map(r=>{r["ID"]=nid;r["運番"]=nun;r["最終更新"]=jstDate();return r;});
   S.edits[nk]={isNew:true,rows,sheet:clone(sheetOf(k))};
@@ -230,9 +256,9 @@ $("btnAdd").onclick=()=>{
   const v=id=>$(id).value.trim();
   const row={"会社":v("nCompany"),"路線":v("nRoute").split(",").map(s=>s.trim()).filter(Boolean).join(", "),"ID":v("nId"),"運番":v("nUnban"),"曜日区分":v("nWeekday"),"臨時":v("nRinji")||"FALSE","適用開始日":v("nStart"),"最終更新":jstDate(),"両数":v("nCars"),"所定形式":v("nIcons"),"臨時ダイヤ名":v("nPat")};
   const miss=["会社","路線","ID","運番","曜日区分","適用開始日"].filter(f=>!row[f]);
-  if(miss.length){alert(`未入力: ${miss.join("、")}`);return;}
+  if(miss.length){note(`未入力: ${miss.join("、")}`);return;}
   const k=keyOf(row);
-  if(S.cur.list.some(r=>keyOf(r)===k)||S.edits[k]){alert(`「${k}」は既にあります`);return;}
+  if(S.cur.list.some(r=>keyOf(r)===k)||S.edits[k]){note(`「${k}」は既にあります`);return;}
   S.edits[k]={isNew:true,rows:[row],sheet:[]};
   renderList();renderChanges();openSheet(k);
 };
@@ -280,12 +306,12 @@ function markChanged(){const ed=S.edits[S.openKey];if(ed)ed.rows.forEach(r=>r["�
 $("fltTrain").oninput=renderSheet;
 $("btnAddRow").onclick=()=>{const ed=ensureEdit(S.openKey);const l=ed.sheet[ed.sheet.length-1]||["","","","",""];ed.sheet.push([l[0],"","",l[3],l[4]]);markChanged();renderSheet();};
 $("btnTsvOut").onclick=()=>{const t=$("tsv");t.style.display="block";t.value=sheetOf(S.openKey).map(r=>r.map(c=>String(c).replace(/\n/g,"\\n")).join("\t")).join("\n");t.select();};
-$("btnTsvIn").onclick=()=>{
-  const t=$("tsv");if(t.style.display==="none"){t.style.display="block";alert("下の欄にTSVを貼ってから、もう一度押してください");return;}
+$("btnTsvIn").onclick=async()=>{
+  const t=$("tsv");if(t.style.display==="none"){t.style.display="block";t.focus();$("sheetWarn").innerHTML='<span class="wn">下の欄にTSVを貼ってから、もう一度「TSVを反映」を押してください</span>';return;}
   const lines=t.value.split(/\r?\n/).filter(x=>x.trim());
   let rows=lines.map(l=>{const c=l.split("\t").map(x=>x.replace(/\\n/g,"\n"));while(c.length<5)c.push("");return c.slice(0,5);});
   if(rows.length&&rows[0][0]==="列車番号")rows=rows.slice(1);
-  if(!confirm(`${rows.length} 行で、このシートを全部置き換えます。よろしいですか?`))return;
+  if(!await yes(`${rows.length} 行で、このシートを全部置き換えます。`,{ok:"置き換える",danger:true}))return;
   ensureEdit(S.openKey).sheet=rows;markChanged();renderSheet();
 };
 
@@ -325,12 +351,11 @@ function showRes(res,dry){
   $("btnSave").disabled=!dry;
 }
 $("btnDry").onclick=async()=>{
-  if(!hasChanges()){alert("変更がありません");return;}
+  if(!hasChanges()){note("変更がありません");return;}
   try{showRes(await doSave(true),true);log("dry run OK");}
   catch(e){$("saveRes").innerHTML=`<pre class="ngt">${esc(e.message?errTxt(e):String(e))}</pre>`;log("dry run NG: "+e.message);}
 };
 $("btnSave").onclick=async()=>{
-  if(!confirm(`${Object.keys(S.edits).length} 件の編集・追加、${S.deleted.size} 件の削除を保存します。よろしいですか?`))return;
   $("btnSave").disabled=true;
   try{const r=await doSave(false);showRes(r,false);log("保存OK");
     const entry=S.cur.entry;const res=$("saveRes").innerHTML;await loadFile(entry);$("saveRes").innerHTML=res;}
@@ -340,7 +365,7 @@ $("btnSave").onclick=async()=>{
     $("btnSave").disabled=false;log("保存NG: "+e.message);
   }
 };
-$("btnDiscard").onclick=()=>{if(!hasChanges())return;if(!confirm("未保存の変更を全部破棄します。よろしいですか?"))return;S.edits={};S.deleted=new Set();renderList();renderChanges();if(S.openKey){if(S.cur.list.some(r=>keyOf(r)===S.openKey))renderSheet();else{S.openKey=null;$("cSheet").hidden=true;}}};
+$("btnDiscard").onclick=async()=>{if(!hasChanges())return;if(!await yes("未保存の変更を全部破棄します。",{ok:"破棄する",danger:true}))return;S.edits={};S.deleted=new Set();renderList();renderChanges();if(S.openKey){if(S.cur.list.some(r=>keyOf(r)===S.openKey))renderSheet();else{S.openKey=null;$("cSheet").hidden=true;}}};
 window.addEventListener("beforeunload",e=>{if(hasChanges()){e.preventDefault();e.returnValue="";}});
 </script>
 </body>
