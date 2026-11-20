@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ダイヤJSONジェネレーター v1.4.0</title>
+<title>ダイヤJSONジェネレーター v1.5.0</title>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--tx:#1b1f24;--sub:#667;--bd:#d5d9df;--ac:#1f6feb;--ng:#c62828;--ok:#2e7d32;--wn:#b26a00}
 @media (prefers-color-scheme:dark){:root{--bg:#14171b;--card:#1d2127;--tx:#e6e8eb;--sub:#9aa3ad;--bd:#343b44;--ac:#5b9dff;--ng:#ff6b6b;--ok:#6fcf7a;--wn:#f0b050}}
@@ -24,7 +24,7 @@ progress{width:100%}
 </head>
 <body>
 <div class="wrap" id="app">
-<h1>ダイヤJSONジェネレーター <span class="mut">v1.4.0</span> <a href="dia_admin.html" class="mut" style="font-size:12px">→ ダイヤ管理ページ</a></h1>
+<h1>ダイヤJSONジェネレーター <span class="mut">v1.5.0</span> <a href="dia_admin.html" class="mut" style="font-size:12px">→ ダイヤ管理ページ</a></h1>
 
 <div class="card" id="c1">
   <h2>1. 接続</h2>
@@ -77,7 +77,7 @@ progress{width:100%}
 
 <div class="card" id="c5" hidden>
   <h2>5. 保存</h2>
-  <div class="row"><button id="btnDry">保存せず確認(dry run)</button><button id="btnSave" disabled>保存する</button></div>
+  <div class="row"><button id="btnDry">保存せず確認(dry run)</button><button id="btnSave" disabled>保存する</button><button id="btnSaveExport" class="sub">書き出す</button></div>
   <div id="saveRes"></div>
 </div>
 
@@ -90,7 +90,7 @@ progress{width:100%}
 <script src="generator_core.js?v=1.1.0"></script>
 <script>
 "use strict";
-const VER="1.4.0";
+const VER="1.5.0";
 const MASTER_SHEET="1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s";
 const ICON_BASE="https://img.elesite-next.com";
 const $=id=>document.getElementById(id);
@@ -330,6 +330,27 @@ function showRes(res,dry){
     (sk.length?`<div style="margin-top:8px"><label><input type="checkbox" id="chkRep"> 既存のキーを今回の内容で上書きする(${sk.length}件)</label><div class="mut">スプシ由来のキーはWorkerが拒否します。上書き前の内容は履歴に残ります。</div></div>`:"");
   $("btnSave").disabled=!dry;
 }
+// 「保存する」が送るのと同じ本文をJSONファイルに書き出す（Workerに繋がらなくても必ず書き出せる）
+$("btnSaveExport").onclick=async()=>{
+  let groups;
+  try{if(!S.results.length)throw new Error("書き出す変換結果がありません(先に変換してください)");groups=buildPlan();}
+  catch(e){$("saveRes").innerHTML=`<pre class="ng">${esc(errTxt(e))}</pre>`;log("書き出しNG: "+e.message);return;}
+  const rep=$("chkRep")&&$("chkRep").checked;const modes={};
+  if(rep&&S.lastPlan)for(const x of (S.lastPlan.results||[]))for(const k of (x.skipped||[]))modes[k]="replace";
+  let base="";
+  if(S.manifest&&S.manifest.generated)base=S.manifest.generated;
+  else{try{const m=await Promise.race([api("/api/manifest"),new Promise((_,rj)=>setTimeout(()=>rj(new Error("timeout")),4000))]);S.manifest=m;base=m.generated||"";}catch(e){base="";}}
+  try{
+    const body={source:"generator",dry_run:false,base_generated:base,modes,groups};
+    const d=new Date(),z=n=>String(n).padStart(2,"0");
+    const name=`tuts4-save-${d.getFullYear()}${z(d.getMonth()+1)}${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}.json`;
+    const url=URL.createObjectURL(new Blob([JSON.stringify(body,null,2)],{type:"application/json"}));
+    const a=document.createElement("a");a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),10000);
+    $("saveRes").innerHTML=`<div class="ok">書き出しました: ${esc(name)}</div><div class="mut">このファイルを Muse に渡せば手動で適用できます。${base?"":"(base_generated は空です。適用時に付け直します)"}${Object.keys(modes).length?` 上書き指定 ${Object.keys(modes).length} 件を含みます。`:""}</div>`;
+    log(`書き出し完了 ${name}`);
+  }catch(e){$("saveRes").innerHTML=`<pre class="ng">${esc(errTxt(e))}</pre>`;log("書き出しNG: "+e.message);}
+};
 function errTxt(e){return `${e.message}${e.details?"\n"+JSON.stringify(e.details).slice(0,400):""}`;}
 $("btnDry").onclick=async()=>{
   try{const r=await doSave(true);showRes(r,true);log("dry run OK");}
