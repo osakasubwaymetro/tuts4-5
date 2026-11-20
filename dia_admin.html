@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ダイヤ管理</title>
-<!-- version: 1.3.1 -->
+<!-- version: 1.3.2 -->
+<!-- 1.3.2: 一覧のIDの前のアイコンを、所定形式の1枚目だけでなく入っているURL全件分、記載順に並べて表示（高さ20pxのまま・読み込めない画像だけ消える・空なら何も出さない）。 -->
 <!-- 1.3.1: 一覧の「所定形式」セルの高さを自動に。手動リサイズはやめ、表示中の一覧で行数が一番多い所定形式に合わせて全行を同じ高さにする（編集で行数が変わるたびに再計算）。新規ダイヤ追加フォームは変更なし。 -->
 <!-- 1.3.0: ①「所定形式」を複数行のテキストエリアにした（新規ダイヤ追加フォームと一覧のセル編集）。保存される値は今まで通り改行区切りのURL文字列。②一覧のIDの前に、所定形式の1枚目のアイコンを小さく表示（空なら何も出さない、読み込めなければ消える）。 -->
 <!-- 1.2.0: ①合言葉は初回だけ入力。ブラウザ（localStorage）に覚え、次からは自動で接続（ジェネレーターと共通）。②シート表示の見出し行（列車番号…）をデータ行として数えず、「時刻の形式が違う行」などの警告に入れないようにした。 -->
@@ -214,10 +215,10 @@ function sheetOf(k){return S.edits[k]?S.edits[k].sheet:(S.cur.sheets[k]||[]);}
 const hasChanges=()=>Object.keys(S.edits).length>0||S.deleted.size>0;
 
 /* ---------- 3. 一覧 ---------- */
-// 所定形式（改行区切りのURL）の1枚目を小さなアイコンにする。空なら何も出さない。読み込めなかったら消す
+// 所定形式（改行区切りのURL）を、入っている数だけ記載順に小さなアイコンにする。空なら何も出さない。読み込めなかったら消す
 function iconImg(v){
-  const u=String(v||"").split(/\r?\n/).map(x=>x.trim()).find(Boolean);
-  return u?`<img class="ic" src="${esc(u)}" alt="" loading="lazy" onerror="this.remove()">`:"";
+  return String(v||"").split(/\r?\n/).map(x=>x.trim()).filter(Boolean)
+    .map(u=>`<img class="ic" src="${esc(u)}" alt="" loading="lazy" onerror="this.remove()">`).join("");
 }
 function renderList(){
   const rows=effRows();const src=S.cur.sources||{};
