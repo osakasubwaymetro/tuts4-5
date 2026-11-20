@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ダイヤ管理</title>
-<!-- version: 1.3.2 -->
+<!-- version: 1.4.0 -->
+<!-- 1.4.0: ①一括編集を追加。一覧の左端にチェックボックス（ヘッダーで全選択／全解除、「平日だけ選択」「休日だけ選択」、選択件数表示）。一覧の上の「一括編集」パネルで列と新しい値を選んで「選択した行に適用」（確認ダイヤログつき）。適用した行は通常のセル編集と同じ変更扱い（保存前確認・変更を全部破棄で戻せる）。削除予定の行は対象外。路線ファイルを読み込み直すとチェックはリセット。
+     ②会社の選択を、プルダウンから「入力すると候補がボタンで出る」方式（時刻表ページの駅名入力と同じ見た目・動き）に変更。候補は manifest の会社一覧。選ぶと路線のプルダウンが更新される。 -->
 <!-- 1.3.2: 一覧のIDの前のアイコンを、所定形式の1枚目だけでなく入っているURL全件分、記載順に並べて表示（高さ20pxのまま・読み込めない画像だけ消える・空なら何も出さない）。 -->
 <!-- 1.3.1: 一覧の「所定形式」セルの高さを自動に。手動リサイズはやめ、表示中の一覧で行数が一番多い所定形式に合わせて全行を同じ高さにする（編集で行数が変わるたびに再計算）。新規ダイヤ追加フォームは変更なし。 -->
 <!-- 1.3.0: ①「所定形式」を複数行のテキストエリアにした（新規ダイヤ追加フォームと一覧のセル編集）。保存される値は今まで通り改行区切りのURL文字列。②一覧のIDの前に、所定形式の1枚目のアイコンを小さく表示（空なら何も出さない、読み込めなければ消える）。 -->
@@ -23,6 +25,10 @@ button{background:var(--ac);color:#fff;border:0;padding:7px 12px;cursor:pointer}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}.row>div{flex:1 1 150px}
 table{border-collapse:collapse;width:100%;font-size:12px}th,td{border-bottom:1px solid var(--bd);padding:3px;text-align:left;vertical-align:top}
 td input,td textarea{width:100%;min-width:56px;padding:3px 5px}td textarea.ico{min-width:150px;height:auto;resize:none;overflow:hidden}.ic{height:20px;width:auto;max-width:44px;object-fit:contain;vertical-align:middle;margin-right:5px;border-radius:2px}td textarea{resize:vertical;min-height:26px;white-space:pre}
+.search-results{background:var(--card);border:1px solid var(--bd);border-radius:10px;margin-top:6px;overflow:hidden;max-height:240px;overflow-y:auto}
+.search-results button{display:block;width:100%;text-align:left;background:var(--card);color:var(--tx);border:0;border-bottom:1px solid var(--bd);border-radius:0;padding:10px 12px;font-size:14px}
+.search-results button:last-child{border-bottom:0}.search-results button:active{background:var(--bg)}
+.bulk{border:1px solid var(--bd);border-radius:8px;padding:8px;margin:8px 0}.bulk .row{margin-top:2px}td.ck,th.ck{width:26px;text-align:center}td.ck input,th.ck input{width:auto;min-width:0}
 .scroll{overflow-x:auto}.mut{color:var(--sub);font-size:12px}.ok{color:var(--ok)}.ngt{color:var(--ng)}.wn{color:var(--wn)}
 tr.chg td{background:var(--chg)}tr.del td{background:var(--del);text-decoration:line-through}tr.new td{background:var(--new)}tr.sel td:first-child{box-shadow:inset 3px 0 var(--ac)}
 .tag{display:inline-block;border-radius:4px;padding:0 5px;font-size:11px;background:var(--bd)}
@@ -51,7 +57,7 @@ pre{white-space:pre-wrap;font:12px/1.4 ui-monospace,monospace}
 <div class="card" id="cFile" hidden>
   <h2>2. 路線ファイルを選ぶ</h2>
   <div class="row">
-    <div><label>会社</label><select id="selComp"></select></div>
+    <div><label>会社(入力すると候補が出ます)</label><input id="selComp" autocomplete="off" placeholder="会社名の一部を入力" style="width:100%"><div id="compResults"></div></div>
     <div><label>路線</label><select id="selRoute"></select></div>
     <div><button id="btnLoad">読み込む</button></div>
   </div>
@@ -61,6 +67,18 @@ pre{white-space:pre-wrap;font:12px/1.4 ui-monospace,monospace}
 <div class="card" id="cList" hidden>
   <h2>3. ダイヤ一覧 <span class="mut" id="listCount"></span></h2>
   <div class="mut">黄色=編集済み／緑=新規／赤=削除予定。ID・運番・会社・路線は変えられません(変えたい時は「複製」してから元を削除)。</div>
+  <div class="bulk">
+    <b>一括編集</b> <span class="mut" id="selCount">0件選択中</span>
+    <div class="row" style="margin-top:4px">
+      <div style="flex:0 0 auto"><button class="sub sm" id="bkAll">全選択</button> <button class="sub sm" id="bkNone">全解除</button> <button class="sub sm" id="bkWk">平日だけ選択</button> <button class="sub sm" id="bkHd">休日だけ選択</button></div>
+    </div>
+    <div class="row">
+      <div style="flex:0 0 150px"><label>変える列</label><select id="bkCol"></select></div>
+      <div style="flex:2 1 260px"><label>新しい値</label><span id="bkValWrap"></span></div>
+      <div style="flex:0 0 auto"><button id="bkApply">選択した行に適用</button></div>
+    </div>
+    <div class="mut">チェックした行（削除予定の行を除く）の、選んだ列をまとめて同じ値にします。適用は通常のセル編集と同じ扱い（「保存する」まで反映されません）。</div>
+  </div>
   <div class="scroll"><table id="tblList"></table></div>
   <details style="margin-top:8px"><summary>＋ 新規ダイヤを追加</summary>
     <div class="row">
@@ -143,7 +161,7 @@ function dlg(o){
 const note=(msg,title)=>dlg({title:title||"確認",msg,ok:"閉じる",cancel:false});
 const yes=(msg,o)=>dlg(Object.assign({title:"確認",msg},o||{})).then(v=>v!==null);
 
-const S={manifest:null,cur:null,edits:{},deleted:new Set(),openKey:null,lastDry:null};
+const S={comps:[],sel:new Set(),manifest:null,cur:null,edits:{},deleted:new Set(),openKey:null,lastDry:null};
 
 /* ---------- Worker ---------- */
 async function api(path,{method="GET",body=null}={}){
@@ -164,17 +182,31 @@ $("btnConn").onclick=async()=>{
   try{S.manifest=await api("/api/manifest");
     $("connMsg").innerHTML=`<span class="ok">接続OK</span> 路線ファイル ${S.manifest.files.length} 件 / generated ${esc(S.manifest.generated)}`;
     const comps=[...new Set(S.manifest.files.map(f=>f.company))];
-    $("selComp").innerHTML=comps.map(c=>`<option>${esc(c)}</option>`).join("");onComp();$("cFile").hidden=false;log("接続OK");}
+    S.comps=comps;$("selComp").value=comps.length===1?comps[0]:"";onComp();$("cFile").hidden=false;log("接続OK");}
   catch(e){$("connMsg").innerHTML=`<span class="ngt">${esc(e.message)}</span>`;log("接続NG: "+e.message);}
 };
 if($("key").value)setTimeout(()=>$("btnConn").click(),0); // 覚えた合言葉があれば自動で接続
 
 /* ---------- 2. ファイル選択 ---------- */
-function onComp(){const c=$("selComp").value;$("selRoute").innerHTML=S.manifest.files.filter(f=>f.company===c).map(f=>`<option value="${esc(f.file)}">${esc(f.route)}</option>`).join("");}
-$("selComp").onchange=onComp;
+function onComp(){
+  const c=$("selComp").value.trim();
+  const fs=S.manifest.files.filter(f=>f.company===c);
+  $("selRoute").innerHTML=fs.length?fs.map(f=>`<option value="${esc(f.file)}">${esc(f.route)}</option>`).join(""):`<option value="">まず会社を選んでください</option>`;
+}
+// 会社の候補（入力に一致する会社をボタンで出し、タップで選ぶ）
+function compSearch(){
+  const q=$("selComp").value.trim().toLowerCase(),box=$("compResults");
+  const hit=S.comps.filter(c=>!q||c.toLowerCase().includes(q));
+  if(hit.length===1&&hit[0].toLowerCase()===q){box.innerHTML="";return;}
+  box.innerHTML=hit.length?`<div class="search-results">${hit.map(c=>`<button type="button" data-c="${esc(c)}">${esc(c)}</button>`).join("")}</div>`:`<div class="mut" style="margin-top:6px">見つかりませんでした</div>`;
+}
+$("selComp").addEventListener("input",()=>{onComp();compSearch();});
+$("selComp").addEventListener("focus",compSearch);
+$("compResults").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;$("selComp").value=b.dataset.c;$("compResults").innerHTML="";onComp();});
+document.addEventListener("click",e=>{if(!e.target.closest("#selComp,#compResults"))$("compResults").innerHTML="";});
 $("btnLoad").onclick=async()=>{
   if(hasChanges()&&!await yes("未保存の変更があります。破棄して別のファイルを読み込みますか?",{ok:"破棄して読み込む",danger:true}))return;
-  const file=$("selRoute").value;const entry=S.manifest.files.find(f=>f.file===file);if(!entry)return;
+  const file=$("selRoute").value;const entry=S.manifest.files.find(f=>f.file===file);if(!entry){note("会社を選んでから路線を選んでください。");return;}
   $("btnLoad").disabled=true;
   try{await loadFile(entry);}catch(e){log("読み込み失敗: "+e.message);note(e.message,"読み込みに失敗しました");}
   $("btnLoad").disabled=false;
@@ -184,7 +216,7 @@ async function loadFile(entry){
   const e2=m.files.find(f=>f.file===entry.file)||entry;
   const d=await api("/api/"+e2.file);
   S.cur={entry:e2,list:d.list||[],sheets:d.sheets||{},sources:d._sources||d.sources||null};
-  S.edits={};S.deleted=new Set();S.openKey=null;S.lastDry=null;
+  S.edits={};S.deleted=new Set();S.openKey=null;S.lastDry=null;S.sel=new Set();
   $("fileInfo").textContent=`${e2.file}(ダイヤ ${new Set(S.cur.list.map(keyOf)).size} 件 / rev ${e2.rev})`;
   $("nCompany").value=e2.company;$("nRoute").value=e2.route;
   $("cList").hidden=false;$("cSave").hidden=false;$("cSheet").hidden=true;
@@ -223,18 +255,18 @@ function iconImg(v){
 function renderList(){
   const rows=effRows();const src=S.cur.sources||{};
   $("listCount").textContent=`(${new Set(rows.map(x=>x.key)).size}件)`;
-  $("tblList").innerHTML=`<tr><th>状態</th><th>ID</th><th>運番</th>${EDITABLE.map(f=>`<th>${f}</th>`).join("")}<th>最終更新</th><th>行数</th><th>出所</th><th></th></tr>`+
+  $("tblList").innerHTML=`<tr><th class="ck"><input type="checkbox" id="chkAll" title="全選択／全解除"></th><th>状態</th><th>ID</th><th>運番</th>${EDITABLE.map(f=>`<th>${f}</th>`).join("")}<th>最終更新</th><th>行数</th><th>出所</th><th></th></tr>`+
   rows.map((x,n)=>{
     const r=x.row,k=x.key,dis=x.st==="del"?"disabled":"";
     const tag=x.st==="chg"?"編集":x.st==="new"?"新規":x.st==="del"?"削除":"";
-    return `<tr class="${x.st}${S.openKey===k?" sel":""}"><td>${tag?`<span class="tag">${tag}</span>`:""}</td><td style="white-space:nowrap">${iconImg(r["所定形式"])}${esc(r["ID"])}</td><td>${esc(r["運番"])}</td>`+
+    return `<tr class="${x.st}${S.openKey===k?" sel":""}"><td class="ck"><input type="checkbox" class="chk" data-ck="${esc(k)}" ${x.st==="del"?"disabled":""} ${S.sel.has(k)&&x.st!=="del"?"checked":""}></td><td>${tag?`<span class="tag">${tag}</span>`:""}</td><td style="white-space:nowrap">${iconImg(r["所定形式"])}${esc(r["ID"])}</td><td>${esc(r["運番"])}</td>`+
       EDITABLE.map(f=>f==="所定形式"
         ?`<td><textarea class="ico" rows="1" data-k="${esc(k)}" data-i="${x.i==null?-1:x.i}" data-f="${f}" ${dis}>${esc(r[f])}</textarea></td>`
         :`<td><input data-k="${esc(k)}" data-i="${x.i==null?-1:x.i}" data-f="${f}" value="${esc(r[f])}" ${dis}></td>`).join("")+
       `<td>${esc(r["最終更新"])}</td><td>${sheetOf(k).length}</td><td class="mut">${esc(src[k]||"")}</td><td style="white-space:nowrap">`+
       (x.st==="del"?`<button class="sub sm" data-undo="${esc(k)}">戻す</button>`:`<button class="sm" data-open="${esc(k)}">開く</button> <button class="sub sm" data-dup="${esc(k)}">複製</button> <button class="ng sm" data-del="${esc(k)}">削除</button>`)+
       `</td></tr>`;}).join("");
-  fitIco();
+  fitIco();updateSel();
 }
 // 一覧の所定形式セルは、表示中でいちばん行数が多いものに合わせて全行を同じ高さにする
 function fitIco(){
@@ -244,7 +276,10 @@ function fitIco(){
 }
 $("tblList").addEventListener("input",e=>{if(e.target.classList&&e.target.classList.contains("ico"))fitIco();});
 $("tblList").addEventListener("change",e=>{
-  const t=e.target;if(!t.dataset||!t.dataset.f)return;
+  const t=e.target;
+  if(t.id==="chkAll"){selectWhere(()=>t.checked);return;}
+  if(t.dataset&&t.dataset.ck!==undefined){if(t.checked)S.sel.add(t.dataset.ck);else S.sel.delete(t.dataset.ck);updateSel();return;}
+  if(!t.dataset||!t.dataset.f)return;
   const k=t.dataset.k;const i=+t.dataset.i;const ed=ensureEdit(k);
   ed.rows[i][t.dataset.f]=t.value;ed.rows[i]["最終更新"]=jstDate();
   renderList();renderChanges();
@@ -256,6 +291,47 @@ $("tblList").addEventListener("click",e=>{
   else if(b.dataset.undo){S.deleted.delete(b.dataset.undo);renderList();renderChanges();}
   else if(b.dataset.dup)dupDia(b.dataset.dup);
 });
+/* ---------- 一括編集 ---------- */
+const bkRows=()=>effRows().filter(x=>x.st!=="del"); // 削除予定の行は対象外
+function selectWhere(pred){ // 条件に合う行(削除予定を除く)だけを選択にする
+  S.sel=new Set();bkRows().forEach(x=>{if(pred(x.row))S.sel.add(x.key);});
+  document.querySelectorAll("#tblList .chk").forEach(c=>{c.checked=S.sel.has(c.dataset.ck);});updateSel();
+}
+function updateSel(){
+  const keys=new Set(bkRows().map(x=>x.key));
+  S.sel=new Set([...S.sel].filter(k=>keys.has(k))); // 消えた・削除予定になった行は選択から外す
+  $("selCount").textContent=`${S.sel.size}件選択中`;
+  const all=$("chkAll");if(all){all.checked=keys.size>0&&S.sel.size===keys.size;all.indeterminate=S.sel.size>0&&S.sel.size<keys.size;}
+}
+const isWk=r=>/平日/.test(r["曜日区分"]||"")&&!/休日/.test(r["曜日区分"]||"");
+const isHd=r=>/休日/.test(r["曜日区分"]||"")&&!/平日/.test(r["曜日区分"]||"");
+$("bkAll").onclick=()=>selectWhere(()=>true);
+$("bkNone").onclick=()=>selectWhere(()=>false);
+$("bkWk").onclick=()=>selectWhere(isWk);
+$("bkHd").onclick=()=>selectWhere(isHd);
+$("bkCol").innerHTML=EDITABLE.map(f=>`<option>${f}</option>`).join("");
+function bkMakeVal(){ // 列に合わせて入力欄の形を変える
+  const c=$("bkCol").value;
+  $("bkValWrap").innerHTML=c==="所定形式"?`<textarea id="bkVal" rows="3" style="width:100%;white-space:pre" placeholder="URL(複数なら改行で区切る)"></textarea>`
+    :c==="臨時"?`<select id="bkVal"><option>TRUE</option><option>FALSE</option></select>`:`<input id="bkVal" style="width:100%">`;
+}
+$("bkCol").onchange=bkMakeVal;bkMakeVal();
+$("bkApply").onclick=async()=>{
+  const col=$("bkCol").value,val=$("bkVal").value.trim();
+  updateSel();const keys=[...S.sel];
+  if(!keys.length){await note("変更する行をチェックしてください。");return;}
+  const shown=val.split("\n").length>1?val.split("\n")[0]+" …(全"+val.split("\n").length+"行)":val;
+  if(!await yes(`${keys.length}件のダイヤの『${col}』を変更します。\n新しい値: ${shown||"(空)"}\n(「保存する」を押すまで実際には反映されません)`,{ok:"適用する"}))return;
+  const byKey={};bkRows().forEach(x=>{(byKey[x.key]=byKey[x.key]||[]).push(x.row);});
+  let n=0;
+  for(const k of keys){
+    if((byKey[k]||[]).every(r=>String(r[col]==null?"":r[col])===val))continue; // すでに同じ値なら変更扱いにしない
+    const ed=ensureEdit(k);ed.rows.forEach(r=>{r[col]=val;r["最終更新"]=jstDate();});n++;
+  }
+  renderList();renderChanges();log(`一括編集: ${col} を ${n}/${keys.length} 件変更`);
+  if(!n)await note("選んだ行はすべて、すでに同じ値でした。");
+};
+
 async function delDia(k){
   if(!await yes(`ダイヤ「${k}」を削除します。\n(「保存する」を押すまで実際には消えません。「戻す」で取り消せます)`,{ok:"削除する",danger:true}))return;
   const ed=S.edits[k];
