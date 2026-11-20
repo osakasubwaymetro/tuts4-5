@@ -1,3 +1,6 @@
+// trainpos.js v1.31.0
+// 1.31.0: 「留置」表示を追加。表示時刻に営業運転していない運用（同じ運番＝同じ編成）が、どの駅に留まっているかを駅名の横に「留置 N」で出す。押すと、その駅の留置中の一覧（前運用の到着・次運用の発車）を開く。
+//         判定は路線JSONのダイヤだけで行う：最初の発車前は始発駅、最後の到着後は終着駅、途中で次の列車まで間が空く時は直前の列車の終着駅（次の列車の始発駅と同じ時だけ。違う時は回送の記載が無いので出さない）。
 // trainpos.js v1.30.0
 // 1.30.0: 臨時ダイヤ（路線×ダイヤ名の個別JSON）に対応。索引にある臨時ダイヤは、路線ファイル内の同じ名前の行より個別JSONを使う（索引に無いダイヤは路線ファイルのまま）。
 //         あわせて、JSON化されていない臨時（スプレッドシート「ダイヤ一覧」の臨時=TRUEの行）も DiagramStatic.tempsFor 経由で混ぜる。スプシが読めなくてもJSONだけで通常表示を続ける。
@@ -1076,6 +1079,58 @@
     return out;
   }
 
+  /* ---------- 留置（営業運転していない運用が留まっている駅） ---------- */
+  // 運用（sheetKey）ごとに、その日の列車を時刻順に並べて「いま走っていない」運用の居場所を決める。路線JSONの時刻だけで判定し、推測はしない
+  //  ・最初の発車前 → 最初の列車の始発駅  ・最後の到着後 → 最後の列車の終着駅（運行日の切り替え3:00まで）
+  //  ・列車と列車の間 → 直前の終着駅と次の始発駅が同じ時だけ、その駅（違う時は回送の記載が無いので判定しない）
+  //  ・始発の10分前からは在線表示（走行位置の列車）になるので、留置には数えない
+  function computeParked(ctx, nowSec, baseDate, active) {
+    const { idxOf } = routeInfo(ctx);
+    const shown = new Set(active.map(a => `${a.train.sheetKey}|${ymd(a.serviceDate)}`));
+    const out = new Map(); // 行番号 → [{...}]
+    const yesterday = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() - 1);
+    st._parkWarn = st._parkWarn || new Set();
+    [[baseDate, nowSec, isHoliday(baseDate)], [yesterday, nowSec + 86400, isHoliday(yesterday)]].forEach(([sd, t, hol]) => {
+      const groups = new Map();
+      st.trains.forEach(tr => {
+        if (!tr.sheetKey || !runsOn(tr, sd, hol)) return;
+        const [lo, hi] = trainRange(tr);
+        if (lo == null) return;
+        if (!groups.has(tr.sheetKey)) groups.set(tr.sheetKey, []);
+        groups.get(tr.sheetKey).push(tr);
+      });
+      groups.forEach((list, key) => {
+        const T = list.slice().sort((x, y) => trainRange(x)[0] - trainRange(y)[0]);
+        if (T.some(tr => { const [lo, hi] = trainRange(tr); return lo <= t && t <= hi; })) return; // 走行中
+        if (shown.has(`${key}|${ymd(sd)}`)) return;                                              // 在線表示中
+        let at = null, prev = null, next = null;
+        if (t < trainRange(T[0])[0]) { at = T[0].stops[0].s; next = T[0]; }
+        else if (t > trainRange(T[T.length - 1])[1]) {
+          if (t >= 86400 + DAY_START) return; // 翌運行日に入った後は、前日の運用の終夜留置は出さない（その日の運用の始発前として出る）
+          prev = T[T.length - 1]; at = prev.stops[prev.stops.length - 1].s;
+        } else {
+          for (let k = 0; k + 1 < T.length; k++) {
+            if (trainRange(T[k])[1] < t && t < trainRange(T[k + 1])[0]) {
+              prev = T[k]; next = T[k + 1];
+              const e = prev.stops[prev.stops.length - 1].s, b = next.stops[0].s;
+              if (canonKey(e) !== canonKey(b)) {
+                const w = `${key}:${prev.trainNumber}→${next.trainNumber}`;
+                if (!st._parkWarn.has(w)) { st._parkWarn.add(w); console.info(`[留置] 判定できません（${prev.trainNumber} の終着 ${e} と ${next.trainNumber} の始発 ${b} が違い、回送の記載が無い）運番${prev.unban}`); }
+                return;
+              }
+              at = e; break;
+            }
+          }
+        }
+        if (at == null || !idxOf.has(at)) return; // この路線の駅でなければ出さない
+        const row = idxOf.get(at);
+        if (!out.has(row)) out.set(row, []);
+        out.get(row).push({ key, sd, at, prev, next, rep: next || prev });
+      });
+    });
+    return out;
+  }
+
   /* ---------- 列車の詳細（時刻表ページと同じ表示を開く） ---------- */
   function secToHm(sec) {
     if (sec == null) return { hm: "", sec: null };
@@ -1190,6 +1245,80 @@
     return { date, sec };
   }
 
+  // 「留置 N」ボタンと、押した時に出る一覧
+  function ensureParkCss() {
+    if (document.getElementById("tpParkCss")) return;
+    const c = document.createElement("style");
+    c.id = "tpParkCss";
+    c.textContent = `
+      .tp-park{display:inline-block;margin-left:8px;padding:2px 9px;border:2px solid #9a9a9a;border-radius:8px;background:#fff;color:#333;font-size:13px;font-weight:700;letter-spacing:0;line-height:1.3;cursor:pointer}
+      .tp-park b{font-size:15px;margin-left:3px}
+      #tpParkOv{position:fixed;inset:0;z-index:10003;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:16px}
+      #tpParkBox{width:min(420px,100%);max-height:80vh;overflow:auto;background:#fff;border-radius:6px;box-shadow:0 4px 20px rgba(0,0,0,.3)}
+      #tpParkBox .pk-h{position:sticky;top:0;background:#16181d;color:#fff;font-weight:700;font-size:16px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between}
+      #tpParkBox .pk-x{width:30px;height:30px;border-radius:50%;border:0;background:#fff;color:#16181d;font-size:16px;line-height:1;cursor:pointer;padding:0}
+      #tpParkBox .pk-u{padding:12px 16px;border-bottom:1px solid #eee}
+      #tpParkBox .pk-t{display:flex;align-items:center;gap:8px;font-weight:700;font-size:18px;color:#111}
+      #tpParkBox .pk-t img{width:40px;height:28px;object-fit:contain}
+      #tpParkBox .pk-p{font-size:12px;font-weight:600;color:#555;border:1px solid #aaa;border-radius:12px;padding:1px 9px}
+      #tpParkBox .pk-r{display:flex;margin-top:8px}
+      #tpParkBox .pk-c{flex:1;min-width:0;padding:2px 10px 2px 0;font-size:14px;color:#111;cursor:pointer;background:none;border:0;border-radius:0;text-align:left;font:inherit}
+      #tpParkBox .pk-c + .pk-c{border-left:1px solid #ddd;padding-left:12px}
+      #tpParkBox .pk-c small{display:block;color:#888;font-size:12px}
+      #tpParkBox .pk-c b{font-size:15px}
+      #tpParkBox .pk-c.none{cursor:default;color:#999}
+    `;
+    document.head.appendChild(c);
+  }
+  function parkTripLabel(tr) {
+    const f = tr.stops.find(x => x.bound) || tr.stops[0] || {};
+    const b = f.bound ? (/行$/.test(f.bound) ? f.bound : f.bound + "行") : "";
+    return `${f.type || ""} ${b}`.trim();
+  }
+  function parkContent(stName, units, ridesIdx) {
+    const memo = new Map();
+    const body = units.map((u, i) => {
+      const fm = findFormationForSheet(u.rep, u.sd, ridesIdx, memo);
+      const icon = fm && (fm.model || fm.number) ? resolveIcon(fm.model, fm.number) : ((u.rep.defaultIcons || [])[0] || FALLBACK_TRAIN_IMAGE);
+      const num = fm && fm.number ? cleanNum(fm.number) : "";
+      const title = num || ("運番" + (u.rep.unban || ""));
+      const pill = num && u.rep.unban ? `<span class="pk-p">運番 ${esc(u.rep.unban)}</span>` : "";
+      const cell = (label, tr, kind) => {
+        if (!tr) return `<div class="pk-c none"><small>${label}</small>${kind === "prev" ? "始発前から留置" : "運用終了（終夜留置）"}</div>`;
+        const stp = kind === "prev" ? tr.stops[tr.stops.length - 1] : tr.stops[0];
+        const t = kind === "prev" ? (stp.a != null ? stp.a : stp.d) : (stp.d != null ? stp.d : stp.a);
+        return `<button type="button" class="pk-c" data-i="${i}" data-k="${kind}"><small>${label}</small><b>${esc(secToHm(t).hm)}${kind === "prev" ? "着" : "発"}</b> ${esc(tr.trainNumber || "")}<br>${esc(parkTripLabel(tr))}</button>`;
+      };
+      return `<div class="pk-u"><div class="pk-t"><img src="${esc(icon)}" alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';">${esc(title)}${pill}</div>
+        <div class="pk-r">${cell("前運用", u.prev, "prev")}${cell("次運用", u.next, "next")}</div></div>`;
+    }).join("");
+    return `<div class="pk-h"><span>${esc(stName)}に留置中（${units.length}編成）</span><button type="button" class="pk-x" aria-label="閉じる">✕</button></div>${body || '<div class="pk-u" style="color:#888">いま留置中の列車はありません</div>'}`;
+  }
+  function closeParkModal() { const o = document.getElementById("tpParkOv"); if (o) o.remove(); st.parkOpen = null; }
+  function paintParkModal(units, ridesIdx) {
+    const o = document.getElementById("tpParkOv");
+    if (!o || !st.parkOpen) return;
+    const html = parkContent(st.parkOpen.name, units, ridesIdx);
+    const box = o.firstElementChild;
+    if (box._h === html) return; // 変わっていなければ描き直さない（押している最中に消えないように）
+    box._h = html; box.innerHTML = html;
+    box.querySelector(".pk-x").onclick = closeParkModal;
+    box.querySelectorAll(".pk-c[data-i]").forEach(b => {
+      b.onclick = () => { const u = units[+b.dataset.i]; const tr = u && (b.dataset.k === "prev" ? u.prev : u.next); if (tr) { closeParkModal(); openDetail(tr, [tr]); } };
+    });
+  }
+  function openParkModal(row, name, units, ridesIdx) {
+    ensureParkCss();
+    closeParkModal();
+    const o = document.createElement("div");
+    o.id = "tpParkOv";
+    o.innerHTML = '<div id="tpParkBox"></div>';
+    o.addEventListener("click", e => { if (e.target === o) closeParkModal(); });
+    document.body.appendChild(o);
+    st.parkOpen = { row, name };
+    paintParkModal(units, ridesIdx);
+  }
+
   function renderLayer() {
     const ctx = st.ctx;
     const box = document.getElementById("mapResult");
@@ -1197,6 +1326,7 @@
     const scroll = box.querySelector(".route-line-scroll");
     const old = document.getElementById("tpLayer");
     if (old) old.remove();
+    if (scroll) scroll.querySelectorAll(".tp-park").forEach(e => e.remove());
     updateClock();
     if (!st.on || !ctx || !scroll || st.trainsRoute !== ctx.routeVal) return;
 
@@ -1213,6 +1343,20 @@
     const active = computeActive(ctx, posSec, date);
     const ridesIdx = indexRides(st.rides);
     const rideOnlyList = computeRideOnly(ctx, posSec, date);
+    // 留置：営業運転していない運用が留まっている駅に「留置 N」を出す（行の高さを測る前に足す＝位置がずれない）
+    ensureParkCss();
+    let parked = new Map();
+    try { parked = computeParked(ctx, posSec, date, active); } catch (e) { parked = new Map(); }
+    parked.forEach((units, row) => {
+      const nm = rows[row] && rows[row].querySelector(".rt-name");
+      if (!nm) return;
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "tp-park";
+      b.innerHTML = `留置<b>${units.length}</b>`;
+      b.onclick = ev => { ev.stopPropagation(); const nameTxt = (nm.dataset.xst || nm.firstChild && nm.firstChild.textContent || "").trim(); openParkModal(row, nameTxt, units, indexRides(st.rides)); };
+      nm.appendChild(b);
+    });
+    if (st.parkOpen) paintParkModal(parked.get(st.parkOpen.row) || [], indexRides(st.rides));
     const fmMemo = new Map();
     const fmCache = new Map();
     const fmOf = a => {
