@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ダイヤ管理</title>
-<!-- version: 1.3.0 -->
+<!-- version: 1.3.1 -->
+<!-- 1.3.1: 一覧の「所定形式」セルの高さを自動に。手動リサイズはやめ、表示中の一覧で行数が一番多い所定形式に合わせて全行を同じ高さにする（編集で行数が変わるたびに再計算）。新規ダイヤ追加フォームは変更なし。 -->
 <!-- 1.3.0: ①「所定形式」を複数行のテキストエリアにした（新規ダイヤ追加フォームと一覧のセル編集）。保存される値は今まで通り改行区切りのURL文字列。②一覧のIDの前に、所定形式の1枚目のアイコンを小さく表示（空なら何も出さない、読み込めなければ消える）。 -->
 <!-- 1.2.0: ①合言葉は初回だけ入力。ブラウザ（localStorage）に覚え、次からは自動で接続（ジェネレーターと共通）。②シート表示の見出し行（列車番号…）をデータ行として数えず、「時刻の形式が違う行」などの警告に入れないようにした。 -->
 <!-- 1.1.0: ブラウザ標準の confirm／prompt／alert をやめて、ページ内のダイアログに置き換えた（自動操作のブラウザなど、標準ダイアログが出ない環境でも操作できる）。保存は「保存せず確認」を通したうえで押すので、保存直前の確認は外した。 -->
@@ -20,7 +21,7 @@ input,select,button,textarea{font:inherit;color:inherit;background:var(--bg);bor
 button{background:var(--ac);color:#fff;border:0;padding:7px 12px;cursor:pointer}button.sub{background:var(--bg);color:var(--tx);border:1px solid var(--bd)}button.ng{background:var(--ng)}button.sm{padding:3px 8px;font-size:12px}button:disabled{opacity:.5}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}.row>div{flex:1 1 150px}
 table{border-collapse:collapse;width:100%;font-size:12px}th,td{border-bottom:1px solid var(--bd);padding:3px;text-align:left;vertical-align:top}
-td input,td textarea{width:100%;min-width:56px;padding:3px 5px}td textarea.ico{min-width:150px;height:26px}.ic{height:20px;width:auto;max-width:44px;object-fit:contain;vertical-align:middle;margin-right:5px;border-radius:2px}td textarea{resize:vertical;min-height:26px;white-space:pre}
+td input,td textarea{width:100%;min-width:56px;padding:3px 5px}td textarea.ico{min-width:150px;height:auto;resize:none;overflow:hidden}.ic{height:20px;width:auto;max-width:44px;object-fit:contain;vertical-align:middle;margin-right:5px;border-radius:2px}td textarea{resize:vertical;min-height:26px;white-space:pre}
 .scroll{overflow-x:auto}.mut{color:var(--sub);font-size:12px}.ok{color:var(--ok)}.ngt{color:var(--ng)}.wn{color:var(--wn)}
 tr.chg td{background:var(--chg)}tr.del td{background:var(--del);text-decoration:line-through}tr.new td{background:var(--new)}tr.sel td:first-child{box-shadow:inset 3px 0 var(--ac)}
 .tag{display:inline-block;border-radius:4px;padding:0 5px;font-size:11px;background:var(--bd)}
@@ -232,7 +233,15 @@ function renderList(){
       `<td>${esc(r["最終更新"])}</td><td>${sheetOf(k).length}</td><td class="mut">${esc(src[k]||"")}</td><td style="white-space:nowrap">`+
       (x.st==="del"?`<button class="sub sm" data-undo="${esc(k)}">戻す</button>`:`<button class="sm" data-open="${esc(k)}">開く</button> <button class="sub sm" data-dup="${esc(k)}">複製</button> <button class="ng sm" data-del="${esc(k)}">削除</button>`)+
       `</td></tr>`;}).join("");
+  fitIco();
 }
+// 一覧の所定形式セルは、表示中でいちばん行数が多いものに合わせて全行を同じ高さにする
+function fitIco(){
+  const tas=document.querySelectorAll('#tblList textarea.ico');
+  let n=1;tas.forEach(t=>{n=Math.max(n,String(t.value).split("\n").length);});
+  tas.forEach(t=>{t.rows=n;});
+}
+$("tblList").addEventListener("input",e=>{if(e.target.classList&&e.target.classList.contains("ico"))fitIco();});
 $("tblList").addEventListener("change",e=>{
   const t=e.target;if(!t.dataset||!t.dataset.f)return;
   const k=t.dataset.k;const i=+t.dataset.i;const ed=ensureEdit(k);
