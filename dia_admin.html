@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ダイヤ管理</title>
-<!-- version: 1.1.0 -->
+<!-- version: 1.2.0 -->
+<!-- 1.2.0: ①合言葉は初回だけ入力。ブラウザ（localStorage）に覚え、次からは自動で接続（ジェネレーターと共通）。②シート表示の見出し行（列車番号…）をデータ行として数えず、「時刻の形式が違う行」などの警告に入れないようにした。 -->
 <!-- 1.1.0: ブラウザ標準の confirm／prompt／alert をやめて、ページ内のダイアログに置き換えた（自動操作のブラウザなど、標準ダイアログが出ない環境でも操作できる）。保存は「保存せず確認」を通したうえで押すので、保存直前の確認は外した。 -->
 <!-- 1.0.0: 新規作成。配信中のダイヤJSON（路線ファイル）を、サイト上で編集・追加・削除する運営用ページ。接続はジェネレーターと同じ（合言葉→Worker）。 -->
 <style>
@@ -38,7 +39,7 @@ pre{white-space:pre-wrap;font:12px/1.4 ui-monospace,monospace}
 <div class="card">
   <h2>1. 接続</h2>
   <div class="row">
-    <div><label>合言葉(このタブを閉じるまで保持。ジェネレーターと共通)</label><input id="key" type="password" autocomplete="off" style="width:100%"></div>
+    <div><label>合言葉(初回だけ入力。このブラウザに保存されます)</label><input id="key" type="password" autocomplete="off" style="width:100%"></div>
     <div><button id="btnConn">接続テスト</button> <a href="generator.html" class="mut">→ JSONジェネレーター</a></div>
   </div>
   <div id="connMsg" class="mut"></div>
@@ -111,6 +112,8 @@ const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",
 const log=m=>{const l=$("log");l.textContent+=`[${new Date().toLocaleTimeString()}] ${m}\n`;l.scrollTop=l.scrollHeight;};
 const ssGet=k=>{try{return sessionStorage.getItem(k)}catch(e){return null}};
 const ssSet=(k,v)=>{try{sessionStorage.setItem(k,v)}catch(e){}};
+const keyLoad=()=>{try{return localStorage.getItem("gen_key")||""}catch(e){}return ssGet("gen_key")||""};
+const keySave=v=>{ssSet("gen_key",v);try{localStorage.setItem("gen_key",v)}catch(e){}};
 const jstDate=()=>new Date(Date.now()+9*3600e3).toISOString().slice(0,10);
 const clone=o=>JSON.parse(JSON.stringify(o));
 const keyOf=r=>`${r["ID"]||""}_${r["運番"]||""}`;
@@ -151,16 +154,17 @@ async function api(path,{method="GET",body=null}={}){
 const errTxt=e=>`${e.message}${e.details?"\n"+JSON.stringify(e.details).slice(0,600):""}`;
 
 /* ---------- 1. 接続 ---------- */
-$("key").value=ssGet("gen_key")||"";
+$("key").value=keyLoad();
 $("key").addEventListener("keydown",e=>{if(e.key==="Enter")$("btnConn").click();});
 $("btnConn").onclick=async()=>{
-  ssSet("gen_key",$("key").value);
+  keySave($("key").value);
   try{S.manifest=await api("/api/manifest");
     $("connMsg").innerHTML=`<span class="ok">接続OK</span> 路線ファイル ${S.manifest.files.length} 件 / generated ${esc(S.manifest.generated)}`;
     const comps=[...new Set(S.manifest.files.map(f=>f.company))];
     $("selComp").innerHTML=comps.map(c=>`<option>${esc(c)}</option>`).join("");onComp();$("cFile").hidden=false;log("接続OK");}
   catch(e){$("connMsg").innerHTML=`<span class="ngt">${esc(e.message)}</span>`;log("接続NG: "+e.message);}
 };
+if($("key").value)setTimeout(()=>$("btnConn").click(),0); // 覚えた合言葉があれば自動で接続
 
 /* ---------- 2. ファイル選択 ---------- */
 function onComp(){const c=$("selComp").value;$("selRoute").innerHTML=S.manifest.files.filter(f=>f.company===c).map(f=>`<option value="${esc(f.file)}">${esc(f.route)}</option>`).join("");}
@@ -279,7 +283,8 @@ function renderSheet(){
   $("tblSheet").innerHTML=h;checkSheet();
 }
 function checkSheet(){
-  const rows=sheetOf(S.openKey);const w=[];
+  const all=sheetOf(S.openKey);const w=[];
+  const rows=all.filter((r,i)=>!(i===0&&String(r[0]).trim()==="列車番号")); // 見出し行はデータ行に数えない
   const bad=rows.filter(r=>!/^\d{1,2}:\d{2}(\n\d{1,2}:\d{2})?$/.test(String(r[2]||""))).length;
   if(bad)w.push(`時刻の形式が違う行 ${bad} 件(例 5:22 / 05:22⏎05:25)`);
   const emp=rows.filter(r=>!r[0]||!r[1]).length;if(emp)w.push(`列車番号か駅名が空の行 ${emp} 件`);

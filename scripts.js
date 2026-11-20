@@ -1,4 +1,5 @@
-// version: 1.46.0
+// version: 1.47.0
+// 1.47.0: 臨時列車が別ファイル(extras)になるのに対応。getDiagramListForRoute に運行日を渡し、その日の臨時列車を DiagramStatic が足す（取れなければ従来どおり）
 // 1.46.0: 臨時列車と臨時ダイヤを区別（ダイヤ一覧の新列「臨時ダイヤ名」）。臨時ダイヤの日は「臨時ダイヤ＋その日の臨時列車」だけを候補に出し、定期は出さない。臨時ダイヤの日でなければ、臨時ダイヤの行は出さず、臨時列車は通常ダイヤと一緒に出す
 // 1.45.0: 特定の日付だけの臨時ダイヤ（例：コミケ臨ダイヤ＝曜日区分「2025-12-31」）が運行日に使われている路線では、その日は平日・土休日ではなく、その臨時ダイヤだけを候補に出す（平日でも休日でも、使われているダイヤを優先）
 // 1.44.1: 走行位置からの入力で、エリア・区分が入らないことがあったのを修正（プルダウンの選択肢が出そろうのを待ってから入れる／複数エリアの会社は順に試す）
@@ -1794,8 +1795,9 @@ function diagramRowMatchesRoute(row, routeVal) {
 }
 
 // 静的JSON（無ければnull）→ダメならスプシのダイヤ一覧
-async function getDiagramListForRoute(companyVal, routeVal) {
-  const s = window.DiagramStatic ? await DiagramStatic.routeList(companyVal, routeVal) : null;
+async function getDiagramListForRoute(companyVal, routeVal, svcDate) {
+  // svcDate: 運行日(Date)。臨時列車（別ファイルの extras）はその日の前日・当日・翌日ぶんを足す
+  const s = window.DiagramStatic ? await DiagramStatic.routeList(companyVal, routeVal, svcDate ? { date: svcDate } : undefined) : null;
   return s || await getDiagramList();
 }
 
@@ -1837,7 +1839,7 @@ function isFlaggedExtraGeneric(v) {
 // （同じ運用番号のシート内に同じ駅名が複数回出てきてもOK＝折り返しに対応）
 async function getDiagramCandidates(routeVal, boardingStation, todayIsWeekendType, svcDate, holidaySet) {
   const companyVal = document.getElementById("country")?.value || "";
-  const list = await getDiagramListForRoute(companyVal, routeVal);
+  const list = await getDiagramListForRoute(companyVal, routeVal, svcDate);
   const routeRows = list.filter(d => d["会社"] === companyVal && diagramRowMatchesRoute(d, routeVal));
   // 臨時ダイヤ（ダイヤ一覧の「臨時ダイヤ名」に値がある行）が運行日に走る路線では、その日は定期（平日・土休日）は走らないので、
   // 「臨時ダイヤ＋その日の臨時列車（臨時ダイヤ名が空で、曜日区分が日付の列車）」だけを対象にする。

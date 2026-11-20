@@ -1,4 +1,7 @@
-// trainpos.js v1.28.1
+// trainpos.js v1.30.0
+// 1.30.0: 臨時ダイヤ（路線×ダイヤ名の個別JSON）に対応。索引にある臨時ダイヤは、路線ファイル内の同じ名前の行より個別JSONを使う（索引に無いダイヤは路線ファイルのまま）。
+//         あわせて、JSON化されていない臨時（スプレッドシート「ダイヤ一覧」の臨時=TRUEの行）も DiagramStatic.tempsFor 経由で混ぜる。スプシが読めなくてもJSONだけで通常表示を続ける。
+// 1.29.0: 臨時列車を個別JSON（extras-index.json）から読む。選択中の路線と日付（見ている日の前日・当日・翌日）で絞って、該当ファイルだけ取得し、その日の列車に混ぜる。索引が取れた時は路線ファイル内の旧臨時列車（臨時=TRUE かつ臨時ダイヤ名なし）は使わない（二重表示防止）。取れない時は従来どおり路線ファイルのものを使う。臨時ダイヤ（コミケ臨など）は従来どおり。
 // 1.28.1: 臨時ダイヤの不具合2件。①臨時ダイヤを手で選ぶと、読み込み中に「自動」へ戻ってしまうのを直した ②臨時ダイヤの選択肢は「いま見ている日に走るもの」だけにした（他の日は出ない）。指定した日が臨時ダイヤの日なら読み込み後にも自動で選ぶ。確認用に、臨時ダイヤの曜日区分と該当／非該当を画面左下に出す。
 // 1.28.0: 静的JSONの読み込みを diagram_static.js 1.1.0 に一本化（Cloudflare Worker を先に、だめなら pages.dev）。diagram_static.js が無い時は従来どおり pages.dev だけ。
 // 1.27.0: 臨時列車と臨時ダイヤを区別する。ダイヤ一覧の新列「臨時ダイヤ名」に値がある行だけが臨時ダイヤ（パターンのプルダウンにその名前で出る）。
@@ -330,7 +333,7 @@
 
   async function loadRouteTrains(ctx, onProgress, force) {
     const par = (ctx.parallelRoutes || []).filter(p => p.route && p.route !== ctx.routeVal);
-    const cacheKey = "tp_trains12_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
+    const cacheKey = "tp_trains14_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
     if (force) { try { localStorage.removeItem("tuts4_diagram_list_cache"); } catch (e) { /* ignore */ } }
 
     // マニフェスト（rev 一覧）。取れなければ null → 全部スプシから
@@ -343,7 +346,14 @@
       f && f.file && f.route === route && (!company || f.company === company));
     const targets = [{ route: ctx.routeVal, company: ctx.company, via: false }, ...par.map(p => ({ route: p.route, company: p.company, via: true }))];
     targets.forEach(t => { t.entry = findEntry(t.route, t.company) || null; });
-    const sig = targets.map(t => t.entry ? t.entry.rev || "?" : "-").join(",");
+    // 臨時列車の索引（取れなければ null＝従来どおり路線ファイルの臨時列車を使う）
+    let extIdx = null;
+    try { extIdx = (window.DiagramStatic && window.DiagramStatic.getExtrasIndex) ? await window.DiagramStatic.getExtrasIndex(!!force) : null; } catch (e) { extIdx = null; }
+    const DS = window.DiagramStatic;
+    targets.forEach(t => { t.keep = (extIdx && DS && DS.keepRow) ? DS.keepRow(extIdx, t.company, t.route) : (() => true); });
+    // 索引の臨時ダイヤの顔ぶれが変わったら、路線ファイルから除く行も変わるのでキャッシュを作り直す
+    const diaSig = extIdx ? extIdx.trains.filter(x => x && x.dia && targets.some(t => (x.routes || []).includes(t.route))).map(x => String(x.dia)).sort().join("/") : "";
+    const sig = targets.map(t => t.entry ? t.entry.rev || "?" : "-").join(",") + (extIdx ? "|x" + diaSig : "");
 
     {
       const c = await cachedP;
@@ -372,6 +382,7 @@
     targets.forEach(t => {
       const src = t.stat ? t.stat.list : sheetList;
       const rows = filterLatestRevision(src.filter(d =>
+        t.keep(d) &&
         (!t.company || d["会社"] === t.company) &&
         String(d["路線"] || "").split(",").map(x => x.trim()).includes(t.route)));
       rows.forEach(d => add(d, t.via, t.stat ? t.stat.sheets : null, t.route));
@@ -413,6 +424,37 @@
     diagShow(`[trainpos] 読み込み: 静的JSON ${targets.filter(t => t.stat).length}/${targets.length}路線 マニフェスト${lap.manifest}ms → ファイル${lap.files}ms → 一覧${lap.list}ms → 完了${Math.round(performance.now() - T0)}ms（列車${trains.length}本・シート${jobs.length}枚）`);
     if (idb()) idb().set(cacheKey, { trains, fetchedAt: Date.now(), sig });
     return trains;
+  }
+
+  function effDateKey() { const d = effDate(); return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate(); }
+
+  // 臨時列車（個別JSON）。見ている日の前日・当日・翌日に走るものだけ取る。取れなければ空
+  async function loadExtras(ctx) {
+    const DS = window.DiagramStatic;
+    if (!DS || !DS.tempsFor) return [];
+    const par = (ctx.parallelRoutes || []).filter(p => p.route && p.route !== ctx.routeVal);
+    const targets = [{ route: ctx.routeVal, company: ctx.company, via: false }, ...par.map(p => ({ route: p.route, company: p.company, via: true }))];
+    const dates = DS.defaultDates(effDate());
+    const out = [];
+    const seen = new Set();
+    for (const t of targets) {
+      let list = null;
+      try { const r = await DS.tempsFor(t.company, t.route, dates); list = r ? r.items : null; } catch (e) { list = null; }
+      (list || []).forEach(x => {
+        const k = `${x.meta["ID"] || ""}_${x.meta["運番"] || ""}`;
+        if (t.via && seen.has(k)) return; // 本線で出したものは並走側では出さない
+        seen.add(k);
+        let trs = [];
+        try { trs = compactSheet(x.rows || [], x.meta, t.via) || []; } catch (e) { trs = []; }
+        trs.forEach(tr => { tr.srcRoute = t.route; tr.isExtraFile = true; });
+        out.push(...trs);
+      });
+    }
+    return out;
+  }
+
+  function rebuildTrains() {
+    st.trains = (st.baseTrains || []).concat(st.extraTrains || []);
   }
 
   /* ---------- 平日/土休日 ---------- */
@@ -1463,6 +1505,15 @@
         if (cur && !act.has(cur)) { st.pattern = "auto"; if (sel) sel.value = "auto"; }
         refreshPatternOptions();
         renderLayer();
+        // 日付が変わったら、その日に走る臨時列車を取り直す
+        if (st.ctx && st.trainsRoute === st.ctx.routeVal && st.extraDateKey !== effDateKey()) {
+          const rt = st.ctx.routeVal, dk = effDateKey();
+          loadExtras(st.ctx).then(ex => {
+            if (!st.ctx || st.ctx.routeVal !== rt || st.trainsRoute !== rt) return;
+            st.extraTrains = ex; st.extraDateKey = dk; rebuildTrains();
+            refreshPatternOptions(); renderLayer();
+          }).catch(() => {});
+        }
       }
     };
   }
@@ -1506,7 +1557,7 @@
     const force = !!st.force; st.force = false;
     if (st.trainsRoute !== ctx.routeVal) {
       st.loading = true;
-      st.trains = []; st.trainsRoute = "";
+      st.trains = []; st.baseTrains = []; st.extraTrains = []; st.trainsRoute = "";
       refreshPatternOptions();
       if (status) status.textContent = "ダイヤを読み込み中…";
       // 乗車記録・祝日・車両マスタは、列車の読み込みと同時に取りに行く（順番待ちしない）
@@ -1515,7 +1566,13 @@
         if (seq === st.loadSeq && status) status.textContent = `ダイヤを読み込み中… ${d}/${n}`;
       }, force);
       if (seq !== st.loadSeq) return; // 路線が切り替わっていたら捨てる
-      st.trains = trains; st.trainsRoute = ctx.routeVal;
+      st.baseTrains = trains;
+      st.extraTrains = [];
+      st.trainsRoute = ctx.routeVal;
+      rebuildTrains();
+      try { st.extraTrains = await loadExtras(ctx); st.extraDateKey = effDateKey(); } catch (e) { st.extraTrains = []; }
+      if (seq !== st.loadSeq) return;
+      rebuildTrains();
       refreshPatternOptions();
       if (status) status.textContent = "乗車記録を確認中…";
       await others;

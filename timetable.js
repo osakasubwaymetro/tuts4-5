@@ -1,5 +1,6 @@
 // timetable.js
-// version: 1.20.0
+// version: 1.21.0
+// 1.21.0: 臨時列車が別ファイル(extras)になるのに対応。routeList に upcoming を渡し、昨日以降に運転日がある臨時列車を足す（取れなければ従来どおり）
 // 1.20.0: ダイヤを静的JSON（diagram_static.js）から読む。無い／壊れてたら従来どおりスプシから直接取る
 // 1.19.1: スタフの両数の枠を、実物のスタフに近いデザインに（影つきの白い枠に大きい数字、右下に小さく「両」。前後に縦線）
 // 1.19.0: ダイヤ一覧の「両数」列を読み、スタフの「両」の枠に自動で入れる（entry.cars。併結の時は、呼び出し側が足した値を渡す）
@@ -473,7 +474,7 @@ function ttCircularDirLabel(routeVal, sign) {
 async function ttGetRouteDiagramRows(routeVal) {
   const routeRow = ttRouteRow(routeVal);
   const companyVal = routeRow ? routeRow["会社"] : "";
-  const sList = window.DiagramStatic ? await DiagramStatic.routeList(companyVal, routeVal) : null;
+  const sList = window.DiagramStatic ? await DiagramStatic.routeList(companyVal, routeVal, { upcoming: true }) : null; // 臨時列車は昨日以降に運転日があるものを全部（日付を決めずに見る画面のため）
   const list = sList || await ttGetDiagramList();
   const rawMatches = list.filter(d => d["会社"] === companyVal && ttDiagramRowMatchesRoute(d, routeVal));
   return ttFilterLatestRevision(rawMatches);
