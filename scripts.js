@@ -1,4 +1,7 @@
-// version: 1.47.0
+// version: 1.48.0
+// 1.48.0: 過去の乗車記録から（運番付きのダイヤ候補で）運用を選んだ時、その運用の「今日の編成」が他の人の今日の投稿ですでに分かっていれば、車両形式・車番・連結編成数を自動で入れる。
+//         同じ運用（運番シート）の列車の駅・時刻・行先に一致する今日の投稿を探し、複数あれば乗車時刻がいちばん新しい1件を使う。乗車位置は取り込まない。すでに入力してあっても上書きする。
+//         見つからなければ今まで通り（手入力のまま）。併結の候補（複数の運用が重なるもの）は、どの運用か決められないので対象外。
 // 1.47.0: 臨時列車が別ファイル(extras)になるのに対応。getDiagramListForRoute に運行日を渡し、その日の臨時列車を DiagramStatic が足す（取れなければ従来どおり）
 // 1.46.0: 臨時列車と臨時ダイヤを区別（ダイヤ一覧の新列「臨時ダイヤ名」）。臨時ダイヤの日は「臨時ダイヤ＋その日の臨時列車」だけを候補に出し、定期は出さない。臨時ダイヤの日でなければ、臨時ダイヤの行は出さず、臨時列車は通常ダイヤと一緒に出す
 // 1.45.0: 特定の日付だけの臨時ダイヤ（例：コミケ臨ダイヤ＝曜日区分「2025-12-31」）が運行日に使われている路線では、その日は平日・土休日ではなく、その臨時ダイヤだけを候補に出す（平日でも休日でも、使われているダイヤを優先）
@@ -1555,6 +1558,7 @@ function openModalLoading(title, message) {
    （ユーザー名は一切表示せず、種別・行先・時刻の傾向を見るだけのため。
     「投稿履歴」「統計」は引き続き自分の分だけ表示・保存する） */
 let _rideHistoryPromise = null;
+let _ridesAllForFormation = null; // 直近に取得した全員の乗車記録（今日の編成を探す用）
 const RIDE_HISTORY_CACHE_KEY = "tuts4_community_ride_cache";
 
 // 投稿の実送信は mode:"no-cors" のfire-and-forgetで、成否を待たず固定1秒後に
@@ -1590,6 +1594,7 @@ async function getRideHistoryCached() {
         if (!res.ok) throw new Error("HTTP " + res.status);
         const all = await res.json();
         if (!Array.isArray(all)) throw new Error("不正なレスポンス形式");
+        _ridesAllForFormation = all; // 運用の「今日の編成」を探すのに使う
         return all;
       } catch (e) {
         console.error(`乗車履歴の取得に失敗（${attempt}/${MAX_ATTEMPTS}回目）:`, e);
@@ -1885,10 +1890,10 @@ async function getDiagramCandidates(routeVal, boardingStation, todayIsWeekendTyp
       if (!bounds.length && !types.some(Boolean)) return;
       if (bounds.length) {
         bounds.forEach((b, i) => {
-          results.push({ isDiagram: true, time, unban: d["運番"], trainNumber, isExtra, type: types[i] || types[0] || "", bound: b });
+          results.push({ isDiagram: true, time, unban: d["運番"], diagId: d["ID"], trainNumber, isExtra, type: types[i] || types[0] || "", bound: b });
         });
       } else {
-        results.push({ isDiagram: true, time, unban: d["運番"], trainNumber, isExtra, type: "", bound: "" });
+        results.push({ isDiagram: true, time, unban: d["運番"], diagId: d["ID"], trainNumber, isExtra, type: "", bound: "" });
       }
     });
     perSheet[di] = results;
@@ -2360,6 +2365,7 @@ function applyHistoryCandidate(c) {
     }
 
     closeHistoryModal();
+    autofillFormationFromToday(c); // この運用の今日の編成が他の人の投稿で分かっていれば入れる（裏で実行。失敗しても何も起きない）
     return;
   }
 
@@ -2396,6 +2402,132 @@ function applyHistoryCandidate(c) {
 }
 
 
+
+/* ----------------------------------------
+   運用の「今日の編成」の自動入力
+   乗車記録には運番が保存されていないので、運番シートの列車（駅・時刻・行先）と一致する「今日の投稿」から探す
+   （走行位置MAPが編成を決めるのと同じ考え方。折り返すと列車番号は変わっても、同じ運用は同じ編成のまま走るため、運用の全列車を見る）。
+   複数あれば乗車時刻がいちばん新しい1件。取り込むのは 車両形式・車番・連結編成数（乗車位置は投稿した人ごとに違うので取り込まない）
+---------------------------------------- */
+function _splitSlash1(v) { return String(v == null ? "" : v).split("/").map(x => x.trim()).filter(Boolean); }
+function _ymdKey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+
+// 運番シートの行 → 列車ごとの停車（時刻は秒。日跨ぎは+24h、始発が0:00〜2:59の列車は前日の運行日の続きとして+24h）
+function _unitTrips(rows) {
+  const groups = [];
+  let cur = null, curNum = null;
+  rows.forEach(r => {
+    const num = r["列車番号"];
+    if (cur && num === curNum) cur.push(r); else { cur = [r]; curNum = num; groups.push(cur); }
+  });
+  return groups.map(g => {
+    let prev = null;
+    const stops = [];
+    g.forEach((r, i) => {
+      const found = [...String(r["発車時刻"] || "").matchAll(/(\d{1,2}):(\d{2})(?::(\d{2}))?/g)]
+        .map(m => Number(m[1]) * 3600 + Number(m[2]) * 60 + (m[3] ? Number(m[3]) : 0));
+      const isTerminus = i === g.length - 1;
+      let a = found.length ? found[0] : null;
+      let d = found.length >= 2 ? found[1] : (found.length === 1 ? (isTerminus ? null : found[0]) : null);
+      [["a", a], ["d", d]].forEach(([k, v]) => {
+        if (v == null) return;
+        let t = v;
+        while (prev != null && t < prev - 12 * 3600) t += 86400;
+        prev = t;
+        if (k === "a") a = t; else d = t;
+      });
+      if (r["駅名"]) stops.push({ s: String(r["駅名"]).trim(), a, d });
+    });
+    const first = stops[0] && (stops[0].d != null ? stops[0].d : stops[0].a);
+    if (first != null && first < 3 * 3600) stops.forEach(sp => { if (sp.a != null) sp.a += 86400; if (sp.d != null) sp.d += 86400; });
+    const bounds = new Set();
+    g.forEach(r => _splitSlash1(r["行先"]).forEach(b => bounds.add(b)));
+    return { stops, bounds };
+  }).filter(t => t.stops.length);
+}
+
+// 今日（運行日）の他の人の投稿から、この運用の編成を探す。見つからなければ null
+async function findTodayFormationForUnit(diagId, unban, allRides) {
+  const rows = await fetchDiagramSheet(diagId, unban);
+  if (!rows || !rows.length) return null;
+  const now = getEffectiveNow();
+  const svc = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (now.getHours() < 3 ? 1 : 0)); // 運行日は3:00で切り替え
+  // 「日付|HH:MM」→ その時刻の投稿
+  const idx = new Map();
+  (allRides || []).forEach(r => {
+    const d = new Date(String(r["時刻"] || "").trim().replace(" ", "T"));
+    if (isNaN(d)) return;
+    const k = `${_ymdKey(d)}|${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    if (!idx.has(k)) idx.set(k, []);
+    idx.get(k).push({ r, d });
+  });
+  let best = null;
+  _unitTrips(rows).forEach(trip => {
+    trip.stops.forEach(sp => {
+      [sp.a, sp.d].forEach(sec => {
+        if (sec == null) return;
+        const dt = new Date(svc.getFullYear(), svc.getMonth(), svc.getDate() + Math.floor(sec / 86400));
+        const hh = Math.floor((sec % 86400) / 3600), mm = Math.floor((sec % 3600) / 60);
+        const list = idx.get(`${_ymdKey(dt)}|${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`);
+        if (!list) return;
+        list.forEach(({ r, d }) => {
+          const st = String(r["乗車駅"] || "").trim();
+          if (st !== sp.s && !isStationNameMatch(sp.s, st)) return;
+          const rb = _splitSlash1(r["行先"]);
+          if (rb.length && trip.bounds.size && !rb.some(b => trip.bounds.has(b))) return; // 行先が違う列車の投稿は別の運用
+          const model = _splitSlash1(r["車両形式"])[0] || "";
+          const number = cleanFormationNumber(_splitSlash1(r["車番"])[0] || "");
+          if (!model && !number) return;
+          if (!best || d >= best.d) best = { d, model, number, count: parseInt(r["連結編成数"], 10) || 0 };
+        });
+      });
+    });
+  });
+  return best;
+}
+
+async function autofillFormationFromToday(c) {
+  try {
+    if (!c || !c.isDiagram || c.coupled || !c.diagId || !c.unban) return; // 運番が分かるダイヤ候補（併結を除く）だけ
+    const all = _ridesAllForFormation;
+    if (!all || !all.length) return;
+    const f = await findTodayFormationForUnit(c.diagId, c.unban, all);
+    if (!f || !f.model) return;
+    const modelSel = document.getElementById("model");
+    if (!modelSel || ![...modelSel.options].some(o => o.value === f.model)) return; // この路線の車両形式に無ければ何もしない
+    modelSel.value = f.model;
+    modelSel.dispatchEvent(new Event("change", { bubbles: true })); // 車番の選択肢がこの形式のものに入れ替わる
+    let numOk = false;
+    if (f.number) {
+      const numSel = document.getElementById("number");
+      if (numSel && [...numSel.options].some(o => o.value === f.number)) {
+        numSel.value = f.number;
+        numSel.dispatchEvent(new Event("change", { bubbles: true }));
+        numOk = true;
+      }
+    }
+    if (f.count > 0 && typeof formationBoxHidden === "function" && !formationBoxHidden()) {
+      _formCountTouched = true; // 併結の数に合わせ直されないように
+      setFormCount(f.count, Number(document.getElementById("formPos")?.value) || 1);
+    }
+    showFormationAutoNote(`他の人の今日の投稿から入れました：${f.model}${numOk ? " " + formatFormationLabel(f.number) : ""}${f.count > 1 ? `（${f.count}連結）` : ""}`);
+  } catch (e) { console.warn("今日の編成の自動入力に失敗:", e); }
+}
+
+function showFormationAutoNote(text) {
+  let el = document.getElementById("fmAutoNote");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "fmAutoNote";
+    el.style.cssText = "font-size:12px;color:#0a7a3d;margin:4px 0 0;";
+    const anchor = document.getElementById("numberTriggerBtn") || document.getElementById("modelTriggerBtn");
+    if (!anchor || !anchor.parentNode) return;
+    anchor.parentNode.insertBefore(el, anchor.nextSibling);
+  }
+  el.textContent = text;
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.textContent = ""; }, 10000);
+}
 
 /* ----------------------------------------
    乗り継ぎ（旅）記録
