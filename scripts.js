@@ -1,4 +1,5 @@
-// version: 1.48.0
+// version: 1.48.1
+// 1.48.1: 今日の編成の自動入力で、24時以上の時刻表記（24:17）を0時台として読む（走行位置MAPの時刻の読み方と合わせた）。
 // 1.48.0: 過去の乗車記録から（運番付きのダイヤ候補で）運用を選んだ時、その運用の「今日の編成」が他の人の今日の投稿ですでに分かっていれば、車両形式・車番・連結編成数を自動で入れる。
 //         同じ運用（運番シート）の列車の駅・時刻・行先に一致する今日の投稿を探し、複数あれば乗車時刻がいちばん新しい1件を使う。乗車位置は取り込まない。すでに入力してあっても上書きする。
 //         見つからなければ今まで通り（手入力のまま）。併結の候補（複数の運用が重なるもの）は、どの運用か決められないので対象外。
@@ -2425,7 +2426,7 @@ function _unitTrips(rows) {
     const stops = [];
     g.forEach((r, i) => {
       const found = [...String(r["発車時刻"] || "").matchAll(/(\d{1,2}):(\d{2})(?::(\d{2}))?/g)]
-        .map(m => Number(m[1]) * 3600 + Number(m[2]) * 60 + (m[3] ? Number(m[3]) : 0));
+        .map(m => (Number(m[1]) % 24) * 3600 + Number(m[2]) * 60 + (m[3] ? Number(m[3]) : 0));
       const isTerminus = i === g.length - 1;
       let a = found.length ? found[0] : null;
       let d = found.length >= 2 ? found[1] : (found.length === 1 ? (isTerminus ? null : found[0]) : null);
