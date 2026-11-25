@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ダイヤ管理</title>
-<!-- version: 1.10.0 -->
+<!-- version: 1.10.1 -->
+<!-- 1.10.1: データ行の途中に混ざったヘッダー行(列車番号セル=「列車番号」かつ種別セル=「種別」)を、位置に関係なく集計・置換・時刻チェックから除外 -->
 <!-- 1.10.0: 列車の路線判定の候補を、そのダイヤの登録路線(listの「路線」)だけに絞る。範囲内で従来の判定(隣駅ペア→両駅を含む路線→最小カバー)。マスタstationに無い登録路線(未整備)はその列車も使うものとして数える。登録が空のダイヤは全路線が候補。範囲外の路線では補わない -->
 <!-- 1.9.0: 接続エリアに「マスタ最新同期」ボタン。リロードせずに sujitype / station を再取得して判定に反映(読み込み済みの路線ファイル・選択状態はそのまま)。成功したら控え(gen_sujitype / gen_station_adm)も更新、失敗時は前のマスタのまま -->
 <!-- 1.8.0: 列車の路線判定を「全ペアをカバーする最小の路線集合」に変更(共用区間で余計な路線が付かない)。隣接ペアが無い区間(特急の停車駅飛び)は、2駅ともその路線の駅順にある路線でカバー扱い -->
@@ -406,7 +407,7 @@ function renderSheet(){
 }
 function checkSheet(){
   const all=sheetOf(S.openKey);const w=[];
-  const rows=all.filter((r,i)=>!(i===0&&String(r[0]).trim()==="列車番号")); // 見出し行はデータ行に数えない
+  const rows=all.filter(r=>!isHeadRow(r)); // 見出し行はデータ行に数えない
   const bad=rows.filter(r=>!/^\d{1,2}:\d{2}(\n\d{1,2}:\d{2})?$/.test(String(r[2]||""))).length;
   if(bad)w.push(`時刻の形式が違う行 ${bad} 件(例 5:22 / 05:22⏎05:25)`);
   const emp=rows.filter(r=>!r[0]||!r[1]).length;if(emp)w.push(`列車番号か駅名が空の行 ${emp} 件`);
@@ -431,7 +432,7 @@ $("tblSheet").addEventListener("click",e=>{
 });
 
 /* ---------- 種別の一括置換(1.5.0) ---------- */
-const isHeadRow=(r,i)=>i===0&&String(r[0]).trim()==="列車番号";
+const isHeadRow=r=>String(r[0]==null?"":r[0]).trim()==="列車番号"&&String(r[4]==null?"":r[4]).trim()==="種別"; // 位置に関係なくヘッダー行を判定(引数の2つ目は互換のため無視)
 function kindKeys(){const inList=new Set(S.cur.list.map(keyOf));return [...new Set([...Object.keys(S.cur.sheets||{}),...Object.keys(S.edits)])].filter(k=>!S.deleted.has(k)&&(inList.has(k)||(S.edits[k]&&S.edits[k].isNew)));}
 function kindStats(){
   const m=new Map();
