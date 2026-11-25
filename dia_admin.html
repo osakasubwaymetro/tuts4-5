@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ダイヤ管理</title>
-<!-- version: 1.10.1 -->
+<!-- version: 1.12.0 -->
+<!-- 1.12.0: 保存時に、編集したダイヤ(会社・ID・運番が同じ)のコピーが manifest の他の路線ファイルにもあれば、全コピーを同じ内容(登録行・時刻表)で更新する。削除は伝播しない。コピーの探索は同じ会社のファイルだけ(他社名義のファイルには書かない) -->
+<!-- 1.11.0: 同名路線の他社ファイルも一緒に読み込んで1つの一覧に合体表示(会社列を追加、会社だけ選択ボタン)。各ダイヤの由来ファイルを保持し、保存はダイヤの会社・路線ごと=由来ファイルごとに書き戻す(他社のダイヤを自社ファイルへ混ぜない)。同名路線の他社ファイルが無ければ従来どおり単独表示 -->
 <!-- 1.10.1: データ行の途中に混ざったヘッダー行(列車番号セル=「列車番号」かつ種別セル=「種別」)を、位置に関係なく集計・置換・時刻チェックから除外 -->
 <!-- 1.10.0: 列車の路線判定の候補を、そのダイヤの登録路線(listの「路線」)だけに絞る。範囲内で従来の判定(隣駅ペア→両駅を含む路線→最小カバー)。マスタstationに無い登録路線(未整備)はその列車も使うものとして数える。登録が空のダイヤは全路線が候補。範囲外の路線では補わない -->
 <!-- 1.9.0: 接続エリアに「マスタ最新同期」ボタン。リロードせずに sujitype / station を再取得して判定に反映(読み込み済みの路線ファイル・選択状態はそのまま)。成功したら控え(gen_sujitype / gen_station_adm)も更新、失敗時は前のマスタのまま -->
@@ -234,18 +236,37 @@ $("btnLoad").onclick=async()=>{
 async function loadFile(entry){
   const m=await api("/api/manifest");S.manifest=m;
   const e2=m.files.find(f=>f.file===entry.file)||entry;
-  const d=await api("/api/"+e2.file);
-  S.cur={entry:e2,list:d.list||[],sheets:d.sheets||{},sources:d._sources||d.sources||null};
+  // 同名路線の他社ファイルもまとめて読む(選んだファイルが先頭、他社は会社名順)
+  const sibs=[e2,...m.files.filter(f=>f.route===e2.route&&f.file!==e2.file).sort((x,y)=>String(x.company).localeCompare(String(y.company),"ja"))];
+  const loaded=await Promise.all(sibs.map(async(f,i)=>{try{return {f,d:await api("/api/"+f.file)};}catch(e){if(i===0)throw e;return {f,err:e};}}));
+  const list=[],sheets={},sources={},origin={},warns=[];
+  for(const {f,d,err} of loaded){
+    if(err){warns.push(`${f.company} のファイル(${f.file})を読めませんでした: ${err.message}`);continue;}
+    const src=d._sources||d.sources||{};
+    for(const r of (d.list||[])){
+      const k=keyOf(r);
+      if(origin[k]&&origin[k].file!==f.file){ // 別ファイルに同じ ID_運番 がある: 先に読んだ方だけ扱い、後のファイルの行は読まない(混ぜない)
+        const w=`ID_運番「${k}」が ${origin[k].company} と ${f.company} のファイルの両方にあります。${f.company} 側は読み込まず、${origin[k].company} 側だけ扱います`;
+        if(!warns.includes(w))warns.push(w);continue;
+      }
+      if(!origin[k]){origin[k]=f;if(d.sheets&&d.sheets[k]!==undefined)sheets[k]=d.sheets[k];if(src[k]!=null)sources[k]=src[k];}
+      list.push(r);
+    }
+  }
+  S.cur={entry:e2,entries:sibs,list,sheets,sources,origin};
   S.edits={};S.deleted=new Set();S.openKey=null;S.lastDry=null;S.sel=new Set();
-  $("fileInfo").textContent=`${e2.file}(ダイヤ ${new Set(S.cur.list.map(keyOf)).size} 件 / rev ${e2.rev})`;
+  const multi=sibs.length>1;
+  $("fileInfo").innerHTML=esc(multi?`${e2.route}: ${sibs.map(f=>`${f.company}(${f.file})`).join(" + ")} を合体表示(ダイヤ ${new Set(list.map(keyOf)).size} 件)`:`${e2.file}(ダイヤ ${new Set(list.map(keyOf)).size} 件 / rev ${e2.rev})`)+(warns.length?warns.map(w=>`<br><span class="wn">${esc(w)}</span>`).join(""):"");
   $("nCompany").value=e2.company;$("nRoute").value=e2.route;
   $("cList").hidden=false;$("cSave").hidden=false;$("cSheet").hidden=true;
-  renderList();renderChanges();log(`読み込み: ${e2.company} / ${e2.route}`);
+  renderList();renderChanges();log(`読み込み: ${sibs.map(f=>f.company).join(" + ")} / ${e2.route}`);
+  warns.forEach(w=>log("警告: "+w));
 }
 
 /* ---------- 有効な一覧(元データ＋編集の重ね合わせ) ---------- */
 function effRows(){
   const out=[],seen=new Set(),c=S.cur,cnt={};
+  const companies=new Set((c.entries||[c.entry]).map(f=>f.company));
   for(const r of c.list){
     const k=keyOf(r);const n=cnt[k]=(cnt[k]==null?0:cnt[k]+1);
     if(S.deleted.has(k)){out.push({row:r,key:k,st:"del",i:n});continue;}
@@ -255,7 +276,7 @@ function effRows(){
   }
   for(const [k,ed] of Object.entries(S.edits)){
     if(!ed.isNew)continue;
-    ed.rows.forEach((row,i)=>{if(row["会社"]===c.entry.company&&routesOf(row).includes(c.entry.route))out.push({row,key:k,st:"new",i});});
+    ed.rows.forEach((row,i)=>{if(companies.has(row["会社"])&&routesOf(row).includes(c.entry.route))out.push({row,key:k,st:"new",i});});
   }
   return out;
 }
@@ -275,11 +296,11 @@ function iconImg(v){
 function renderList(){
   const rows=effRows();const src=S.cur.sources||{};
   $("listCount").textContent=`(${new Set(rows.map(x=>x.key)).size}件)`;
-  $("tblList").innerHTML=`<tr><th class="ck"><input type="checkbox" id="chkAll" title="全選択／全解除"></th><th>状態</th><th>ID</th><th>運番</th>${EDITABLE.map(f=>`<th>${f}</th>`).join("")}<th>最終更新</th><th>行数</th><th>出所</th><th></th></tr>`+
+  $("tblList").innerHTML=`<tr><th class="ck"><input type="checkbox" id="chkAll" title="全選択／全解除"></th><th>状態</th><th>会社</th><th>ID</th><th>運番</th>${EDITABLE.map(f=>`<th>${f}</th>`).join("")}<th>最終更新</th><th>行数</th><th>出所</th><th></th></tr>`+
   rows.map((x,n)=>{
     const r=x.row,k=x.key,dis=x.st==="del"?"disabled":"";
     const tag=x.st==="chg"?"編集":x.st==="new"?"新規":x.st==="del"?"削除":"";
-    return `<tr class="${x.st}${S.openKey===k?" sel":""}"><td class="ck"><input type="checkbox" class="chk" data-ck="${esc(k)}" ${x.st==="del"?"disabled":""} ${S.sel.has(k)&&x.st!=="del"?"checked":""}></td><td>${tag?`<span class="tag">${tag}</span>`:""}</td><td style="white-space:nowrap">${iconImg(r["所定形式"])}${esc(r["ID"])}</td><td>${esc(r["運番"])}</td>`+
+    return `<tr class="${x.st}${S.openKey===k?" sel":""}"><td class="ck"><input type="checkbox" class="chk" data-ck="${esc(k)}" ${x.st==="del"?"disabled":""} ${S.sel.has(k)&&x.st!=="del"?"checked":""}></td><td>${tag?`<span class="tag">${tag}</span>`:""}</td><td class="mut" style="white-space:nowrap">${esc(r["会社"])}</td><td style="white-space:nowrap">${iconImg(r["所定形式"])}${esc(r["ID"])}</td><td>${esc(r["運番"])}</td>`+
       EDITABLE.map(f=>f==="所定形式"
         ?`<td><textarea class="ico" rows="1" data-k="${esc(k)}" data-i="${x.i==null?-1:x.i}" data-f="${f}" ${dis}>${esc(r[f])}</textarea></td>`
         :`<td><input data-k="${esc(k)}" data-i="${x.i==null?-1:x.i}" data-f="${f}" value="${esc(r[f])}" ${dis}></td>`).join("")+
@@ -331,9 +352,11 @@ const isWk=r=>/平日/.test(r["曜日区分"]||"")&&!/休日/.test(r["曜日区�
 const isHd=r=>/休日/.test(r["曜日区分"]||"")&&!/平日/.test(r["曜日区分"]||"");
 function renderIds(){
   const m=new Map();bkRows().forEach(x=>{const id=x.row["ID"]||"";if(!m.has(id))m.set(id,new Set());m.get(id).add(x.key);});
-  $("bkIds").innerHTML=[...m].map(([id,ks])=>`<button type="button" class="sub sm" data-id="${esc(id)}" style="margin:0 4px 4px 0">${id===""?"(IDなし)":esc(id)}だけ選択 <span class="mut">${ks.size}</span></button>`).join("");
+  const cm=new Map();bkRows().forEach(x=>{const c=x.row["会社"]||"";if(!cm.has(c))cm.set(c,new Set());cm.get(c).add(x.key);});
+  const cbtn=cm.size>1?[...cm].map(([c,ks])=>`<button type="button" class="sub sm" data-co="${esc(c)}" style="margin:0 4px 4px 0">${c===""?"(会社なし)":esc(c)}だけ選択 <span class="mut">${ks.size}</span></button>`).join("")+"<br>":"";
+  $("bkIds").innerHTML=cbtn+[...m].map(([id,ks])=>`<button type="button" class="sub sm" data-id="${esc(id)}" style="margin:0 4px 4px 0">${id===""?"(IDなし)":esc(id)}だけ選択 <span class="mut">${ks.size}</span></button>`).join("");
 }
-$("bkIds").addEventListener("click",e=>{const b=e.target.closest("[data-id]");if(!b)return;selectWhere(r=>String(r["ID"]||"")===b.dataset.id);});
+$("bkIds").addEventListener("click",e=>{const c=e.target.closest("[data-co]");if(c){selectWhere(r=>String(r["会社"]||"")===c.dataset.co);return;}const b=e.target.closest("[data-id]");if(!b)return;selectWhere(r=>String(r["ID"]||"")===b.dataset.id);});
 $("bkAll").onclick=()=>selectWhere(()=>true);
 $("bkNone").onclick=()=>selectWhere(()=>false);
 $("bkWk").onclick=()=>selectWhere(isWk);
@@ -521,7 +544,7 @@ function trainsOf(sheet,allowed){ // 時刻表を列車ごと(同じ列車番号
     const s=String(r[1]||"").trim();if(s&&cur.st[cur.st.length-1]!==s)cur.st.push(s);
     const k=String(r[4]==null?"":r[4]);if(k!=="")cur.kinds.add(k);
   });
-  for(const t of out){t.routes=coverRoutes(t.st,allowed);if(allowed)allowed.forEach(rt=>{if(!S.rpos[rt])t.routes.add(rt);});} // マスタに無い登録路線(未整備)は使うものとして数える
+  for(const t of out){t.routes=coverRoutes(t.st,allowed);if(allowed&&S.pairs)allowed.forEach(rt=>{if(!S.rpos[rt])t.routes.add(rt);});} // マスタに無い登録路線(未整備)は使うものとして数える
   return out;
 }
 function kindRoutes(v){ // その種別を使っている列車が走る路線(路線名→列車数)。駅の並びで判定できない列車は unj に数える
@@ -595,14 +618,18 @@ function renderChanges(){
   $("changes").innerHTML=lines.length?lines.map(esc).join("<br>"):"変更はありません";
   $("btnSave").disabled=true;
 }
-function buildPlan(){
+function buildPlan(copies){ // copies: { ダイヤのキー: [{company,route}] } 他の路線ファイルにあるコピーの置き場所(保存時に探索)
   const groups={},modes={};const today=jstDate();
   const grp=(company,route)=>{const gk=company+"\t"+route;return groups[gk]||(groups[gk]={company,route,list:[],sheets:{}});};
   for(const [k,ed] of Object.entries(S.edits)){
     for(const r of ed.rows)if(HEAD.some(h=>r[h]==null))HEAD.forEach(h=>{if(r[h]==null)r[h]="";});
     const base=ed.rows[0];
     if(!base["会社"]||!routesOf(base).length)throw new Error(`${k}: 会社か路線が空です`);
-    for(const route of routesOf(base)){const g=grp(base["会社"],route);ed.rows.forEach(r=>g.list.push(Object.fromEntries(HEAD.map(h=>[h,String(r[h])]))));g.sheets[k]=ed.sheet.map(r=>COLS.map((_,j)=>String(r[j]==null?"":r[j])));}
+    const og=S.cur.origin&&S.cur.origin[k];
+    if(!ed.isNew&&og&&base["会社"]!==og.company)throw new Error(`${k}: 由来ファイルの会社(${og.company})と違う会社(${base["会社"]})になっています。他社のファイルには混ぜられません`);
+    const dests=new Map(routesOf(base).map(rt=>[rt,{company:base["会社"],route:rt}]));
+    if(!ed.isNew)for(const c of ((copies&&copies[k])||[]))if(c.company===base["会社"]&&!dests.has(c.route))dests.set(c.route,c); // 他の路線ファイルにあるコピーも同じ内容で更新する
+    for(const {company,route} of dests.values()){const g=grp(company,route);ed.rows.forEach(r=>g.list.push(Object.fromEntries(HEAD.map(h=>[h,String(r[h])]))));g.sheets[k]=ed.sheet.map(r=>COLS.map((_,j)=>String(r[j]==null?"":r[j])));}
     modes[k]=ed.isNew?"add":"replace";
   }
   for(const k of S.deleted){
@@ -612,9 +639,27 @@ function buildPlan(){
   }
   return {groups:Object.values(groups),modes};
 }
+/* 編集したダイヤのコピー探索: manifest の同じ会社のファイルを全部読み、同じ会社・ID・運番の行があるファイル(路線)を返す */
+async function findCopies(m){
+  const keys=Object.entries(S.edits).filter(([k,ed])=>!ed.isNew&&ed.rows[0]).map(([k,ed])=>[k,ed.rows[0]["会社"]]);
+  const out={};if(!keys.length)return out;
+  const comps=new Set(keys.map(x=>x[1]));
+  const files=m.files.filter(f=>comps.has(f.company));
+  const loaded=await Promise.all(files.map(async f=>{try{return {f,d:await api("/api/"+f.file)};}catch(e){throw new Error(`コピーの探索で ${f.company} / ${f.route}(${f.file})を読めませんでした: ${e.message}`);}}));
+  for(const [k,comp] of keys){
+    for(const {f,d} of loaded){
+      if(f.company!==comp)continue;
+      if((d.list||[]).some(r=>r["会社"]===comp&&keyOf(r)===k))(out[k]=out[k]||[]).push({company:f.company,route:f.route});
+    }
+  }
+  return out;
+}
 async function doSave(dry){
-  const {groups,modes}=buildPlan();
   const m=await api("/api/manifest");
+  const copies=await findCopies(m);
+  const {groups,modes}=buildPlan(copies);
+  const extra=Object.entries(copies).map(([k,a])=>`${k}: ${a.map(c=>c.route).join(", ")}`);
+  if(extra.length)log(`コピーも同じ内容で更新: ${extra.join(" / ")}`);
   return api("/api/save",{method:"POST",body:{source:"site",dry_run:dry,base_generated:m.generated,modes,groups}});
 }
 function showRes(res,dry){
