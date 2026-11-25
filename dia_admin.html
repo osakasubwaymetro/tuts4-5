@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ダイヤ管理</title>
-<!-- version: 1.5.0 -->
+<!-- version: 1.6.1 -->
+<!-- 1.6.1: 種別の赤判定を「路線×種別」で1つずつ見る方式に変更(使っている路線のどれか1つでもマスタに登録が無ければ赤。登録なしの路線名も表示) -->
+<!-- 1.6.0: ①一括選択にIDごとの「○○だけ選択」ボタン ②チェックボックスを大きく ③種別ボタン:マスタ(sujitype)にその路線の種別として無いものは赤背景(回送/臨時/団体は除外)、種別を選ぶと使われている路線名を表示 -->
 <!-- 1.5.0: 種別の一括置換を追加(読み込み中の路線ファイルの全ダイヤの時刻表から、存在する種別を一覧→置換前を選ぶ/打つ→置換後を入れて適用。通常のセル編集と同じ扱いで、保存するまで反映されない) -->
 <!-- 1.4.0: ①一括編集を追加。一覧の左端にチェックボックス（ヘッダーで全選択／全解除、「平日だけ選択」「休日だけ選択」、選択件数表示）。一覧の上の「一括編集」パネルで列と新しい値を選んで「選択した行に適用」（確認ダイヤログつき）。適用した行は通常のセル編集と同じ変更扱い（保存前確認・変更を全部破棄で戻せる）。削除予定の行は対象外。路線ファイルを読み込み直すとチェックはリセット。
      ②会社の選択を、プルダウンから「入力すると候補がボタンで出る」方式（時刻表ページの駅名入力と同じ見た目・動き）に変更。候補は manifest の会社一覧。選ぶと路線のプルダウンが更新される。 -->
@@ -29,7 +31,7 @@ td input,td textarea{width:100%;min-width:56px;padding:3px 5px}td textarea.ico{m
 .search-results{background:var(--card);border:1px solid var(--bd);border-radius:10px;margin-top:6px;overflow:hidden;max-height:240px;overflow-y:auto}
 .search-results button{display:block;width:100%;text-align:left;background:var(--card);color:var(--tx);border:0;border-bottom:1px solid var(--bd);border-radius:0;padding:10px 12px;font-size:14px}
 .search-results button:last-child{border-bottom:0}.search-results button:active{background:var(--bg)}
-.bulk{border:1px solid var(--bd);border-radius:8px;padding:8px;margin:8px 0}.bulk .row{margin-top:2px}td.ck,th.ck{width:26px;text-align:center}td.ck input,th.ck input{width:auto;min-width:0}
+.bulk{border:1px solid var(--bd);border-radius:8px;padding:8px;margin:8px 0}.bulk .row{margin-top:2px}td.ck,th.ck{width:44px;text-align:center;padding:0}td.ck input,th.ck input{width:24px;height:24px;min-width:0;cursor:pointer}td.ck{cursor:pointer}.kbad{background:var(--ng)!important;color:#fff!important;border-color:var(--ng)!important}.kbad .mut{color:#fff}
 .scroll{overflow-x:auto}.mut{color:var(--sub);font-size:12px}.ok{color:var(--ok)}.ngt{color:var(--ng)}.wn{color:var(--wn)}
 tr.chg td{background:var(--chg)}tr.del td{background:var(--del);text-decoration:line-through}tr.new td{background:var(--new)}tr.sel td:first-child{box-shadow:inset 3px 0 var(--ac)}
 .tag{display:inline-block;border-radius:4px;padding:0 5px;font-size:11px;background:var(--bd)}
@@ -73,6 +75,7 @@ pre{white-space:pre-wrap;font:12px/1.4 ui-monospace,monospace}
     <div class="row" style="margin-top:4px">
       <div style="flex:0 0 auto"><button class="sub sm" id="bkAll">全選択</button> <button class="sub sm" id="bkNone">全解除</button> <button class="sub sm" id="bkWk">平日だけ選択</button> <button class="sub sm" id="bkHd">休日だけ選択</button></div>
     </div>
+    <div id="bkIds" style="margin:4px 0"></div>
     <div class="row">
       <div style="flex:0 0 150px"><label>変える列</label><select id="bkCol"></select></div>
       <div style="flex:2 1 260px"><label>新しい値</label><span id="bkValWrap"></span></div>
@@ -81,8 +84,9 @@ pre{white-space:pre-wrap;font:12px/1.4 ui-monospace,monospace}
     <div class="mut">チェックした行（削除予定の行を除く）の、選んだ列をまとめて同じ値にします。適用は通常のセル編集と同じ扱い（「保存する」まで反映されません）。</div>
   </div>
   <div class="bulk" id="kindBox">
-    <b>種別の一括置換</b> <span class="mut">(読み込み中の路線ファイルの全ダイヤの時刻表が対象)</span>
+    <b>種別の一括置換</b> <span class="mut">(読み込み中の路線ファイルの全ダイヤの時刻表が対象。<span class="ngt">赤</span>=使っている路線のどれか1つでもマスタ(sujitype)に路線×種別の登録が無い種別)</span>
     <div id="kindChips" style="margin:4px 0"></div>
+    <div id="kRoutes" style="margin:4px 0"></div>
     <div class="row">
       <div style="flex:1 1 160px"><label>置換前の種別</label><input id="kFrom" autocomplete="off" placeholder="上の一覧から選ぶか入力"></div>
       <div style="flex:1 1 160px"><label>置換後の種別</label><input id="kTo" autocomplete="off" placeholder="例: 普通"></div>
@@ -286,6 +290,10 @@ function fitIco(){
   tas.forEach(t=>{t.rows=n;});
 }
 $("tblList").addEventListener("input",e=>{if(e.target.classList&&e.target.classList.contains("ico"))fitIco();});
+$("tblList").addEventListener("click",e=>{ // 大きいセル全体を押しても切り替わるように
+  const td=e.target.closest&&e.target.closest("td.ck");if(!td||e.target.tagName==="INPUT")return;
+  const c=td.querySelector("input");if(c&&!c.disabled){c.checked=!c.checked;c.dispatchEvent(new Event("change",{bubbles:true}));}
+});
 $("tblList").addEventListener("change",e=>{
   const t=e.target;
   if(t.id==="chkAll"){selectWhere(()=>t.checked);return;}
@@ -316,6 +324,11 @@ function updateSel(){
 }
 const isWk=r=>/平日/.test(r["曜日区分"]||"")&&!/休日/.test(r["曜日区分"]||"");
 const isHd=r=>/休日/.test(r["曜日区分"]||"")&&!/平日/.test(r["曜日区分"]||"");
+function renderIds(){
+  const m=new Map();bkRows().forEach(x=>{const id=x.row["ID"]||"";if(!m.has(id))m.set(id,new Set());m.get(id).add(x.key);});
+  $("bkIds").innerHTML=[...m].map(([id,ks])=>`<button type="button" class="sub sm" data-id="${esc(id)}" style="margin:0 4px 4px 0">${id===""?"(IDなし)":esc(id)}だけ選択 <span class="mut">${ks.size}</span></button>`).join("");
+}
+$("bkIds").addEventListener("click",e=>{const b=e.target.closest("[data-id]");if(!b)return;selectWhere(r=>String(r["ID"]||"")===b.dataset.id);});
 $("bkAll").onclick=()=>selectWhere(()=>true);
 $("bkNone").onclick=()=>selectWhere(()=>false);
 $("bkWk").onclick=()=>selectWhere(isWk);
@@ -422,12 +435,45 @@ function kindStats(){
     sheetOf(k).forEach((r,i)=>{if(isHeadRow(r,i))return;const v=String(r[4]==null?"":r[4]);const o=m.get(v)||{rows:0,dia:0};o.rows++;if(!seen.has(v)){seen.add(v);o.dia++;}m.set(v,o);});}
   return m;
 }
+/* マスタ sujitype(路線,種別): 路線ごとの登録種別。回送/臨時/団体は画面側で常に選べるので登録済み扱い */
+const SUJI_URL="https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/sujitype";
+const KIND_FREE=["回送","臨時","団体"];
+S.suji=null;
+(async()=>{
+  let rows=null;try{rows=JSON.parse(localStorage.getItem("gen_sujitype")||"null");}catch(e){}
+  if(rows)S.suji=rows;
+  try{const r=await fetch(SUJI_URL);const j=await r.json();if(Array.isArray(j)){S.suji=j;try{localStorage.setItem("gen_sujitype",JSON.stringify(j));}catch(e){}}}catch(e){}
+  renderKinds();
+})();
+function kindRoutes(v){ // その種別を使っているダイヤの路線(路線名→ダイヤ数)
+  const out=new Map();const rowsOf=k=>S.edits[k]?S.edits[k].rows:S.cur.list.filter(r=>keyOf(r)===k);
+  for(const k of kindKeys()){
+    if(!sheetOf(k).some((r,i)=>!isHeadRow(r,i)&&String(r[4]==null?"":r[4])===v))continue;
+    const rs=new Set();rowsOf(k).forEach(r=>routesOf(r).forEach(x=>rs.add(x)));
+    if(!rs.size&&S.cur.entry&&S.cur.entry.route)rs.add(S.cur.entry.route);
+    rs.forEach(x=>out.set(x,(out.get(x)||0)+1));
+  }
+  return out;
+}
+function kindMissing(v){ // 使われている路線のうち、マスタに「路線×種別」の登録が無い路線(sujitypeが読めない間は判定しない)
+  if(!S.suji||v===""||KIND_FREE.includes(v))return [];
+  return [...kindRoutes(v).keys()].filter(rt=>!S.suji.some(r=>r["種別"]===v&&r["路線"]===rt));
+}
+const kindUnregistered=v=>kindMissing(v).length>0;
+function showKindRoutes(){
+  const v=$("kFrom").value.trim();const box=$("kRoutes");
+  if(!v){box.innerHTML="";return;}
+  const m=kindRoutes(v);
+  box.innerHTML=m.size?`<span class="mut">「${esc(v)}」が使われている路線:</span> <b>${[...m].map(([r,n])=>`${esc(r)}(${n}ダイヤ)`).join("、")}</b>`+(kindMissing(v).length?` <span class="ngt">※マスタ(sujitype)に登録がない路線: ${kindMissing(v).map(esc).join("、")}</span>`:""):`<span class="mut">「${esc(v)}」を使っているダイヤはありません</span>`;
+}
 function renderKinds(){
   if(!S.cur)return;
   const m=kindStats();
-  $("kindChips").innerHTML=m.size?[...m].sort((a,b)=>b[1].rows-a[1].rows).map(([v,o])=>`<button type="button" class="sub sm" data-k="${esc(v)}" style="margin:0 4px 4px 0">${v===""?"(空)":esc(v)} <span class="mut">${o.dia}ダイヤ/${o.rows}行</span></button>`).join(""):`<span class="mut">時刻表がありません</span>`;
+  $("kindChips").innerHTML=m.size?[...m].sort((a,b)=>b[1].rows-a[1].rows).map(([v,o])=>`<button type="button" class="sub sm${kindUnregistered(v)?" kbad":""}" data-k="${esc(v)}" style="margin:0 4px 4px 0">${v===""?"(空)":esc(v)} <span class="mut">${o.dia}ダイヤ/${o.rows}行</span></button>`).join(""):`<span class="mut">時刻表がありません</span>`;
+  showKindRoutes();
 }
-$("kindChips").addEventListener("click",e=>{const b=e.target.closest("[data-k]");if(!b)return;$("kFrom").value=b.dataset.k;$("kTo").focus();});
+$("kindChips").addEventListener("click",e=>{const b=e.target.closest("[data-k]");if(!b)return;$("kFrom").value=b.dataset.k;showKindRoutes();$("kTo").focus();});
+$("kFrom").addEventListener("input",showKindRoutes);
 $("kApply").onclick=async()=>{
   const from=$("kFrom").value.trim(),to=$("kTo").value.trim();
   if(!from){await note("置換前の種別を入れてください(上の一覧から選べます)。");return;}
@@ -460,7 +506,7 @@ $("btnTsvIn").onclick=async()=>{
 
 /* ---------- 5. 保存 ---------- */
 function renderChanges(){
-  renderKinds();
+  renderKinds();renderIds();
   const e=Object.entries(S.edits);
   const lines=[...e.map(([k,v])=>`${v.isNew?"新規":"編集"}: ${k}(${v.sheet.length}行)`),...[...S.deleted].map(k=>`削除: ${k}`)];
   $("changes").innerHTML=lines.length?lines.map(esc).join("<br>"):"変更はありません";
