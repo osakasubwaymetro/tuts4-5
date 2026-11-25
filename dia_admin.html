@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ダイヤ管理</title>
-<!-- version: 1.8.0 -->
+<!-- version: 1.9.0 -->
+<!-- 1.9.0: 接続エリアに「マスタ最新同期」ボタン。リロードせずに sujitype / station を再取得して判定に反映(読み込み済みの路線ファイル・選択状態はそのまま)。成功したら控え(gen_sujitype / gen_station_adm)も更新、失敗時は前のマスタのまま -->
 <!-- 1.8.0: 列車の路線判定を「全ペアをカバーする最小の路線集合」に変更(共用区間で余計な路線が付かない)。隣接ペアが無い区間(特急の停車駅飛び)は、2駅ともその路線の駅順にある路線でカバー扱い -->
 <!-- 1.7.0: 種別の路線判定を「ダイヤの登録路線」から「列車ごとの停車駅の並び」に変更。隣り合う2駅の組がマスタstationタブの路線の駅順で隣り合っていれば、その路線を走っているとみなす。sujitypeとstationを一緒に読み込む。赤判定は従来どおり路線×種別 -->
 <!-- 1.6.1: 種別の赤判定を「路線×種別」で1つずつ見る方式に変更(使っている路線のどれか1つでもマスタに登録が無ければ赤。登録なしの路線名も表示) -->
@@ -51,7 +52,7 @@ pre{white-space:pre-wrap;font:12px/1.4 ui-monospace,monospace}
 <body>
 <main id="app">
 <div class="card">
-  <h2>1. 接続</h2>
+  <h2 style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">1. 接続 <span style="font-size:12px;font-weight:normal"><span id="syncMsg" class="mut"></span> <button class="sub sm" id="btnSync" type="button">マスタ最新同期</button></span></h2>
   <div class="row">
     <div><label>合言葉(初回だけ入力。このブラウザに保存されます)</label><input id="key" type="password" autocomplete="off" style="width:100%"></div>
     <div><button id="btnConn">接続テスト</button> <a href="generator.html" class="mut">→ JSONジェネレーター</a></div>
@@ -441,6 +442,25 @@ function kindStats(){
 const SUJI_URL="https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/sujitype";
 const KIND_FREE=["回送","臨時","団体"];
 S.suji=null;
+async function syncMaster(manual){ // マスタ(sujitype/station)を再取得して判定に反映。失敗した分は今のマスタのまま
+  const [a,b]=await Promise.all([
+    fetch(SUJI_URL,{cache:"no-store"}).then(r=>r.json()).catch(()=>null),
+    fetch(STATION_URL,{cache:"no-store"}).then(r=>r.json()).catch(()=>null)]);
+  const okA=Array.isArray(a)&&a.length>0,okB=Array.isArray(b)&&b.length>0;
+  if(okA){S.suji=a;try{localStorage.setItem("gen_sujitype",JSON.stringify(a));}catch(e){}}
+  if(okB){buildPairs(b);try{localStorage.setItem("gen_station_adm",JSON.stringify(b));}catch(e){}}
+  if(S.cur)renderKinds();
+  if(manual){
+    const t=new Date().toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+    const m=$("syncMsg");
+    if(okA&&okB){m.className="ok";m.textContent=`マスタを同期しました(${t})`;}
+    else if(okA||okB){m.className="wn";m.textContent=`${okA?"sujitype":"station"}だけ同期しました(${okA?"station":"sujitype"}は失敗・前のまま)(${t})`;}
+    else{m.className="ngt";m.textContent=`同期に失敗しました。前のマスタのままです(${t})`;}
+    log(`マスタ同期: sujitype ${okA?a.length+"件":"失敗"} / station ${okB?b.length+"件":"失敗"}`);
+  }
+  return okA||okB;
+}
+$("btnSync").onclick=async()=>{const b=$("btnSync");b.disabled=true;$("syncMsg").className="mut";$("syncMsg").textContent="同期中…";try{await syncMaster(true);}finally{b.disabled=false;}};
 const STATION_URL="https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/station";
 S.pairs=null;
 (async()=>{
@@ -449,12 +469,7 @@ S.pairs=null;
   let st=null;try{st=JSON.parse(localStorage.getItem("gen_station_adm")||"null");}catch(e){}
   if(st)buildPairs(st);
   renderKinds();
-  const [a,b]=await Promise.all([
-    fetch(SUJI_URL).then(r=>r.json()).catch(()=>null),
-    fetch(STATION_URL).then(r=>r.json()).catch(()=>null)]);
-  if(Array.isArray(a)){S.suji=a;try{localStorage.setItem("gen_sujitype",JSON.stringify(a));}catch(e){}}
-  if(Array.isArray(b)&&b.length){buildPairs(b);try{localStorage.setItem("gen_station_adm",JSON.stringify(b));}catch(e){}}
-  renderKinds();
+  await syncMaster(false);
 })();
 function buildPairs(rows){ // 隣り合う2駅(上下どちらの向きも) → その並びを持つ路線の一覧
   const by={};for(const r of rows){const rt=r["路線"],st=r["駅名"];if(!rt||!st||String(st).startsWith("via_"))continue;(by[rt]=by[rt]||[]).push(st);}
