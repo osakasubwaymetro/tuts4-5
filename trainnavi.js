@@ -1,4 +1,8 @@
-// trainnavi.js v1.5.0
+// trainnavi.js v1.6.0
+// 1.6.0: アナウンス音声を、外部の合成音声API（Colab等）に接続できるようにした。ベースURLは Train Navi 画面の「⚙ 音声設定」で入力し、localStorage（tuts4_navi_ttsurl）に保存する。空なら従来どおり speechSynthesis だけ。
+//        設定がある時だけ: 開いた瞬間に GET /health（待たない）→200で音声OK。4分おきに /health（非表示の間は止める）。アナウンス文は POST /tts {"text"} → audio/wav で生成し、Cache Storage（キー＝文のハッシュ）に保存。
+//        先頭3駅分（以後は再生位置の数駅先まで）を裏で先行生成（同時1本・不要になった要求は破棄）。API未準備・エラー・10秒タイムアウト・生成が間に合わない時は、その回だけ speechSynthesis で言う（先行生成は続ける）。
+//        再生は AudioContext（最初のタップで resume）。
 // 1.5.0: ダイヤ一覧の「両数」から、両数を自動で設定する（列車詳細から渡される entry.cars。無い時は今まで通り、手で入れた値）。タップで手動変更もできる
 // 1.4.0: ④「n両、n両」の開始を速度検知型に変更。駅の手前200m以内で、速度が25km/h以下になり、かつ③（ホーム進入の「n両、停車。」）を言い終えたら始める（一度始めたら停車まで続ける）。速度が取れない時は従来どおり45mで開始
 // 1.3.1: iPhoneで小窓にできなかったのを修正（動画を先に用意してボタンを押した直後に小窓を要求／iPhone独自方式を先に試す／失敗した理由を表示）
@@ -16,6 +20,7 @@
   "use strict";
   const CAR_KEY = "tuts4_navi_cars";
   const VOICE_KEY = "tuts4_navi_voice";
+  const TTS_KEY = "tuts4_navi_ttsurl";
   const nv = { stops: null, ev: null, timer: null, voiceOn: true, cars: "", spoken: new Set(), audio: null, lastPhase: "", flash: false, flashTimer: null, watchId: null, pos: null, speed: 0, fixAt: 0, acc: 9999, seg: null, src: "time", sim: { on: false, run: false, k: 0, mode: "stop", D: 0, v: 0, dwell: 0, mult: 1, t: 0, kmh: 72, timer: null }, speaking: false, lastMid: 0, midK: -1, spokenAnything: false, token: 0 };
 
   function esc(s) { return typeof escapeHtmlTT === "function" ? escapeHtmlTT(s) : String(s || ""); }
@@ -47,7 +52,12 @@
       #tnOverlay .tn-side { width:92px; background:#cfcfcf; display:flex; flex-direction:column; gap:8px; padding:8px; }
       #tnOverlay .tn-side button { border:none; border-radius:6px; color:#fff; font-weight:bold; font-size:14px; padding:12px 2px; cursor:pointer; }
       #tnOverlay .tn-clock { color:#333; font-size:13px; text-align:center; font-variant-numeric:tabular-nums; }
-      #tnOverlay .b-voice { background:#5b8fd6; } #tnOverlay .b-voice.off { background:#888; }
+      #tnOverlay .b-voice { background:#5b8fd6; } #tnOverlay .b-voice.off { background:#888; } #tnOverlay .b-voice.wait { background:#d6a05b; font-size:11px; line-height:1.3; } #tnOverlay .b-cfg { background:#6b6b8a; font-size:12px; }
+      #tnTtsCfg { display:none; position:absolute; inset:0; z-index:5; background:rgba(0,0,0,.82); align-items:center; justify-content:center; padding:16px; }
+      #tnTtsCfg.show { display:flex; } #tnTtsCfg .box { background:#222; border:1px solid #666; border-radius:12px; padding:16px; width:min(460px,100%); color:#fff; font-size:14px; }
+      #tnTtsCfg input { width:100%; box-sizing:border-box; padding:10px; border-radius:6px; border:1px solid #888; background:#111; color:#fff; font-size:14px; margin:8px 0; }
+      #tnTtsCfg .row { display:flex; gap:8px; flex-wrap:wrap; } #tnTtsCfg button { flex:1; padding:10px; border:none; border-radius:6px; color:#fff; font-weight:bold; background:#5b8fd6; cursor:pointer; } #tnTtsCfg button.sub { background:#666; }
+      #tnTtsCfg .st { font-size:12px; color:#bbb; margin-top:8px; white-space:pre-wrap; }
       #tnOverlay .tn-gpsmsg { color:#333; font-size:11px; text-align:center; line-height:1.3; }
       #tnOverlay .tn-led { display:flex; justify-content:center; gap:6px; padding:4px 0; background:#000; }
       #tnOverlay .tn-led i { width:22px; height:8px; background:#5a2a2a; display:block; }
@@ -90,6 +100,7 @@
       </div>
       <div class="tn-side">
         <button type="button" class="b-voice" id="tnVoiceBtn">🔊 音声</button>
+        <button type="button" class="b-cfg" id="tnCfgBtn">⚙ 音声設定</button>
         <div class="tn-gpsmsg" id="tnGpsMsg"></div>
         <button type="button" class="b-dbg" id="tnDbgBtn">🛠 デバッグ</button>
         <div class="tn-clock" id="tnClock"></div>
@@ -99,6 +110,23 @@
     document.body.appendChild(d);
     document.getElementById("tnVoiceBtn").onclick = () => { nv.voiceOn = !nv.voiceOn; lsSet(VOICE_KEY, nv.voiceOn ? "1" : "0"); renderBtns(); if (!nv.voiceOn) cancelSpeech(); else unlockAudio(); };
     document.getElementById("tnCloseBtn").onclick = closeNavi;
+    // 音声API設定
+    const cfg = document.createElement("div");
+    cfg.id = "tnTtsCfg";
+    cfg.innerHTML = `<div class="box"><b>音声APIの設定</b>
+      <div style="font-size:12px;color:#bbb;margin-top:4px">合成音声APIのベースURL（例: https://xxxx.trycloudflare.com）。空にすると、端末の音声（speechSynthesis）だけで案内します。</div>
+      <input id="tnTtsUrl" type="url" inputmode="url" placeholder="https://..." autocomplete="off">
+      <div class="row"><button id="tnTtsSave">保存</button><button id="tnTtsClear" class="sub">空にして無効化</button><button id="tnTtsClose" class="sub">閉じる</button></div>
+      <div class="st" id="tnTtsSt"></div></div>`;
+    d.appendChild(cfg);
+    document.getElementById("tnCfgBtn").onclick = () => { document.getElementById("tnTtsUrl").value = tts.base; ttsCfgStatus(); cfg.classList.add("show"); };
+    document.getElementById("tnTtsClose").onclick = () => cfg.classList.remove("show");
+    document.getElementById("tnTtsSave").onclick = () => {
+      const u = ttsNormUrl(document.getElementById("tnTtsUrl").value);
+      if (document.getElementById("tnTtsUrl").value.trim() && !u) { document.getElementById("tnTtsSt").textContent = "http:// か https:// で始まるURLを入れてください"; return; }
+      ttsSetBase(u); cfg.classList.remove("show");
+    };
+    document.getElementById("tnTtsClear").onclick = () => { ttsSetBase(""); document.getElementById("tnTtsUrl").value = ""; cfg.classList.remove("show"); };
     document.getElementById("tnPipBtn").onclick = togglePip;
     // デバッグパネル
     const dbg = document.createElement("div");
@@ -129,7 +157,10 @@
     };
   }
   function renderBtns() {
-    const v = document.getElementById("tnVoiceBtn"); v.classList.toggle("off", !nv.voiceOn); v.textContent = nv.voiceOn ? "🔊 音声" : "🔇 音声";
+    const v = document.getElementById("tnVoiceBtn"); v.classList.toggle("off", !nv.voiceOn);
+    const waiting = nv.voiceOn && ttsEnabled() && !tts.ready; // 音声API設定あり＆まだ起きていない
+    v.classList.toggle("wait", waiting);
+    v.textContent = !nv.voiceOn ? "🔇 音声" : waiting ? "音声を準備しています…" : ttsEnabled() ? "🔊 音声（合成）" : "🔊 音声";
   }
   function renderCars() {
     document.getElementById("tnCars").innerHTML = nv.cars ? `${esc(nv.cars)}<small>両</small>` : `<small>両数<br>タップ</small>`;
@@ -152,9 +183,26 @@
     } catch (e) {}
     try { if (window.speechSynthesis) { speechSynthesis.getVoices(); const u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u); } } catch (e) {}
   }
-  function cancelSpeech() { try { window.speechSynthesis && speechSynthesis.cancel(); } catch (e) {} }
+  function stopAudioSrc() { try { if (nv.curSrc) { nv.curSrc.onended = null; nv.curSrc.stop(); } } catch (e) {} nv.curSrc = null; }
+  function cancelSpeech() { stopAudioSrc(); try { window.speechSynthesis && speechSynthesis.cancel(); } catch (e) {} }
   function say(text) {
-    if (!nv.voiceOn || !window.speechSynthesis) return;
+    if (!nv.voiceOn) return;
+    // 合成音声API: 先行生成が間に合っていれば、それを再生。間に合っていなければこの回だけ speechSynthesis
+    if (ttsEnabled() && nv.audio && nv.audio.state === "running") {
+      const buf = tts.mem.get(text);
+      if (buf) {
+        try {
+          cancelSpeech();
+          const src = nv.audio.createBufferSource(); src.buffer = buf; src.connect(nv.audio.destination);
+          nv.speaking = true; nv.spokenAnything = true; nv.lastSaid = text + "（合成）";
+          src.onended = () => { if (nv.curSrc === src) { nv.curSrc = null; nv.speaking = false; } };
+          nv.curSrc = src; src.start(0);
+          return;
+        } catch (e) { nv.curSrc = null; nv.speaking = false; }
+      }
+      ttsPump(); // 間に合っていない文を優先して作り直す
+    }
+    if (!window.speechSynthesis) return;
     try {
       cancelSpeech();
       const u = new SpeechSynthesisUtterance(text);
@@ -164,6 +212,143 @@
       u.onend = u.onerror = () => { nv.speaking = false; };
       speechSynthesis.speak(u);
     } catch (e) { nv.speaking = false; }
+  }
+
+  // ---------- 合成音声API（ベースURLが設定されている時だけ有効） ----------
+  // GET /health（起動確認）、POST /tts {"text"} → audio/wav。無料枠でアイドル時はスリープし、復帰に数十秒〜数分かかる前提。
+  const TTS_TIMEOUT = 10000;      // /tts のタイムアウト
+  const TTS_AHEAD = 4;            // 再生位置から先、何駅分（区間）を裏で作っておくか（開始時は先頭3駅分で足りる）
+  const TTS_KEEPALIVE = 4 * 60000; // /health を投げ続ける間隔
+  const TTS_CACHE = "tuts4-navi-tts-v1";
+  const tts = { base: "", ready: false, mem: new Map(), fail: new Map(), inflight: null, busy: false, keepTimer: null, pollTimer: null, healthBusy: false, tok: 0 };
+  function ttsNormUrl(v) { v = String(v || "").trim().replace(/\/+$/, ""); return /^https?:\/\/[^\s]+$/i.test(v) ? v : ""; }
+  function ttsEnabled() { return !!tts.base; }
+  tts.base = ttsNormUrl(lsGet(TTS_KEY, ""));
+  function ttsCfgStatus() {
+    const e = document.getElementById("tnTtsSt"); if (!e) return;
+    e.textContent = !ttsEnabled() ? "状態: 未設定（端末の音声のみ）" : tts.ready ? `状態: 音声OK（生成済み ${tts.mem.size} 文）` : "状態: 準備中（APIが起動するのを待っています。その間は端末の音声で案内します）";
+  }
+  function ttsSetBase(u) {
+    tts.base = u; lsSet(TTS_KEY, u);
+    tts.ready = false; tts.fail.clear(); ttsAbort();
+    renderBtns();
+    if (nv.stops) { if (u) ttsStart(); else ttsStop(); }
+  }
+  function ttsAbort() { try { tts.inflight && tts.inflight.ctl.abort(); } catch (e) {} tts.inflight = null; }
+  async function ttsFetch(path, init, ms) {
+    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), ms);
+    try { return await fetch(tts.base + path, Object.assign({ signal: ctl.signal, cache: "no-store" }, init || {})); }
+    finally { clearTimeout(timer); }
+  }
+  // /health（結果は待たずに投げる）。200で音声OK。起きるまでは数秒おきにもう一度
+  function ttsHealth() {
+    if (!ttsEnabled() || tts.healthBusy) return;
+    tts.healthBusy = true;
+    const base = tts.base;
+    ttsFetch("/health", {}, 90000).then(r => {
+      if (base !== tts.base) return;
+      if (r.ok) { if (!tts.ready) { tts.ready = true; renderBtns(); ttsCfgStatus(); } ttsPump(); }
+      else if (tts.ready) { tts.ready = false; renderBtns(); }
+    }).catch(() => { if (base === tts.base && tts.ready) { tts.ready = false; renderBtns(); } })
+      .finally(() => { tts.healthBusy = false; });
+  }
+  function ttsStart() {
+    ttsStop();
+    if (!ttsEnabled() || !nv.stops) return;
+    ttsHealth();
+    tts.keepTimer = setInterval(() => { if (!document.hidden) ttsHealth(); }, TTS_KEEPALIVE);          // スリープ防止
+    tts.pollTimer = setInterval(() => { if (!tts.ready && !document.hidden) ttsHealth(); }, 8000);       // 起きるまで様子を見る
+    tts.vis = () => { if (document.hidden) return; ttsHealth(); };                                        // 非表示の間は止まる（戻ったらすぐ確認）
+    document.addEventListener("visibilitychange", tts.vis);
+    tts.tap = () => { try { if (nv.audio && nv.audio.state === "suspended") nv.audio.resume(); } catch (e) {} };
+    document.addEventListener("pointerdown", tts.tap, true);
+    ttsPrune();
+  }
+  function ttsStop() {
+    clearInterval(tts.keepTimer); clearInterval(tts.pollTimer); tts.keepTimer = tts.pollTimer = null;
+    if (tts.vis) { document.removeEventListener("visibilitychange", tts.vis); tts.vis = null; }
+    if (tts.tap) { document.removeEventListener("pointerdown", tts.tap, true); tts.tap = null; }
+    ttsAbort();
+  }
+  // 文のハッシュ（Cache Storageのキー）
+  async function ttsHash(text) {
+    try {
+      if (window.crypto && crypto.subtle) {
+        const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+        return Array.from(new Uint8Array(d)).map(b => b.toString(16).padStart(2, "0")).join("");
+      }
+    } catch (e) {}
+    let h = 2166136261; for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return "f" + (h >>> 0).toString(16) + "_" + text.length;
+  }
+  const ttsKey = async text => new Request("https://tts.cache.local/" + await ttsHash(text));
+  async function ttsCacheGet(text) {
+    try { if (!window.caches) return null; const c = await caches.open(TTS_CACHE); const r = await c.match(await ttsKey(text)); return r ? await r.arrayBuffer() : null; } catch (e) { return null; }
+  }
+  async function ttsCachePut(text, ab) {
+    try { if (!window.caches) return; const c = await caches.open(TTS_CACHE); await c.put(await ttsKey(text), new Response(new Blob([ab], { type: "audio/wav" }), { headers: { "Content-Type": "audio/wav" } })); } catch (e) {}
+  }
+  async function ttsPrune() { // 増えすぎたら古いものから消す
+    try { if (!window.caches) return; const c = await caches.open(TTS_CACHE); const ks = await c.keys(); if (ks.length > 600) for (const k of ks.slice(0, ks.length - 500)) await c.delete(k); } catch (e) {}
+  }
+  async function ttsDecode(ab) {
+    if (!nv.audio) throw new Error("no audio ctx");
+    const copy = ab.slice(0);
+    return await new Promise((res, rej) => { const p = nv.audio.decodeAudioData(copy, res, rej); if (p && p.then) p.then(res, rej); });
+  }
+  // 先に作っておく文（区間ごとに「次は、○○、停車。」＋停車前の固定文）。現在の区間から TTS_AHEAD 区間先まで、近い順
+  function ttsWanted() {
+    const out = [], seen = new Set(), ev = nv.ev; if (!ev || !ev.length) return out;
+    const cars = nv.cars, add = t => { if (t && !seen.has(t)) { seen.add(t); out.push(t); } };
+    const k0 = Math.max(0, nv.curK || 0);
+    for (let j = k0; j < ev.length - 1 && j < k0 + TTS_AHEAD; j++) {
+      add(`次は、${ev[j + 1].name}、停車。`);
+      add("停車、停車、停車。");
+      add(cars ? `${cars}両、停車。${cars}両、停車。` : "停車。停車。");
+      add(cars ? `${cars}両、${cars}両。` : "停車、停車。");
+    }
+    return out;
+  }
+  // 生成を進める（同時1本。キャッシュにあれば読み込み、無ければ /tts）
+  async function ttsPump() {
+    if (!ttsEnabled() || !nv.stops || tts.busy) return;
+    tts.busy = true;
+    const myTok = nv.token;
+    try {
+      for (let guard = 0; guard < 200; guard++) {
+        if (!ttsEnabled() || !nv.stops || nv.token !== myTok) break;
+        const text = ttsWanted().find(t => !tts.mem.has(t) && !(tts.fail.get(t) > Date.now()));
+        if (!text) break;
+        if (!nv.audio) break; // まだタップされていない（AudioContextが無い）
+        let ab = await ttsCacheGet(text);
+        if (!ab) {
+          if (!tts.ready) break; // APIがまだ起きていない
+          const ctl = new AbortController(); tts.inflight = { text, ctl };
+          const timer = setTimeout(() => ctl.abort(), TTS_TIMEOUT);
+          try {
+            const r = await fetch(tts.base + "/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }), signal: ctl.signal, cache: "no-store" });
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            ab = await r.arrayBuffer();
+            if (!ab.byteLength) throw new Error("empty");
+            ttsCachePut(text, ab);
+          } catch (e) {
+            const stale = !ttsWanted().includes(text); // 駅を飛ばして不要になった要求の中止は失敗扱いにしない
+            if (!stale) {
+              tts.fail.set(text, Date.now() + 30000);
+              if (e && (e.name === "AbortError" || e.name === "TypeError")) { tts.ready = false; renderBtns(); ttsHealth(); } // 寝てしまった可能性: /healthで見直す
+            }
+            ab = null;
+          } finally { clearTimeout(timer); tts.inflight = null; }
+        }
+        if (ab) { try { tts.mem.set(text, await ttsDecode(ab)); } catch (e) { tts.fail.set(text, Date.now() + 30000); } }
+      }
+    } finally { tts.busy = false; ttsCfgStatus(); }
+  }
+  // 周期処理から呼ぶ: 駅を飛ばして不要になった要求は破棄し、先行生成を続ける
+  function ttsTouch() {
+    if (!ttsEnabled()) return;
+    if (tts.inflight && !ttsWanted().includes(tts.inflight.text)) ttsAbort();
+    ttsPump();
   }
 
   // ---------- 時刻列（停車する駅だけ） ----------
@@ -438,6 +623,7 @@
 
     // 音声
     const k = loc ? loc.k : -1;
+    nv.curK = loc ? loc.k : 0; ttsTouch();
     const once = key => { if (nv.spoken.has(key)) return false; nv.spoken.add(key); return true; };
     const cars = nv.cars;
     if (phase === "depart" && nextName) { if (once("depart:" + k)) say(`次は、${nextName}、停車。`); }
@@ -570,6 +756,7 @@
     clearInterval(nv.flashTimer); nv.flashTimer = setInterval(() => { nv.flash = !nv.flash; const o = document.getElementById("tnOverlay"); if (o) o.classList.toggle("flash", nv.flash && (o.classList.contains("brake") || o.classList.contains("platform"))); if (nv.pipOn) { if (nv.view && nv.view.mode.startsWith("brake")) nv.view.mode = nv.flash ? "brakeB" : "brakeA"; drawPip(); } }, 500);
     document.getElementById("tnOverlay").classList.add("show");
     unlockAudio();
+    nv.curK = 0; ttsStart(); renderBtns();
     clearInterval(nv.timer);
     tick();
     nv.timer = setInterval(tick, 1000);
@@ -577,7 +764,7 @@
   }
   function closeNavi() {
     clearInterval(nv.timer); nv.timer = null;
-    cancelSpeech();
+    cancelSpeech(); ttsStop();
     const ov = document.getElementById("tnOverlay"); if (ov) ov.classList.remove("show", "brake", "platform");
     stopGps(); clearInterval(nv.flashTimer); nv.token++; simSetOn(false); closePip();
     try { nv.wake && nv.wake.release(); nv.wake = null; } catch (e) {}
@@ -585,5 +772,5 @@
   }
 
   window.ttShowNavi = function (idx) { open(ttTrainDetailRegistry[idx]); };
-  window.TrainNavi = { open, close: closeNavi, _buildEvents: buildEvents, _onFix: onFix, _state: nv, _drawPip: drawPip, _sim: () => nv.sim, _coordCache: coordCache };
+  window.TrainNavi = { _tts: tts, _ttsWanted: ttsWanted, _say: say, open, close: closeNavi, _buildEvents: buildEvents, _onFix: onFix, _state: nv, _drawPip: drawPip, _sim: () => nv.sim, _coordCache: coordCache };
 })();
