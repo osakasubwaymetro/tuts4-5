@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ダイヤJSONジェネレーター v1.5.0</title>
+<title>ダイヤJSONジェネレーター v1.6.0</title>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--tx:#1b1f24;--sub:#667;--bd:#d5d9df;--ac:#1f6feb;--ng:#c62828;--ok:#2e7d32;--wn:#b26a00}
 @media (prefers-color-scheme:dark){:root{--bg:#14171b;--card:#1d2127;--tx:#e6e8eb;--sub:#9aa3ad;--bd:#343b44;--ac:#5b9dff;--ng:#ff6b6b;--ok:#6fcf7a;--wn:#f0b050}}
@@ -24,7 +24,7 @@ progress{width:100%}
 </head>
 <body>
 <div class="wrap" id="app">
-<h1>ダイヤJSONジェネレーター <span class="mut">v1.5.0</span> <a href="dia_admin.html" class="mut" style="font-size:12px">→ ダイヤ管理ページ</a></h1>
+<h1>ダイヤJSONジェネレーター <span class="mut">v1.6.0</span> <a href="dia_admin.html" class="mut" style="font-size:12px">→ ダイヤ管理ページ</a></h1>
 
 <div class="card" id="c1">
   <h2>1. 接続</h2>
@@ -64,6 +64,7 @@ progress{width:100%}
   <h2 style="margin-top:10px">所定ごとの設定</h2>
   <div class="scroll"><table id="tblGroups"></table></div>
   <h2 style="margin-top:10px">ダイヤ(<span id="nDia"></span>件)</h2>
+  <div class="row" style="margin-bottom:4px"><button class="sub" id="btnClearCars" type="button">個別両数を全部クリア</button><span class="mut" id="clearMsg"></span></div>
   <div class="scroll"><table id="tblDia"></table></div>
   <div class="row" style="margin-top:8px"><button id="btnConv">時刻を取得して変換</button><button class="sub" id="btnStop" disabled>中止</button></div>
   <div id="convMsg" class="ng"></div>
@@ -87,10 +88,10 @@ progress{width:100%}
 <div id="gate" hidden style="padding:40px 16px;text-align:center">このページは運営アカウント専用です。</div>
 <script src="nav.js"></script>
 <script>initNav("JSONジェネレーター");if(localStorage.getItem("username")!=="運営"){document.getElementById("app").hidden=true;document.getElementById("gate").hidden=false;}</script>
-<script src="generator_core.js?v=1.1.0"></script>
+<script src="generator_core.js?v=1.2.0"></script>
 <script>
 "use strict";
-const VER="1.5.0";
+const VER="1.6.0";
 const MASTER_SHEET="1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s";
 const ICON_BASE="https://img.elesite-next.com";
 const $=id=>document.getElementById(id);
@@ -107,7 +108,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const jstDate=()=>new Date(Date.now()+9*3600e3).toISOString().slice(0,10);
 
 /* ---------- 状態 ---------- */
-const S={rosenTree:null,rosen:null,sup:null,results:[],manifest:null,stopFlag:false,master:null,lastPlan:null};
+const S={rosenTree:null,rosen:null,sup:null,results:[],manifest:null,stopFlag:false,master:null,lastPlan:null,fixes:{}};
 
 /* ---------- IndexedDB キャッシュ(時刻・流れ) ---------- */
 let _db=null;
@@ -207,6 +208,10 @@ function setSup(sup){
     `<tr><td><input type="checkbox" class="chk" data-i="${i}" ${x.skip?"":"checked"}></td><td>${esc(x.unyou_id)}</td><td><input data-d="${i}" data-f="unban" value="${esc(x.unban)}" style="width:50px"></td><td>${esc(x.shotei)}</td><td>${esc(x.trains)}</td><td><input data-d="${i}" data-f="prefix" value="${esc(x.prefix||"")}"></td><td><input data-d="${i}" data-f="cars" value="${esc(x.cars||"")}"></td></tr>`).join("");
   $("chkAll").onchange=e=>document.querySelectorAll(".chk").forEach(c=>c.checked=e.target.checked);
 }
+$("btnClearCars").onclick=()=>{
+  let n=0;document.querySelectorAll('[data-d][data-f="cars"]').forEach(i=>{if(i.value!==""){n++;i.value="";}});
+  $("clearMsg").textContent=n?`${n}件の個別両数をクリアしました`:"クリアする個別両数はありません";
+};
 function readSup(){
   const s=S.sup;
   s.defaults={weekday:$("dWeekday").value.trim(),rinji:$("dRinji").value.trim(),start_date:$("dStart").value.trim()};
@@ -285,9 +290,9 @@ $("btnConv").onclick=async()=>{
   for(const d of targets){
     const g=sup.groups.find(g=>g.shotei===d.shotei)||{};
     const eff=GenCore.resolveFields(d,g,sup.defaults);
-    const c=GenCore.convertUnyou(flows[d.unyou_id],tts);
+    const c=GenCore.renameStations(GenCore.convertUnyou(flows[d.unyou_id],tts),S.fixes);
     const at=GenCore.attributeRoutes(c.stations,master);
-    S.results.push({d,eff,conv:c,routes:at.routes.join(", "),unknown:at.unknown,mono:GenCore.monotonicViolations(c.rows)});
+    S.results.push({d,eff,conv:c,routes:at.routes.join(", "),auto:at.routes.join(", "),unknown:at.unknown,mono:GenCore.monotonicViolations(c.rows)});
   }
   log(`変換完了: ${S.results.length} ダイヤ`);
   $("btnConv").disabled=false;$("btnStop").disabled=true;
@@ -300,10 +305,27 @@ function renderPrev(){
     const key=`${r.eff.prefix}_${r.d.unban}`;const w=[];
     if(r.conv.skipped.length)w.push(`<span class="ng">時刻なし ${esc(r.conv.skipped.join(","))}</span>`);
     if(r.mono)w.push(`<span class="ng">時刻逆行 ${r.mono}</span>`);
-    if(r.unknown.length)w.push(`<span class="wn">マスタに無い駅 ${esc(r.unknown.join(","))}</span>`);
+    if(r.unknown.length)w.push(`<span class="wn">マスタに無い駅</span>`+r.unknown.map(u=>`<div class="fixrow"><span class="wn">${esc(u)}</span> → <input data-u="${esc(u)}" value="${esc(u)}" style="width:130px"> <button type="button" class="sub" data-fix="${esc(u)}">直す</button></div>`).join(""));
     if(!r.routes)w.push(`<span class="ng">路線を判定できません</span>`);
     return `<tr><td>${esc(key)}</td><td>${r.conv.rows.length-1}</td><td>${w.join("<br>")||'<span class="ok">OK</span>'}</td><td><input data-r="${i}" value="${esc(r.routes)}"></td></tr>`;}).join("");
 }
+
+/* 駅名の直し(1.6.0): 全ダイヤの同名駅にまとめて反映し、路線を再判定(手で直した路線欄は残す) */
+$("tblPrev").addEventListener("click",e=>{
+  const b=e.target.closest("[data-fix]");if(!b)return;
+  const old=b.dataset.fix;const inp=[...document.querySelectorAll("[data-u]")].find(i=>i.dataset.u===old&&i.parentNode===b.parentNode);
+  const nv=(inp?inp.value:"").trim();if(!nv||nv===old)return;
+  document.querySelectorAll("[data-r]").forEach(i=>{S.results[+i.dataset.r].routes=i.value.trim();});
+  S.fixes[old]=nv;
+  for(const r of S.results){
+    if(!r.unknown.includes(old))continue;
+    GenCore.renameStations(r.conv,{[old]:nv});
+    const at=GenCore.attributeRoutes(r.conv.stations,S.master||{});
+    if(r.routes===r.auto)r.routes=at.routes.join(", ");
+    r.auto=at.routes.join(", ");r.unknown=at.unknown;
+  }
+  renderPrev();
+});
 
 /* ---------- 保存 ---------- */
 function buildPlan(){

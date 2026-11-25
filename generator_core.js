@@ -1,4 +1,4 @@
-/* generator_core.js v1.1.0
+/* generator_core.js v1.2.0
  * elesite の生レスポンス → tuts4 静的JSON の変換ロジック(fetch_saikyo.py / convert.py の JS 移植)。
  * ブラウザ(window.GenCore)と Node(module.exports)の両方で使える。DOM・通信には触らない。
  */
@@ -97,7 +97,25 @@
         rows.push([rnum, x.station, t, shubetsu, ikisaki]);
       }
     }
-    return { rows, skipped, stations, bounds };
+    const out = { rows, skipped, stations, bounds };
+    return renameStations(out, null);
+  }
+
+  /** 駅名の自動正規化(1.2.0): ele は「ＪＲ○○駅」と全角、tuts は半角「JR」なので半角に統一する */
+  function normalizeStation(name) {
+    return String(name == null ? "" : name).replace(/[ＪJ][ＲR]/g, "JR");
+  }
+
+  /**
+   * 駅名の置換(1.2.0)。fixes: { 旧名: 新名 } (null なら自動正規化のみ)。
+   * conv.rows / stations / bounds を破壊的に書き換えて conv を返す。自動正規化を先に、続けて fixes を適用。
+   */
+  function renameStations(conv, fixes) {
+    const f = n => { let x = normalizeStation(n); if (fixes && Object.prototype.hasOwnProperty.call(fixes, x) && fixes[x]) x = fixes[x]; return x; };
+    for (let i = 1; i < conv.rows.length; i++) conv.rows[i][1] = f(conv.rows[i][1]);
+    conv.stations = conv.stations.map(f);
+    conv.bounds = conv.bounds.map(f);
+    return conv;
   }
 
   /** シート列順 [番号,駅,時刻,種別,行先] → 出力列順 [番号,駅,時刻,行先,種別] */
@@ -198,6 +216,6 @@
     return order.map(k => map[k]);
   }
 
-  const api = { REGISTRY_HEADERS, single, pickSegments, convertUnyou, toOutputRows, monotonicViolations, attributeRoutes, resolveFields, buildRegistryRow, groupByRoute };
+  const api = { REGISTRY_HEADERS, single, pickSegments, convertUnyou, toOutputRows, monotonicViolations, attributeRoutes, normalizeStation, renameStations, resolveFields, buildRegistryRow, groupByRoute };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.GenCore = api;
 })(typeof window !== "undefined" ? window : globalThis);
