@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.33.10 -->
+<!-- version: 1.33.11 -->
+<!-- 1.33.11: diagram_static.js 1.4.0・trainpos.js 1.32.0・timetable.js 1.22.0（同名路線の全会社を合体表示） -->
 <!-- 1.33.10: trainpos.js 1.31.0（駅名の横に「留置 N」。押すと留置中の運用の一覧） -->
 <!-- 1.33.9: diagram_static.js 1.3.0・trainpos.js 1.30.0（臨時ダイヤの個別JSON対応＋スプシにだけある臨時も併読） -->
 <!-- 1.33.8: diagram_static.js 1.2.0・trainpos.js 1.29.0・timetable.js 1.21.0（臨時列車を個別JSON extras から読む） -->
@@ -636,10 +637,10 @@
 <script src="logs.js?v=1.2.1"></script>
 <script src="idbcache.js?v=1.0.0"></script>
 <script src="dayrule.js?v=1.1.0"></script>
-<script src="timetable.js?v=1.21.0"></script>
+<script src="timetable.js?v=1.22.0"></script>
 <script src="trainnavi.js?v=1.5.0"></script>
-<script src="diagram_static.js?v=1.3.0"></script>
-<script src="trainpos.js?v=1.31.1"></script>
+<script src="diagram_static.js?v=1.4.0"></script>
+<script src="trainpos.js?v=1.32.0"></script>
 <script>initNav("乗車路線マップ確認用");</script>
 <script>
 const username = checkLogin();

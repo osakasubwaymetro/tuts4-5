@@ -1,5 +1,9 @@
 // diagram_static.js
-// version: 1.3.0
+// version: 1.4.0
+// 1.4.0: 同名路線の全会社ファイルを合体。routeList(会社, 路線) は、同じ路線名のファイルが複数の会社にある時、全会社のダイヤを1つの一覧にして返す
+//        （返す配列に merged=true を付ける。会社ごとに臨時列車・臨時ダイヤ・スプシ臨時を足す。同名路線が1社だけなら従来どおり）。
+//        シートのキーは会社込みでも持つ: sheet(ID, 運番, 会社) は会社込みを先に探し、無ければ従来の ID_運番 で返す（会社が違っても ID_運番 がぶつからない）。
+//        新しく entriesForRoute(路線) / companiesFor(路線) を公開。
 // 1.3.0: ①臨時ダイヤ（コミケ臨など）も路線ファイルから分離され「路線×ダイヤ名」で1JSONになるのに対応（索引の dia 付きの項目。形は路線ファイルと同じ list+sheets）。
 //          索引が取れている時、路線ファイル内の同じ臨時ダイヤ名の行は使わない（新旧混在でも二重にならない）。取れない時は路線ファイルのまま。
 //        ②JSON化されていない臨時（スプレッドシート「ダイヤ一覧」で 臨時=TRUE の行とそのタブ）も併せて読み、JSON側に無いものを足す。
@@ -26,7 +30,8 @@
   const MANIFEST_MEMO_MS = 60 * 1000;
   const COLS = ["列車番号", "駅名", "発車時刻", "行先", "種別"];
 
-  const sheets = new Map();   // "ID_運番" → 行(オブジェクト)の配列
+  const sheets = new Map();   // "ID_運番" と "会社\tID_運番" → 行(オブジェクト)の配列
+  const sheetOwner = new Map(); // "ID_運番"(会社なし) → 最後に書いた会社（別の会社のものは上書きしない）
   const routes = new Map();   // "会社\t路線\trev" → Promise<list|null>
   let manifestP = null, manifestAt = 0;
 
@@ -338,6 +343,12 @@
     return got.filter(Boolean);
   }
 
+  // 路線名が同じファイルを全会社分(preferを先頭、他は会社名順)
+  function entriesOf(m, route, prefer) {
+    const all = m.files.filter(f => f && f.file && f.route === route);
+    return all.sort((a, b) => (a.company === prefer ? -1 : b.company === prefer ? 1 : String(a.company).localeCompare(String(b.company), "ja")));
+  }
+
   const baseListMemo = new Map(); // "会社\t路線" → Promise<list|null>
   async function baseListOf(company, route) {
     try {
@@ -373,13 +384,22 @@
     return { idx, items: items.concat(more) };
   }
 
+  // シートを保存。会社込みのキーは必ず上書き、会社なし(従来)のキーは、別の会社が入れたものは上書きしない
+  function putSheet(company, k, rows) {
+    if (company) sheets.set(company + "\t" + k, rows);
+    const own = sheetOwner.get(k);
+    if (own === undefined || own === company || !company) { sheets.set(k, rows); sheetOwner.set(k, company); }
+  }
+
   async function loadRoute(entry) {
     const data = await fetchRoute(entry);
     const local = new Map();
+    const compOfKey = new Map();
     for (const d of data.list) {
       if (!d || typeof d !== "object") throw new Error("bad list row");
       const k = `${d["ID"] || ""}_${d["運番"] || ""}`;
       if (local.has(k)) continue;
+      compOfKey.set(k, d["会社"] || "");
       const raw = data.sheets[k];
       if (!Array.isArray(raw)) throw new Error("missing sheet " + k);
       local.set(k, raw.map(r => {
@@ -390,7 +410,7 @@
       }));
     }
     // 全部そろって初めて公開する（途中で壊れてたら何も入れない）
-    local.forEach((v, k) => sheets.set(k, v));
+    local.forEach((v, k) => putSheet(compOfKey.get(k) || entry.company || "", k, v));
     return data.list;
   }
 
@@ -401,18 +421,34 @@
         const m = await getManifest();
         const entry = m.files.find(f => f && f.file && f.route === route && (!company || f.company === company));
         if (!entry) return null;
-        const base = await baseListOf(company, route);
-        if (!base) return base;
-        let t = null;
-        try { t = await tempsFor(company, route, opts && opts.upcoming ? "upcoming" : defaultDates(opts && opts.date), base); } catch (e) { t = null; }
-        if (!t) return base; // 何かあっても路線ファイルのまま（落とさない）
-        t.items.forEach(x => { sheets.set(`${x.meta["ID"] || ""}_${x.meta["運番"] || ""}`, x.rows); });
-        return base.filter(keepRow(t.idx, company, route)).concat(t.items.map(x => x.meta));
+        // 同名路線の他社ファイル(あれば)。選んだ会社が先頭、他社は会社名順
+        const sibs = entriesOf(m, route, entry.company);
+        const dates = opts && opts.upcoming ? "upcoming" : defaultDates(opts && opts.date);
+        const one = async comp => {
+          const base = await baseListOf(comp, route);
+          if (!base) return null;
+          let t = null;
+          try { t = await tempsFor(comp, route, dates, base); } catch (e) { t = null; }
+          if (!t) return base; // 何かあっても路線ファイルのまま（落とさない）
+          t.items.forEach(x => { putSheet(x.meta["会社"] || comp, `${x.meta["ID"] || ""}_${x.meta["運番"] || ""}`, x.rows); });
+          return base.filter(keepRow(t.idx, comp, route)).concat(t.items.map(x => x.meta));
+        };
+        if (sibs.length <= 1) return await one(company);
+        // 合体: 主の会社が読めなければ従来どおりスプシへ(null)。他社が読めない時はその会社だけ飛ばす
+        const lists = await Promise.all(sibs.map(f => one(f.company).catch(() => null)));
+        if (!lists[0]) return null;
+        const out = [];
+        lists.forEach(l => { if (l) out.push(...l); });
+        out.merged = true;
+        out.companies = sibs.filter((f, i) => lists[i]).map(f => f.company);
+        return out;
       } catch (e) {
         diagShow("[DiagramStatic] manifest失敗→スプシ: " + (e && e.message));
         return null;
       }
     },
+    entriesForRoute: async route => { const m = await getManifest(); return entriesOf(m, route, ""); },
+    companiesFor: async route => { const m = await getManifest(); return entriesOf(m, route, "").map(f => f.company); },
     getManifest,
     fetchRoute,
     getExtrasIndex,
@@ -421,6 +457,6 @@
     keepRow,
     defaultDates,
     isLegacyTempRow,
-    sheet(id, unban) { return sheets.get(`${id || ""}_${unban || ""}`) || null; }
+    sheet(id, unban, company) { const k = `${id || ""}_${unban || ""}`; return (company && sheets.get(company + "\t" + k)) || sheets.get(k) || null; }
   };
 })();

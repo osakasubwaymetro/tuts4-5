@@ -1,4 +1,5 @@
-// version: 1.48.1
+// version: 1.49.0
+// 1.49.0: 同名路線の全会社を合体表示。DiagramStatic.routeList が複数会社のダイヤを合体して返す時（merged）は、会社で絞らず路線だけで絞る。シートは会社込みで引く（会社が違っても ID_運番 がぶつからない）。ダイヤ候補に diagCompany を持たせる
 // 1.48.1: 今日の編成の自動入力で、24時以上の時刻表記（24:17）を0時台として読む（走行位置MAPの時刻の読み方と合わせた）。
 // 1.48.0: 過去の乗車記録から（運番付きのダイヤ候補で）運用を選んだ時、その運用の「今日の編成」が他の人の今日の投稿ですでに分かっていれば、車両形式・車番・連結編成数を自動で入れる。
 //         同じ運用（運番シート）の列車の駅・時刻・行先に一致する今日の投稿を探し、複数あれば乗車時刻がいちばん新しい1件を使う。乗車位置は取り込まない。すでに入力してあっても上書きする。
@@ -1748,8 +1749,8 @@ async function runDiagramPool(items, limit, fn) {
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 const _diagramSheetMemo = new Map(); // シート名 → { t, promise }
-function fetchDiagramSheet(id, unban, listRowLastUpdated) {
-  const st = window.DiagramStatic && DiagramStatic.sheet(id, unban); // 静的JSONで取れていればそれを使う
+function fetchDiagramSheet(id, unban, listRowLastUpdated, company) {
+  const st = window.DiagramStatic && DiagramStatic.sheet(id, unban, company); // 静的JSONで取れていればそれを使う（会社込みで探す）
   if (st) return Promise.resolve(st);
   const sheetName = `${id}_${unban}`;
   const m = _diagramSheetMemo.get(sheetName);
@@ -1810,8 +1811,8 @@ async function getDiagramListForRoute(companyVal, routeVal, svcDate) {
 async function prefetchDiagramDataForRoute(companyVal, routeVal) {
   try {
     const list = await getDiagramListForRoute(companyVal, routeVal);
-    const matches = list.filter(d => d["会社"] === companyVal && diagramRowMatchesRoute(d, routeVal));
-    await runDiagramPool(matches, DIAGRAM_FETCH_CONCURRENCY, d => fetchDiagramSheet(d["ID"], d["運番"], d["最終更新"]));
+    const matches = list.filter(d => (list.merged || d["会社"] === companyVal) && diagramRowMatchesRoute(d, routeVal));
+    await runDiagramPool(matches, DIAGRAM_FETCH_CONCURRENCY, d => fetchDiagramSheet(d["ID"], d["運番"], d["最終更新"], d["会社"]));
   } catch (e) { /* ignore */ }
 }
 // ダイヤの時刻セルの読み方（運営ルール）：
@@ -1846,7 +1847,7 @@ function isFlaggedExtraGeneric(v) {
 async function getDiagramCandidates(routeVal, boardingStation, todayIsWeekendType, svcDate, holidaySet) {
   const companyVal = document.getElementById("country")?.value || "";
   const list = await getDiagramListForRoute(companyVal, routeVal, svcDate);
-  const routeRows = list.filter(d => d["会社"] === companyVal && diagramRowMatchesRoute(d, routeVal));
+  const routeRows = list.filter(d => (list.merged || d["会社"] === companyVal) && diagramRowMatchesRoute(d, routeVal)); // 合体表示(merged)の時は同名路線の全会社
   // 臨時ダイヤ（ダイヤ一覧の「臨時ダイヤ名」に値がある行）が運行日に走る路線では、その日は定期（平日・土休日）は走らないので、
   // 「臨時ダイヤ＋その日の臨時列車（臨時ダイヤ名が空で、曜日区分が日付の列車）」だけを対象にする。
   // 臨時ダイヤの日でなければ、臨時ダイヤの行は対象外にして、臨時列車は通常ダイヤと一緒にその日だけ対象にする
@@ -1872,7 +1873,7 @@ async function getDiagramCandidates(routeVal, boardingStation, todayIsWeekendTyp
   // 運番シートを同時に取る。結果は取れた順ではなく、ダイヤ一覧の順に並べる（毎回同じ並びになる）
   const perSheet = new Array(matches.length).fill(null);
   await runDiagramPool(matches, DIAGRAM_FETCH_CONCURRENCY, async (d, di) => {
-    const rows = await fetchDiagramSheet(d["ID"], d["運番"], d["最終更新"]);
+    const rows = await fetchDiagramSheet(d["ID"], d["運番"], d["最終更新"], d["会社"]);
     const results = [];
     const isExtra = isFlaggedExtraGeneric(d["臨時"]);
     parseDiagramTimes(rows).forEach(({ row: r, dep }) => {
@@ -1891,10 +1892,10 @@ async function getDiagramCandidates(routeVal, boardingStation, todayIsWeekendTyp
       if (!bounds.length && !types.some(Boolean)) return;
       if (bounds.length) {
         bounds.forEach((b, i) => {
-          results.push({ isDiagram: true, time, unban: d["運番"], diagId: d["ID"], trainNumber, isExtra, type: types[i] || types[0] || "", bound: b });
+          results.push({ isDiagram: true, time, unban: d["運番"], diagId: d["ID"], diagCompany: d["会社"] || "", trainNumber, isExtra, type: types[i] || types[0] || "", bound: b });
         });
       } else {
-        results.push({ isDiagram: true, time, unban: d["運番"], diagId: d["ID"], trainNumber, isExtra, type: "", bound: "" });
+        results.push({ isDiagram: true, time, unban: d["運番"], diagId: d["ID"], diagCompany: d["会社"] || "", trainNumber, isExtra, type: "", bound: "" });
       }
     });
     perSheet[di] = results;
@@ -2448,8 +2449,8 @@ function _unitTrips(rows) {
 }
 
 // 今日（運行日）の他の人の投稿から、この運用の編成を探す。見つからなければ null
-async function findTodayFormationForUnit(diagId, unban, allRides) {
-  const rows = await fetchDiagramSheet(diagId, unban);
+async function findTodayFormationForUnit(diagId, unban, allRides, diagCompany) {
+  const rows = await fetchDiagramSheet(diagId, unban, undefined, diagCompany);
   if (!rows || !rows.length) return null;
   const now = getEffectiveNow();
   const svc = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (now.getHours() < 3 ? 1 : 0)); // 運行日は3:00で切り替え
@@ -2492,7 +2493,7 @@ async function autofillFormationFromToday(c) {
     if (!c || !c.isDiagram || c.coupled || !c.diagId || !c.unban) return; // 運番が分かるダイヤ候補（併結を除く）だけ
     const all = _ridesAllForFormation;
     if (!all || !all.length) return;
-    const f = await findTodayFormationForUnit(c.diagId, c.unban, all);
+    const f = await findTodayFormationForUnit(c.diagId, c.unban, all, c.diagCompany);
     if (!f || !f.model) return;
     const modelSel = document.getElementById("model");
     if (!modelSel || ![...modelSel.options].some(o => o.value === f.model)) return; // この路線の車両形式に無ければ何もしない

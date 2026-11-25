@@ -1,5 +1,6 @@
 // timetable.js
-// version: 1.21.0
+// version: 1.22.0
+// 1.22.0: 同名路線の全会社を合体表示。routeList が複数会社のダイヤを合体して返す時（merged）は会社で絞らず路線だけで絞る。シートは会社込みで引く
 // 1.21.0: 臨時列車が別ファイル(extras)になるのに対応。routeList に upcoming を渡し、昨日以降に運転日がある臨時列車を足す（取れなければ従来どおり）
 // 1.20.0: ダイヤを静的JSON（diagram_static.js）から読む。無い／壊れてたら従来どおりスプシから直接取る
 // 1.19.1: スタフの両数の枠を、実物のスタフに近いデザインに（影つきの白い枠に大きい数字、右下に小さく「両」。前後に縦線）
@@ -225,8 +226,8 @@ function ttFetchJsonWithTimeout(url, ms) {
 
 // 同じシートを60秒以内に取っていれば、その結果（または取得中の通信）を使い回す
 const ttSheetMemo = new Map(); // sheetName -> { t, promise }
-function ttFetchDiagramSheet(id, unban, listRowLastUpdated) {
-  const st = window.DiagramStatic && DiagramStatic.sheet(id, unban); // 静的JSONで取れていればそれを使う
+function ttFetchDiagramSheet(id, unban, listRowLastUpdated, company) {
+  const st = window.DiagramStatic && DiagramStatic.sheet(id, unban, company); // 静的JSONで取れていればそれを使う
   if (st) return Promise.resolve(st);
   const sheetName = `${id}_${unban}`;
   const m = ttSheetMemo.get(sheetName);
@@ -276,7 +277,7 @@ function ttFilterLatestRevision(matches) {
   const passthrough = []; // 適用開始日が無い、または有効な日付が1つも無い行
 
   matches.forEach(d => {
-    const key = `${d["ID"] || ""}_${d["運番"] || ""}`;
+    const key = `${d["会社"] || ""}\t${d["ID"] || ""}_${d["運番"] || ""}`; // 合体表示で会社が違っても ID_運番 がぶつからないよう会社込み
     const raw = String(d["適用開始日"] || "").trim();
     if (!raw) { passthrough.push(d); return; }
 
@@ -476,7 +477,7 @@ async function ttGetRouteDiagramRows(routeVal) {
   const companyVal = routeRow ? routeRow["会社"] : "";
   const sList = window.DiagramStatic ? await DiagramStatic.routeList(companyVal, routeVal, { upcoming: true }) : null; // 臨時列車は昨日以降に運転日があるものを全部（日付を決めずに見る画面のため）
   const list = sList || await ttGetDiagramList();
-  const rawMatches = list.filter(d => d["会社"] === companyVal && ttDiagramRowMatchesRoute(d, routeVal));
+  const rawMatches = list.filter(d => (list.merged || d["会社"] === companyVal) && ttDiagramRowMatchesRoute(d, routeVal)); // 合体表示(merged)の時は同名路線の全会社
   return ttFilterLatestRevision(rawMatches);
 }
 
@@ -489,7 +490,7 @@ async function ttPrefetchRoute(routeVal) {
     const matches = await ttGetRouteDiagramRows(routeVal);
     await ttRunPool(matches, TT_FETCH_CONCURRENCY, d => {
       if (ttPrefetchRoute_ !== routeVal) return; // 別の路線に切り替わったら止める
-      return ttFetchDiagramSheet(d["ID"], d["運番"], d["最終更新"]);
+      return ttFetchDiagramSheet(d["ID"], d["運番"], d["最終更新"], d["会社"]);
     });
   } catch (e) { /* 先読みの失敗は無視（本検索でもう一度取る） */ }
 }
@@ -656,7 +657,7 @@ async function ttCollectStationEntries(stationName, routeVal, onProgress, isCanc
 
   await ttRunPool(matches, TT_FETCH_CONCURRENCY, async (d, i) => {
     if (isCancelled && isCancelled()) return;
-    const rows = await ttFetchDiagramSheet(d["ID"], d["運番"], d["最終更新"]);
+    const rows = await ttFetchDiagramSheet(d["ID"], d["運番"], d["最終更新"], d["会社"]);
     partials[i] = ttExtractFromSheet(d, rows, stationName, routeVal, orderList);
     done++;
     emit(false);

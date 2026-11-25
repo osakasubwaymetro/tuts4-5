@@ -1,3 +1,5 @@
+// trainpos.js v1.32.0
+// 1.32.0: 同名路線の全会社を合体表示。選んだ路線（と並走路線）について、manifest にある同名路線の他社ファイルも読み、その路線を走る全会社の列車を出す（臨時列車の extras も会社ごとに取る）。運用の目印(sheetKey)・ダイヤの重複判定は会社込みにして、会社が違って ID_運番 がぶつかっても混ざらない。キャッシュは tp_trains15 に変更。
 // trainpos.js v1.31.1
 // 1.31.1: 24時以上の時刻表記（24:17 など）を0時台（0:17）として読む。同じ列車に「24:17」と「0:17」が混ざっていると、日跨ぎの連続化で+24hされた駅に、さらに「始発が0〜2時台なら全駅+24h」が二重にかかり、24時間の区間ができて、深夜の最終列車が翌日の昼間に幽霊列車として走って見えていた。日跨ぎは今までの連続化＋始発シフトに任せる。
 // trainpos.js v1.31.0
@@ -193,7 +195,7 @@
     const today = new Date();
     const groups = {}, pass = [];
     matches.forEach(d => {
-      const key = `${d["ID"] || ""}_${d["運番"] || ""}`;
+      const key = `${d["会社"] || ""}\t${d["ID"] || ""}_${d["運番"] || ""}`;
       const raw = String(d["適用開始日"] || "").trim();
       if (!raw) { pass.push(d); return; }
       const date = new Date(raw);
@@ -254,7 +256,7 @@
         trainNumber: group[0]["列車番号"] || "",
         dayType, dayRaw, isExtra: isTrue(listRow["臨時"]),
         extraDiaName: String(listRow["臨時ダイヤ名"] || "").trim(), // 値がある行＝臨時ダイヤ（空なら臨時列車か通常ダイヤ）
-        sheetKey: `${listRow["ID"] || ""}_${listRow["運番"] || ""}_${dayRaw || dayType}`, // 同じ運用（＝同じ編成が走り続ける）の目印
+        sheetKey: `${listRow["会社"] || ""}\t${listRow["ID"] || ""}_${listRow["運番"] || ""}_${dayRaw || dayType}`, // 同じ運用（＝同じ編成が走り続ける）の目印
         bounds: [...bounds], stops,
         cars: parseInt(listRow["両数"], 10) || 0, // ダイヤ一覧の「両数」列（スタフ・Train Naviの両数に使う）
         defaultIcons: icons, // 画像URLの一覧（複数なら1秒ごとに切り替え） // ダイヤ一覧の「所定形式」列の画像URL（編成の記録が無い時に使う）
@@ -336,9 +338,26 @@
     } catch (e) { /* ignore */ }
   }
 
+  // 同名路線の他社ファイル(manifest にあるもの)も対象に足す。会社が空の指定は従来どおり（足さない）
+  function expandSameRoute(targets, manifest) {
+    if (!manifest || !Array.isArray(manifest.files)) return targets;
+    const out = targets.slice(), have = new Set(targets.map(t => t.route + "\t" + (t.company || "")));
+    targets.forEach(t => {
+      if (!t.company) return;
+      manifest.files.forEach(f => {
+        if (!f || !f.file || f.route !== t.route || !f.company || f.company === t.company) return;
+        const k = t.route + "\t" + f.company;
+        if (have.has(k)) return;
+        have.add(k);
+        out.push({ route: t.route, company: f.company, via: t.via });
+      });
+    });
+    return out;
+  }
+
   async function loadRouteTrains(ctx, onProgress, force) {
     const par = (ctx.parallelRoutes || []).filter(p => p.route && p.route !== ctx.routeVal);
-    const cacheKey = "tp_trains14_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
+    const cacheKey = "tp_trains15_" + ctx.company + "_" + ctx.routeVal + "+" + par.map(p => p.route).sort().join(",");
     if (force) { try { localStorage.removeItem("tuts4_diagram_list_cache"); } catch (e) { /* ignore */ } }
 
     // マニフェスト（rev 一覧）。取れなければ null → 全部スプシから
@@ -349,7 +368,7 @@
     manifest = await manP; lap.manifest = Math.round(performance.now() - T0);
     const findEntry = (route, company) => manifest && manifest.files.find(f =>
       f && f.file && f.route === route && (!company || f.company === company));
-    const targets = [{ route: ctx.routeVal, company: ctx.company, via: false }, ...par.map(p => ({ route: p.route, company: p.company, via: true }))];
+    const targets = expandSameRoute([{ route: ctx.routeVal, company: ctx.company, via: false }, ...par.map(p => ({ route: p.route, company: p.company, via: true }))], manifest);
     targets.forEach(t => { t.entry = findEntry(t.route, t.company) || null; });
     // 臨時列車の索引（取れなければ null＝従来どおり路線ファイルの臨時列車を使う）
     let extIdx = null;
@@ -379,7 +398,7 @@
     const jobs = [];
     const seen = new Set();
     const add = (d, viaParallel, sheets, srcRoute) => {
-      const k = `${d["ID"] || ""}_${d["運番"] || ""}_${d["曜日区分"] || ""}_${d["適用開始日"] || ""}`;
+      const k = `${d["会社"] || ""}\t${d["ID"] || ""}_${d["運番"] || ""}_${d["曜日区分"] || ""}_${d["適用開始日"] || ""}`;
       if (seen.has(k)) return;
       seen.add(k);
       jobs.push({ d, viaParallel, sheets, srcRoute });
@@ -438,7 +457,8 @@
     const DS = window.DiagramStatic;
     if (!DS || !DS.tempsFor) return [];
     const par = (ctx.parallelRoutes || []).filter(p => p.route && p.route !== ctx.routeVal);
-    const targets = [{ route: ctx.routeVal, company: ctx.company, via: false }, ...par.map(p => ({ route: p.route, company: p.company, via: true }))];
+    let man = null; try { man = await getManifest(false); } catch (e) { man = null; }
+    const targets = expandSameRoute([{ route: ctx.routeVal, company: ctx.company, via: false }, ...par.map(p => ({ route: p.route, company: p.company, via: true }))], man);
     const dates = DS.defaultDates(effDate());
     const out = [];
     const seen = new Set();
@@ -446,7 +466,7 @@
       let list = null;
       try { const r = await DS.tempsFor(t.company, t.route, dates); list = r ? r.items : null; } catch (e) { list = null; }
       (list || []).forEach(x => {
-        const k = `${x.meta["ID"] || ""}_${x.meta["運番"] || ""}`;
+        const k = `${x.meta["会社"] || ""}\t${x.meta["ID"] || ""}_${x.meta["運番"] || ""}`;
         if (t.via && seen.has(k)) return; // 本線で出したものは並走側では出さない
         seen.add(k);
         let trs = [];
