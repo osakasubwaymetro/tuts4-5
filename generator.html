@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ダイヤJSONジェネレーター v1.9.0</title>
+<title>ダイヤJSONジェネレーター v1.10.0</title>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--tx:#1b1f24;--sub:#667;--bd:#d5d9df;--ac:#1f6feb;--ng:#c62828;--ok:#2e7d32;--wn:#b26a00}
 @media (prefers-color-scheme:dark){:root{--bg:#14171b;--card:#1d2127;--tx:#e6e8eb;--sub:#9aa3ad;--bd:#343b44;--ac:#5b9dff;--ng:#ff6b6b;--ok:#6fcf7a;--wn:#f0b050}}
@@ -25,7 +25,7 @@ progress{width:100%}
 </head>
 <body>
 <div class="wrap" id="app">
-<h1>ダイヤJSONジェネレーター <span class="mut">v1.9.0</span> <a href="dia_admin.html" class="mut" style="font-size:12px">→ ダイヤ管理ページ</a></h1>
+<h1>ダイヤJSONジェネレーター <span class="mut">v1.10.0</span> <a href="dia_admin.html" class="mut" style="font-size:12px">→ ダイヤ管理ページ</a></h1>
 
 <div class="card" id="c1">
   <h2>1. 接続</h2>
@@ -93,7 +93,7 @@ progress{width:100%}
 <script src="generator_core.js?v=1.2.0"></script>
 <script>
 "use strict";
-const VER="1.9.0";
+const VER="1.10.0";
 const MASTER_SHEET="1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s";
 const ICON_BASE="https://img.elesite-next.com";
 const $=id=>document.getElementById(id);
@@ -381,12 +381,26 @@ $("unkBox").addEventListener("click",e=>{
 /* ---------- 保存 ---------- */
 function buildPlan(){
   document.querySelectorAll("[data-r]").forEach(i=>{S.results[+i.dataset.r].routes=i.value.trim();});
-  const last=jstDate();const items=[];const keys=new Set();
+  const last=jstDate();
+  // 同じキー(prefix_運番)のダイヤは1つに統合する(1.10.0)。時刻表は一覧の表示順にそのまま連結、登録行は先頭のダイヤを採用
+  const order=[],byKey=new Map();
   for(const r of S.results){
     if(!r.routes)throw new Error(`${r.eff.prefix}_${r.d.unban}: 路線が空です`);
-    const k=`${r.eff.prefix}_${r.d.unban}`;if(keys.has(k))throw new Error(`キーが重複しています: ${k}`);keys.add(k);
-    const obj=GenCore.buildRegistryRow(r.eff,r.routes,r.d.unban,last);
-    items.push({obj,rows:GenCore.toOutputRows(r.conv.rows).slice(1)});
+    const k=`${r.eff.prefix}_${r.d.unban}`;
+    if(!byKey.has(k)){byKey.set(k,{k,first:r,rows:GenCore.toOutputRows(r.conv.rows).slice(1),srcs:[r]});order.push(k);}
+    else{const g=byKey.get(k);g.rows=g.rows.concat(GenCore.toOutputRows(r.conv.rows).slice(1));g.srcs.push(r);}
+  }
+  const items=[];
+  for(const k of order){
+    const g=byKey.get(k),r=g.first;
+    if(g.srcs.length>1){
+      const nm=g.srcs.map(x=>`運用ID ${x.d.unyou_id}`).join(" + ");
+      log(`${k} に統合しました(${nm} → ${g.rows.length}行)`);
+      const rs=s=>String(s).split(",").map(x=>x.trim()).filter(Boolean).sort().join(",");
+      const diff=g.srcs.slice(1).filter(x=>rs(x.routes)!==rs(r.routes));
+      if(diff.length)log(`警告: ${k} の統合で路線が食い違っています。先頭(運用ID ${r.d.unyou_id}: ${r.routes})を採用しました(食い違い: ${diff.map(x=>`運用ID ${x.d.unyou_id}: ${x.routes}`).join(" / ")})`);
+    }
+    items.push({obj:GenCore.buildRegistryRow(r.eff,r.routes,r.d.unban,last),rows:g.rows});
   }
   return GenCore.groupByRoute(items);
 }
