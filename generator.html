@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ダイヤJSONジェネレーター v1.6.0</title>
+<title>ダイヤJSONジェネレーター v1.7.0</title>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--tx:#1b1f24;--sub:#667;--bd:#d5d9df;--ac:#1f6feb;--ng:#c62828;--ok:#2e7d32;--wn:#b26a00}
 @media (prefers-color-scheme:dark){:root{--bg:#14171b;--card:#1d2127;--tx:#e6e8eb;--sub:#9aa3ad;--bd:#343b44;--ac:#5b9dff;--ng:#ff6b6b;--ok:#6fcf7a;--wn:#f0b050}}
@@ -14,6 +14,7 @@ label{display:block;font-size:12px;color:var(--sub);margin:6px 0 2px}
 input,select,button,textarea{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:6px 8px;max-width:100%}
 input[type=checkbox]{padding:0}
 button{background:var(--ac);color:#fff;border:0;padding:8px 14px;cursor:pointer}button.sub{background:var(--bg);color:var(--tx);border:1px solid var(--bd)}button:disabled{opacity:.5}
+.search-results{background:var(--card);border:1px solid var(--bd);border-radius:10px;margin-top:4px;overflow:hidden;max-height:200px;overflow-y:auto}.search-results button{display:block;width:100%;text-align:left;background:transparent;color:var(--tx);border:0;border-radius:0;padding:7px 10px}.search-results button:hover{background:var(--bd)}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}.row>div{flex:1 1 150px}
 table{border-collapse:collapse;width:100%;font-size:12px}th,td{border-bottom:1px solid var(--bd);padding:4px;text-align:left;vertical-align:top}
 td input{width:100%;min-width:60px}.scroll{overflow-x:auto}
@@ -24,7 +25,7 @@ progress{width:100%}
 </head>
 <body>
 <div class="wrap" id="app">
-<h1>ダイヤJSONジェネレーター <span class="mut">v1.6.0</span> <a href="dia_admin.html" class="mut" style="font-size:12px">→ ダイヤ管理ページ</a></h1>
+<h1>ダイヤJSONジェネレーター <span class="mut">v1.7.0</span> <a href="dia_admin.html" class="mut" style="font-size:12px">→ ダイヤ管理ページ</a></h1>
 
 <div class="card" id="c1">
   <h2>1. 接続</h2>
@@ -91,7 +92,7 @@ progress{width:100%}
 <script src="generator_core.js?v=1.2.0"></script>
 <script>
 "use strict";
-const VER="1.6.0";
+const VER="1.7.0";
 const MASTER_SHEET="1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s";
 const ICON_BASE="https://img.elesite-next.com";
 const $=id=>document.getElementById(id);
@@ -202,7 +203,7 @@ function setSup(sup){
   $("c3").hidden=false;$("patName").textContent=sup.pattern?`(${sup.pattern})`:"";
   const d=sup.defaults||{};$("dWeekday").value=d.weekday||"";$("dRinji").value=d.rinji||"";$("dStart").value=d.start_date||"";$("dPat").value=d.pattern_name||"";
   $("tblGroups").innerHTML=`<tr><th>所定</th><th>ID接頭辞</th><th>会社</th><th>両数</th></tr>`+sup.groups.map((g,i)=>
-    `<tr><td>${esc(g.shotei)}</td><td><input data-g="${i}" data-f="prefix" value="${esc(g.prefix)}"></td><td><input data-g="${i}" data-f="company" value="${esc(g.company)}"></td><td><input data-g="${i}" data-f="cars" value="${esc(g.cars)}"></td></tr>`).join("");
+    `<tr><td>${esc(g.shotei)}</td><td><input data-g="${i}" data-f="prefix" value="${esc(g.prefix)}"></td><td><input data-g="${i}" data-f="company" autocomplete="off" value="${esc(g.company)}"></td><td><input data-g="${i}" data-f="cars" value="${esc(g.cars)}"></td></tr>`).join("");
   $("nDia").textContent=sup.diagrams.length;
   $("tblDia").innerHTML=`<tr><th><input type="checkbox" id="chkAll" checked></th><th>運用ID</th><th>運番</th><th>所定</th><th>列車数</th><th>個別 接頭辞</th><th>個別 両数</th></tr>`+sup.diagrams.map((x,i)=>
     `<tr><td><input type="checkbox" class="chk" data-i="${i}" ${x.skip?"":"checked"}></td><td>${esc(x.unyou_id)}</td><td><input data-d="${i}" data-f="unban" value="${esc(x.unban)}" style="width:50px"></td><td>${esc(x.shotei)}</td><td>${esc(x.trains)}</td><td><input data-d="${i}" data-f="prefix" value="${esc(x.prefix||"")}"></td><td><input data-d="${i}" data-f="cars" value="${esc(x.cars||"")}"></td></tr>`).join("");
@@ -212,6 +213,35 @@ $("btnClearCars").onclick=()=>{
   let n=0;document.querySelectorAll('[data-d][data-f="cars"]').forEach(i=>{if(i.value!==""){n++;i.value="";}});
   $("clearMsg").textContent=n?`${n}件の個別両数をクリアしました`:"クリアする個別両数はありません";
 };
+
+/* ---------- 会社名の候補(1.7.0) ---------- */
+function compList(skip){
+  const set=new Set();
+  try{JSON.parse(lsGet("gen_comps")||"[]").forEach(c=>c&&set.add(c));}catch(e){}
+  if(S.manifest&&S.manifest.files)S.manifest.files.forEach(f=>{if(f.company)set.add(f.company);});
+  if(S.sup&&S.sup.groups)S.sup.groups.forEach(g=>{if(g.company)set.add(g.company);});
+  document.querySelectorAll('[data-g][data-f="company"]').forEach(i=>{if(i!==skip&&i.value.trim())set.add(i.value.trim());});
+  const a=[...set];
+  if(S.manifest&&S.manifest.files&&S.manifest.files.length)lsSet("gen_comps",JSON.stringify([...new Set(S.manifest.files.map(f=>f.company).filter(Boolean))]));
+  return a;
+}
+function compBoxClose(){document.querySelectorAll(".compbox").forEach(b=>b.remove());}
+function compSearch(inp){
+  compBoxClose();
+  const q=inp.value.trim().toLowerCase();
+  const hit=compList(inp).filter(c=>!q||c.toLowerCase().includes(q));
+  if(!hit.length||(hit.length===1&&hit[0].toLowerCase()===q))return;
+  const d=document.createElement("div");d.className="compbox search-results";
+  d.innerHTML=hit.map(c=>`<button type="button" data-c="${esc(c)}">${esc(c)}</button>`).join("");
+  inp.parentNode.appendChild(d);
+}
+$("tblGroups").addEventListener("input",e=>{if(e.target.matches('[data-f="company"]'))compSearch(e.target);});
+$("tblGroups").addEventListener("focusin",e=>{if(e.target.matches('[data-f="company"]'))compSearch(e.target);});
+$("tblGroups").addEventListener("mousedown",e=>{
+  const b=e.target.closest(".compbox button");if(!b)return;
+  e.preventDefault();const inp=b.closest("td").querySelector('[data-f="company"]');inp.value=b.dataset.c;compBoxClose();
+});
+document.addEventListener("click",e=>{if(!e.target.closest("#tblGroups"))compBoxClose();});
 function readSup(){
   const s=S.sup;
   s.defaults={weekday:$("dWeekday").value.trim(),rinji:$("dRinji").value.trim(),start_date:$("dStart").value.trim()};
