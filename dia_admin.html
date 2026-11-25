@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ダイヤ管理</title>
-<!-- version: 1.9.0 -->
+<!-- version: 1.10.0 -->
+<!-- 1.10.0: 列車の路線判定の候補を、そのダイヤの登録路線(listの「路線」)だけに絞る。範囲内で従来の判定(隣駅ペア→両駅を含む路線→最小カバー)。マスタstationに無い登録路線(未整備)はその列車も使うものとして数える。登録が空のダイヤは全路線が候補。範囲外の路線では補わない -->
 <!-- 1.9.0: 接続エリアに「マスタ最新同期」ボタン。リロードせずに sujitype / station を再取得して判定に反映(読み込み済みの路線ファイル・選択状態はそのまま)。成功したら控え(gen_sujitype / gen_station_adm)も更新、失敗時は前のマスタのまま -->
 <!-- 1.8.0: 列車の路線判定を「全ペアをカバーする最小の路線集合」に変更(共用区間で余計な路線が付かない)。隣接ペアが無い区間(特急の停車駅飛び)は、2駅ともその路線の駅順にある路線でカバー扱い -->
 <!-- 1.7.0: 種別の路線判定を「ダイヤの登録路線」から「列車ごとの停車駅の並び」に変更。隣り合う2駅の組がマスタstationタブの路線の駅順で隣り合っていれば、その路線を走っているとみなす。sujitypeとstationを一緒に読み込む。赤判定は従来どおり路線×種別 -->
@@ -481,13 +482,14 @@ function buildPairs(rows){ // 隣り合う2駅(上下どちらの向きも) → 
 /* 駅の並びから、全区間(隣り合う2駅)をカバーする最小の路線集合を返す。
    各区間の候補=その2駅が路線の駅順で隣り合う路線。1つも無ければ「2駅ともその路線の駅順にある」路線を候補にする(停車駅が飛ぶ区間)。
    どの路線にも当てはまらない区間は無視。最小の集合が複数あれば駅数の合計が小さい(専用の路線が多い)方を採る。 */
-function coverRoutes(st){
+function coverRoutes(st,allowed){ // allowed: 候補にできる路線の Set(null なら全路線)
   const res=new Set();if(!S.pairs)return res;
+  const ok=rt=>!allowed||allowed.has(rt);
   const cands=[];
   for(let i=0;i+1<st.length;i++){
     const a=st[i],b=st[i+1];if(a===b)continue;
-    let c=S.pairs.get(a+"\t"+b)||[];
-    if(!c.length)c=Object.keys(S.rpos).filter(rt=>S.rpos[rt].has(a)&&S.rpos[rt].has(b));
+    let c=(S.pairs.get(a+"\t"+b)||[]).filter(ok);
+    if(!c.length)c=Object.keys(S.rpos).filter(rt=>ok(rt)&&S.rpos[rt].has(a)&&S.rpos[rt].has(b));
     if(c.length)cands.push(c);
   }
   if(!cands.length)return res;
@@ -510,7 +512,7 @@ function coverRoutes(st){
   }
   return res;
 }
-function trainsOf(sheet){ // 時刻表を列車ごと(同じ列車番号が続く行のまとまり)に分ける → [{kinds:Set, routes:Set, judged:bool}]
+function trainsOf(sheet,allowed){ // 時刻表を列車ごと(同じ列車番号が続く行のまとまり)に分ける → [{kinds:Set, routes:Set, judged:bool}]
   const out=[];let cur=null;
   sheet.forEach((r,i)=>{
     if(isHeadRow(r,i))return;
@@ -518,13 +520,15 @@ function trainsOf(sheet){ // 時刻表を列車ごと(同じ列車番号が続�
     const s=String(r[1]||"").trim();if(s&&cur.st[cur.st.length-1]!==s)cur.st.push(s);
     const k=String(r[4]==null?"":r[4]);if(k!=="")cur.kinds.add(k);
   });
-  for(const t of out)t.routes=coverRoutes(t.st);
+  for(const t of out){t.routes=coverRoutes(t.st,allowed);if(allowed)allowed.forEach(rt=>{if(!S.rpos[rt])t.routes.add(rt);});} // マスタに無い登録路線(未整備)は使うものとして数える
   return out;
 }
 function kindRoutes(v){ // その種別を使っている列車が走る路線(路線名→列車数)。駅の並びで判定できない列車は unj に数える
   const out=new Map();let unj=0;
   for(const k of kindKeys()){
-    for(const t of trainsOf(sheetOf(k))){
+    const rowsK=S.edits[k]?S.edits[k].rows:S.cur.list.filter(r=>keyOf(r)===k);
+    const al=new Set();rowsK.forEach(r=>routesOf(r).forEach(x=>al.add(x)));
+    for(const t of trainsOf(sheetOf(k),al.size?al:null)){
       if(!t.kinds.has(v))continue;
       if(!S.pairs){const rowsOf=S.edits[k]?S.edits[k].rows:S.cur.list.filter(r=>keyOf(r)===k);const rs=new Set();rowsOf.forEach(r=>routesOf(r).forEach(x=>rs.add(x)));rs.forEach(x=>out.set(x,(out.get(x)||0)+1));continue;}
       if(!t.routes.size){unj++;continue;}
