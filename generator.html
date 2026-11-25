@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ダイヤJSONジェネレーター v1.7.0</title>
+<title>ダイヤJSONジェネレーター v1.8.0</title>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--tx:#1b1f24;--sub:#667;--bd:#d5d9df;--ac:#1f6feb;--ng:#c62828;--ok:#2e7d32;--wn:#b26a00}
 @media (prefers-color-scheme:dark){:root{--bg:#14171b;--card:#1d2127;--tx:#e6e8eb;--sub:#9aa3ad;--bd:#343b44;--ac:#5b9dff;--ng:#ff6b6b;--ok:#6fcf7a;--wn:#f0b050}}
@@ -25,7 +25,7 @@ progress{width:100%}
 </head>
 <body>
 <div class="wrap" id="app">
-<h1>ダイヤJSONジェネレーター <span class="mut">v1.7.0</span> <a href="dia_admin.html" class="mut" style="font-size:12px">→ ダイヤ管理ページ</a></h1>
+<h1>ダイヤJSONジェネレーター <span class="mut">v1.8.0</span> <a href="dia_admin.html" class="mut" style="font-size:12px">→ ダイヤ管理ページ</a></h1>
 
 <div class="card" id="c1">
   <h2>1. 接続</h2>
@@ -74,6 +74,7 @@ progress{width:100%}
 
 <div class="card" id="c4" hidden>
   <h2>4. プレビュー</h2>
+  <div id="unkBox"></div>
   <div class="scroll"><table id="tblPrev"></table></div>
 </div>
 
@@ -92,7 +93,7 @@ progress{width:100%}
 <script src="generator_core.js?v=1.2.0"></script>
 <script>
 "use strict";
-const VER="1.7.0";
+const VER="1.8.0";
 const MASTER_SHEET="1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s";
 const ICON_BASE="https://img.elesite-next.com";
 const $=id=>document.getElementById(id);
@@ -335,15 +336,22 @@ function renderPrev(){
     const key=`${r.eff.prefix}_${r.d.unban}`;const w=[];
     if(r.conv.skipped.length)w.push(`<span class="ng">時刻なし ${esc(r.conv.skipped.join(","))}</span>`);
     if(r.mono)w.push(`<span class="ng">時刻逆行 ${r.mono}</span>`);
-    if(r.unknown.length)w.push(`<span class="wn">マスタに無い駅</span>`+r.unknown.map(u=>`<div class="fixrow"><span class="wn">${esc(u)}</span> → <input data-u="${esc(u)}" value="${esc(u)}" style="width:130px"> <button type="button" class="sub" data-fix="${esc(u)}">直す</button></div>`).join(""));
+    if(r.unknown.length)w.push(`<span class="wn">マスタに無い駅 ${esc(r.unknown.join(","))}(上の一覧で直せます)</span>`);
     if(!r.routes)w.push(`<span class="ng">路線を判定できません</span>`);
     return `<tr><td>${esc(key)}</td><td>${r.conv.rows.length-1}</td><td>${w.join("<br>")||'<span class="ok">OK</span>'}</td><td><input data-r="${i}" value="${esc(r.routes)}"></td></tr>`;}).join("");
+  renderUnk();
+}
+/* マスタに無い駅の一覧(1.8.0): 全ダイヤ分を駅名ごとにまとめ、1か所直せば全ダイヤの同名駅に反映 */
+function renderUnk(){
+  const m=new Map();
+  S.results.forEach(r=>r.unknown.forEach(u=>m.set(u,(m.get(u)||0)+1)));
+  $("unkBox").innerHTML=m.size?`<div class="wn" style="margin:6px 0 2px">マスタに無い駅 ${m.size}種類(直すと全ダイヤの同じ駅名にまとめて反映されます)</div><table>`+[...m].map(([u,n])=>`<tr><td class="wn">${esc(u)}</td><td class="mut">${n}ダイヤ</td><td>→ <input data-u="${esc(u)}" value="${esc(u)}" style="width:150px"></td><td><button type="button" class="sub" data-fix="${esc(u)}">直す</button></td></tr>`).join("")+`</table>`:"";
 }
 
 /* 駅名の直し(1.6.0): 全ダイヤの同名駅にまとめて反映し、路線を再判定(手で直した路線欄は残す) */
-$("tblPrev").addEventListener("click",e=>{
+$("unkBox").addEventListener("click",e=>{
   const b=e.target.closest("[data-fix]");if(!b)return;
-  const old=b.dataset.fix;const inp=[...document.querySelectorAll("[data-u]")].find(i=>i.dataset.u===old&&i.parentNode===b.parentNode);
+  const old=b.dataset.fix;const inp=b.closest("tr").querySelector("[data-u]");
   const nv=(inp?inp.value:"").trim();if(!nv||nv===old)return;
   document.querySelectorAll("[data-r]").forEach(i=>{S.results[+i.dataset.r].routes=i.value.trim();});
   S.fixes[old]=nv;
