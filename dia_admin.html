@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ダイヤ管理</title>
-<!-- version: 1.6.1 -->
+<!-- version: 1.8.0 -->
+<!-- 1.8.0: 列車の路線判定を「全ペアをカバーする最小の路線集合」に変更(共用区間で余計な路線が付かない)。隣接ペアが無い区間(特急の停車駅飛び)は、2駅ともその路線の駅順にある路線でカバー扱い -->
+<!-- 1.7.0: 種別の路線判定を「ダイヤの登録路線」から「列車ごとの停車駅の並び」に変更。隣り合う2駅の組がマスタstationタブの路線の駅順で隣り合っていれば、その路線を走っているとみなす。sujitypeとstationを一緒に読み込む。赤判定は従来どおり路線×種別 -->
 <!-- 1.6.1: 種別の赤判定を「路線×種別」で1つずつ見る方式に変更(使っている路線のどれか1つでもマスタに登録が無ければ赤。登録なしの路線名も表示) -->
 <!-- 1.6.0: ①一括選択にIDごとの「○○だけ選択」ボタン ②チェックボックスを大きく ③種別ボタン:マスタ(sujitype)にその路線の種別として無いものは赤背景(回送/臨時/団体は除外)、種別を選ぶと使われている路線名を表示 -->
 <!-- 1.5.0: 種別の一括置換を追加(読み込み中の路線ファイルの全ダイヤの時刻表から、存在する種別を一覧→置換前を選ぶ/打つ→置換後を入れて適用。通常のセル編集と同じ扱いで、保存するまで反映されない) -->
@@ -439,21 +441,82 @@ function kindStats(){
 const SUJI_URL="https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/sujitype";
 const KIND_FREE=["回送","臨時","団体"];
 S.suji=null;
+const STATION_URL="https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/station";
+S.pairs=null;
 (async()=>{
   let rows=null;try{rows=JSON.parse(localStorage.getItem("gen_sujitype")||"null");}catch(e){}
   if(rows)S.suji=rows;
-  try{const r=await fetch(SUJI_URL);const j=await r.json();if(Array.isArray(j)){S.suji=j;try{localStorage.setItem("gen_sujitype",JSON.stringify(j));}catch(e){}}}catch(e){}
+  let st=null;try{st=JSON.parse(localStorage.getItem("gen_station_adm")||"null");}catch(e){}
+  if(st)buildPairs(st);
+  renderKinds();
+  const [a,b]=await Promise.all([
+    fetch(SUJI_URL).then(r=>r.json()).catch(()=>null),
+    fetch(STATION_URL).then(r=>r.json()).catch(()=>null)]);
+  if(Array.isArray(a)){S.suji=a;try{localStorage.setItem("gen_sujitype",JSON.stringify(a));}catch(e){}}
+  if(Array.isArray(b)&&b.length){buildPairs(b);try{localStorage.setItem("gen_station_adm",JSON.stringify(b));}catch(e){}}
   renderKinds();
 })();
-function kindRoutes(v){ // その種別を使っているダイヤの路線(路線名→ダイヤ数)
-  const out=new Map();const rowsOf=k=>S.edits[k]?S.edits[k].rows:S.cur.list.filter(r=>keyOf(r)===k);
-  for(const k of kindKeys()){
-    if(!sheetOf(k).some((r,i)=>!isHeadRow(r,i)&&String(r[4]==null?"":r[4])===v))continue;
-    const rs=new Set();rowsOf(k).forEach(r=>routesOf(r).forEach(x=>rs.add(x)));
-    if(!rs.size&&S.cur.entry&&S.cur.entry.route)rs.add(S.cur.entry.route);
-    rs.forEach(x=>out.set(x,(out.get(x)||0)+1));
+function buildPairs(rows){ // 隣り合う2駅(上下どちらの向きも) → その並びを持つ路線の一覧
+  const by={};for(const r of rows){const rt=r["路線"],st=r["駅名"];if(!rt||!st||String(st).startsWith("via_"))continue;(by[rt]=by[rt]||[]).push(st);}
+  const m=new Map();
+  for(const [rt,l] of Object.entries(by))for(let i=0;i+1<l.length;i++)for(const k of [l[i]+"\t"+l[i+1],l[i+1]+"\t"+l[i]]){const a=m.get(k)||[];if(!a.includes(rt))a.push(rt);m.set(k,a);}
+  S.pairs=m;S.rpos={};S.rsize={};
+  for(const [rt,l] of Object.entries(by)){const pm=new Map();l.forEach((s,i)=>{if(!pm.has(s))pm.set(s,i);});S.rpos[rt]=pm;S.rsize[rt]=l.length;}
+}
+/* 駅の並びから、全区間(隣り合う2駅)をカバーする最小の路線集合を返す。
+   各区間の候補=その2駅が路線の駅順で隣り合う路線。1つも無ければ「2駅ともその路線の駅順にある」路線を候補にする(停車駅が飛ぶ区間)。
+   どの路線にも当てはまらない区間は無視。最小の集合が複数あれば駅数の合計が小さい(専用の路線が多い)方を採る。 */
+function coverRoutes(st){
+  const res=new Set();if(!S.pairs)return res;
+  const cands=[];
+  for(let i=0;i+1<st.length;i++){
+    const a=st[i],b=st[i+1];if(a===b)continue;
+    let c=S.pairs.get(a+"\t"+b)||[];
+    if(!c.length)c=Object.keys(S.rpos).filter(rt=>S.rpos[rt].has(a)&&S.rpos[rt].has(b));
+    if(c.length)cands.push(c);
   }
+  if(!cands.length)return res;
+  const all=[...new Set(cands.flat())];
+  const masks=cands.map(c=>c.reduce((m,rt)=>m|(1<<all.indexOf(rt)),0)); // 区間ごとの候補路線(ビット)
+  const covers=m=>masks.every(x=>x&m);
+  if(all.length>20){ // 候補が多すぎる時は貪欲法
+    const left=new Set(masks.keys());
+    while(left.size){let best=-1,bg=0;all.forEach((rt,j)=>{let g=0;left.forEach(i=>{if(masks[i]&(1<<j))g++;});if(g>bg||(g===bg&&g>0&&best>=0&&S.rsize[rt]<S.rsize[all[best]])){bg=g;best=j;}});if(best<0)break;res.add(all[best]);[...left].forEach(i=>{if(masks[i]&(1<<best))left.delete(i);});}
+    return res;
+  }
+  for(let size=1;size<=all.length;size++){
+    let best=null,bs=1e9;
+    const rec=(start,m,n)=>{
+      if(n===size){if(covers(m)){let s=0;all.forEach((rt,j)=>{if(m&(1<<j))s+=S.rsize[rt];});if(s<bs){bs=s;best=m;}}return;}
+      for(let j=start;j<all.length;j++)rec(j+1,m|(1<<j),n+1);
+    };
+    rec(0,0,0);
+    if(best!==null){all.forEach((rt,j)=>{if(best&(1<<j))res.add(rt);});return res;}
+  }
+  return res;
+}
+function trainsOf(sheet){ // 時刻表を列車ごと(同じ列車番号が続く行のまとまり)に分ける → [{kinds:Set, routes:Set, judged:bool}]
+  const out=[];let cur=null;
+  sheet.forEach((r,i)=>{
+    if(isHeadRow(r,i))return;
+    if(!cur||cur.num!==r[0]){cur={num:r[0],st:[],kinds:new Set()};out.push(cur);}
+    const s=String(r[1]||"").trim();if(s&&cur.st[cur.st.length-1]!==s)cur.st.push(s);
+    const k=String(r[4]==null?"":r[4]);if(k!=="")cur.kinds.add(k);
+  });
+  for(const t of out)t.routes=coverRoutes(t.st);
   return out;
+}
+function kindRoutes(v){ // その種別を使っている列車が走る路線(路線名→列車数)。駅の並びで判定できない列車は unj に数える
+  const out=new Map();let unj=0;
+  for(const k of kindKeys()){
+    for(const t of trainsOf(sheetOf(k))){
+      if(!t.kinds.has(v))continue;
+      if(!S.pairs){const rowsOf=S.edits[k]?S.edits[k].rows:S.cur.list.filter(r=>keyOf(r)===k);const rs=new Set();rowsOf.forEach(r=>routesOf(r).forEach(x=>rs.add(x)));rs.forEach(x=>out.set(x,(out.get(x)||0)+1));continue;}
+      if(!t.routes.size){unj++;continue;}
+      t.routes.forEach(x=>out.set(x,(out.get(x)||0)+1));
+    }
+  }
+  out.unj=unj;return out;
 }
 function kindMissing(v){ // 使われている路線のうち、マスタに「路線×種別」の登録が無い路線(sujitypeが読めない間は判定しない)
   if(!S.suji||v===""||KIND_FREE.includes(v))return [];
@@ -464,7 +527,7 @@ function showKindRoutes(){
   const v=$("kFrom").value.trim();const box=$("kRoutes");
   if(!v){box.innerHTML="";return;}
   const m=kindRoutes(v);
-  box.innerHTML=m.size?`<span class="mut">「${esc(v)}」が使われている路線:</span> <b>${[...m].map(([r,n])=>`${esc(r)}(${n}ダイヤ)`).join("、")}</b>`+(kindMissing(v).length?` <span class="ngt">※マスタ(sujitype)に登録がない路線: ${kindMissing(v).map(esc).join("、")}</span>`:""):`<span class="mut">「${esc(v)}」を使っているダイヤはありません</span>`;
+  box.innerHTML=(m.size||m.unj)?`<span class="mut">「${esc(v)}」が使われている路線:</span> <b>${[...m].map(([r,n])=>`${esc(r)}(${n}${S.pairs?"本":"ダイヤ"})`).join("、")}</b>`+(m.unj?` <span class="mut">(駅の並びから路線を判定できない列車 ${m.unj}本)</span>`:"")+(S.pairs?"":` <span class="mut">(stationマスタ未取得のため、ダイヤの登録路線で表示)</span>`)+(kindMissing(v).length?` <span class="ngt">※マスタ(sujitype)に登録がない路線: ${kindMissing(v).map(esc).join("、")}</span>`:""):`<span class="mut">「${esc(v)}」を使っているダイヤはありません</span>`;
 }
 function renderKinds(){
   if(!S.cur)return;
