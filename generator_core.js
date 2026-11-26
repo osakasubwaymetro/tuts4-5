@@ -1,4 +1,4 @@
-/* generator_core.js v1.2.0
+/* generator_core.js v1.3.0
  * elesite の生レスポンス → tuts4 静的JSON の変換ロジック(fetch_saikyo.py / convert.py の JS 移植)。
  * ブラウザ(window.GenCore)と Node(module.exports)の両方で使える。DOM・通信には触らない。
  */
@@ -216,6 +216,44 @@
     return order.map(k => map[k]);
   }
 
-  const api = { REGISTRY_HEADERS, single, pickSegments, convertUnyou, toOutputRows, monotonicViolations, attributeRoutes, normalizeStation, renameStations, resolveFields, buildRegistryRow, groupByRoute };
+  /** 時刻(5:22 / 05:22 / 0522 / 24:10)→ "0522"。読めなければ "" */
+  function hhmm(t) {
+    const m = /^\s*(\d{1,2})\s*:?\s*(\d{2})(?::\d{2})?\s*$/.exec(String(t == null ? "" : t));
+    return m ? String(parseInt(m[1], 10)).padStart(2, "0") + m[2] : "";
+  }
+  /** 運番の自動値(1.3.0): 始発駅名＋始発時刻(HHMM)。例: 淀0522 */
+  function unbanBase(station, time) {
+    const st = normalizeStation(String(station || "").trim()), t = hhmm(time);
+    return st && t ? st + t : "";
+  }
+  /** 変換結果(rows: 見出し込み)の先頭列車の始発駅・始発時刻から運番の自動値を作る。取れなければ "" */
+  function unbanFromRows(rows) {
+    if (!rows || rows.length < 2) return "";
+    const num = rows[1][0];
+    for (let i = 1; i < rows.length && rows[i][0] === num; i++) {
+      const v = unbanBase(rows[i][1], rows[i][2]);
+      if (v) return v;
+    }
+    return "";
+  }
+  /** 一覧取得の応答の1グループから、始発駅・始発時刻が確実に分かる時だけ運番の自動値を返す(shukko 等)。分からなければ "" */
+  function unbanFromGroup(g) {
+    if (!g || typeof g !== "object") return "";
+    const pick = (o, keys) => { for (const k of keys) if (o && o[k] != null && o[k] !== "") return o[k]; return ""; };
+    const SK = ["station", "station_name", "st_name", "start_st", "start_station", "eki", "name"];
+    const TK = ["dep_time", "start_time", "depart_time", "time", "hhmm", "dep"];
+    let o = g.shukko;
+    if (Array.isArray(o)) o = o[0];
+    if (o && typeof o === "object") { const v = unbanBase(pick(o, SK), pick(o, TK)); if (v) return v; }
+    return unbanBase(pick(g, ["start_st", "start_station"]), pick(g, ["start_time", "dep_time"]));
+  }
+  /** 同じ接頭辞の中で重複しない運番にする。base が taken に有れば 末尾に（2）（3）…を付ける。taken は破壊的に更新 */
+  function uniqueUnban(base, taken) {
+    let v = base, n = 1;
+    while (taken.has(v)) { n++; v = base + "（" + n + "）"; }
+    taken.add(v);
+    return v;
+  }
+  const api = { hhmm, unbanBase, unbanFromRows, unbanFromGroup, uniqueUnban, REGISTRY_HEADERS, single, pickSegments, convertUnyou, toOutputRows, monotonicViolations, attributeRoutes, normalizeStation, renameStations, resolveFields, buildRegistryRow, groupByRoute };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.GenCore = api;
 })(typeof window !== "undefined" ? window : globalThis);

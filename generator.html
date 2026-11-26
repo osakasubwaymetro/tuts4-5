@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ダイヤJSONジェネレーター v1.10.0</title>
+<title>ダイヤJSONジェネレーター v1.11.0</title>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--tx:#1b1f24;--sub:#667;--bd:#d5d9df;--ac:#1f6feb;--ng:#c62828;--ok:#2e7d32;--wn:#b26a00}
 @media (prefers-color-scheme:dark){:root{--bg:#14171b;--card:#1d2127;--tx:#e6e8eb;--sub:#9aa3ad;--bd:#343b44;--ac:#5b9dff;--ng:#ff6b6b;--ok:#6fcf7a;--wn:#f0b050}}
@@ -90,10 +90,10 @@ progress{width:100%}
 <div id="gate" hidden style="padding:40px 16px;text-align:center">このページは運営アカウント専用です。</div>
 <script src="nav.js"></script>
 <script>initNav("JSONジェネレーター");if(localStorage.getItem("username")!=="運営"){document.getElementById("app").hidden=true;document.getElementById("gate").hidden=false;}</script>
-<script src="generator_core.js?v=1.2.0"></script>
+<script src="generator_core.js?v=1.3.0"></script>
 <script>
 "use strict";
-const VER="1.10.0";
+const VER="1.11.0";
 const MASTER_SHEET="1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s";
 const ICON_BASE="https://img.elesite-next.com";
 const $=id=>document.getElementById(id);
@@ -110,7 +110,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const jstDate=()=>new Date(Date.now()+9*3600e3).toISOString().slice(0,10);
 
 /* ---------- 状態 ---------- */
-const S={rosenTree:null,rosen:null,sup:null,results:[],manifest:null,stopFlag:false,master:null,lastPlan:null,fixes:{}};
+const S={rosenTree:null,rosen:null,sup:null,results:[],manifest:null,stopFlag:false,master:null,lastPlan:null,fixes:{},autoUb:new Map(),autoBase:new Map()};
 
 /* ---------- IndexedDB キャッシュ(時刻・流れ) ---------- */
 let _db=null;
@@ -182,19 +182,26 @@ $("btnList").onclick=async()=>{
     const pat=await ele("get_today_dia_pattern",{rosen_code:rc,select_date:date});
     log(`パターン: ${pat.name} (day_id=${pat.day_id})`);
     const table=await ele("get_unyoutable",{rosen_code:rc,route_id:rid,day_id:pat.day_id,select_date:date});
-    const groups=[],diagrams=[],seen=new Set();
+    const groups=[],diagrams=[],seen=new Set();let autoN=0,emptyN=0,sampleKeys="";S.autoUb=new Map();S.autoBase=new Map();
     for(const b of (table.unyou_table||[])){
       const sh=b.shotei||"";
       if(!groups.some(g=>g.shotei===sh))groups.push({shotei:sh,prefix:"",company:"",cars:""});
       for(const g of (b.unyou_group||[])){
         if(seen.has(g.unyou_id))continue;seen.add(g.unyou_id);
         const d={unyou_id:g.unyou_id,unban:String(g.unban||""),shotei:sh,trains:(g.retsuban_list||[]).length,icons:iconUrls(g.icon_path_list)};
+        if(!d.unban){ // ele に運番が無い: 始発駅＋始発時刻(HHMM)が一覧から確実に取れる時だけここで入れる（取れない時は変換時に時刻表から補う）
+          const ub=GenCore.unbanFromGroup(g);
+          if(ub){d.unban=ub;S.autoUb.set(d.unyou_id,ub);S.autoBase.set(d.unyou_id,ub);autoN++;}
+          else{emptyN++;if(!sampleKeys)sampleKeys=Object.keys(g).join(",");}
+        }
         if(g.formation!=null&&g.formation!==""&&!(Array.isArray(g.formation)&&!g.formation.length))d.cars=Array.isArray(g.formation)?g.formation.join(", "):String(g.formation);
         diagrams.push(d);
       }
     }
     setSup({rosen_code:rc,route_id:rid,date,day_id:pat.day_id,pattern:pat.name||"",defaults:deriveDefaults(pat.name,date),groups,diagrams});
     log(`ダイヤ ${diagrams.length} 件 / 所定 ${groups.length} 件`);
+    if(autoN)log(`運番が空だった ${autoN} 件に、一覧の始発駅・始発時刻から自動で入れました(入力欄で直せます)`);
+    if(emptyN)log(`運番が空のダイヤ ${emptyN} 件: 一覧から始発が取れなかったため、変換時に時刻表の先頭列車(始発駅＋始発時刻)から自動で入れます(一覧の項目: ${sampleKeys})`);
   }catch(e){log("一覧取得失敗: "+e.message);alert(e.message);}
   $("btnList").disabled=false;
 };
@@ -331,10 +338,23 @@ $("btnConv").onclick=async()=>{
   if(S.stopFlag){log("中止しました");$("btnConv").disabled=false;$("btnStop").disabled=true;return;}
   // 3) 変換
   const last=jstDate();
+  // 運番の自動補完(1.11.0): 空欄、または前回の自動値のまま触られていないものだけが対象。ele の値・手入力は上書きしない
+  const isAuto=d=>d.unban===""||(S.autoUb.has(d.unyou_id)&&S.autoUb.get(d.unyou_id)===d.unban);
+  const takenBy=new Map();const takenOf=p=>{if(!takenBy.has(p))takenBy.set(p,new Set());return takenBy.get(p);};
+  for(const d of targets){if(isAuto(d))continue;const g=sup.groups.find(g=>g.shotei===d.shotei)||{};takenOf(GenCore.resolveFields(d,g,sup.defaults).prefix).add(d.unban);}
   for(const d of targets){
     const g=sup.groups.find(g=>g.shotei===d.shotei)||{};
     const eff=GenCore.resolveFields(d,g,sup.defaults);
     const c=GenCore.renameStations(GenCore.convertUnyou(flows[d.unyou_id],tts),S.fixes);
+    if(isAuto(d)){
+      const fromList=S.autoBase.get(d.unyou_id)||"";
+      const base=fromList||GenCore.unbanFromRows(c.rows);
+      if(base){
+        const v=GenCore.uniqueUnban(base,takenOf(eff.prefix));d.unban=v;S.autoUb.set(d.unyou_id,v);S.autoBase.set(d.unyou_id,base);
+        const el=document.querySelector(`[data-d="${sup.diagrams.indexOf(d)}"][data-f="unban"]`);if(el)el.value=v;
+        log(`運番を自動で入れました: 運用ID ${d.unyou_id} → ${eff.prefix}_${v}(${fromList?"一覧の始発から":"時刻表の先頭列車から"})`+(v!==base?`  ※重複のため「${base}」→「${v}」`:""));
+      }else log(`警告: 運用ID ${d.unyou_id} の運番が空のままです(時刻表から始発を取れませんでした)。入力欄で入れてください`);
+    }
     const at=GenCore.attributeRoutes(c.stations,master);
     S.results.push({d,eff,conv:c,routes:at.routes.join(", "),auto:at.routes.join(", "),unknown:at.unknown,mono:GenCore.monotonicViolations(c.rows)});
   }
