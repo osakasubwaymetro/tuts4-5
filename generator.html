@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ダイヤJSONジェネレーター v1.12.0</title>
+<title>ダイヤJSONジェネレーター v1.13.0</title>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--tx:#1b1f24;--sub:#667;--bd:#d5d9df;--ac:#1f6feb;--ng:#c62828;--ok:#2e7d32;--wn:#b26a00}
 @media (prefers-color-scheme:dark){:root{--bg:#14171b;--card:#1d2127;--tx:#e6e8eb;--sub:#9aa3ad;--bd:#343b44;--ac:#5b9dff;--ng:#ff6b6b;--ok:#6fcf7a;--wn:#f0b050}}
@@ -25,7 +25,7 @@ progress{width:100%}
 </head>
 <body>
 <div class="wrap" id="app">
-<h1>ダイヤJSONジェネレーター <span class="mut">v1.10.0</span> <a href="dia_admin.html" class="mut" style="font-size:12px">→ ダイヤ管理ページ</a></h1>
+<h1>ダイヤJSONジェネレーター <span class="mut" id="verH">v1.13.0</span> <a href="dia_admin.html" class="mut" style="font-size:12px">→ ダイヤ管理ページ</a></h1>
 
 <div class="card" id="c1">
   <h2>1. 接続</h2>
@@ -93,7 +93,7 @@ progress{width:100%}
 <script src="generator_core.js?v=1.4.0"></script>
 <script>
 "use strict";
-const VER="1.12.0";
+const VER="1.13.0";document.title="ダイヤJSONジェネレーター v"+VER;document.addEventListener("DOMContentLoaded",()=>{const h=document.getElementById("verH");if(h)h.textContent="v"+VER;});
 const MASTER_SHEET="1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s";
 const ICON_BASE="https://img.elesite-next.com";
 const $=id=>document.getElementById(id);
@@ -371,16 +371,22 @@ function renderPrev(){
     if(r.mono)w.push(`<span class="ng">時刻逆行 ${r.mono}</span>`);
     if(r.unknown.length)w.push(`<span class="wn">マスタに無い駅 ${esc(r.unknown.join(","))}(上の一覧で直せます)</span>`);
     if(!r.routes)w.push(`<span class="ng">路線を判定できません</span>`);
-    return `<tr><td>${esc(key)}</td><td>${r.conv.rows.length-1}</td><td>${w.join("<br>")||'<span class="ok">OK</span>'}</td><td><input data-r="${i}" value="${esc(r.routes)}"></td><td><button class="sub sm" data-brk="${i}">${S.brk&&S.brk.has(i)?"閉じる":"列車内訳"}</button></td></tr>`+(S.brk&&S.brk.has(i)?`<tr class="brk"><td colspan="5">${brkHtml(r)}</td></tr>`:"");}).join("");
+    return `<tr><td>${esc(key)}</td><td>${r.conv.rows.length-1}</td><td>${w.join("<br>")||'<span class="ok">OK</span>'}</td><td><input data-r="${i}" value="${esc(r.routes)}"></td><td><button class="sub sm" data-brk="${i}">${S.brk&&S.brk.has(i)?"閉じる":"列車内訳"}</button></td></tr>`+(S.brk&&S.brk.has(i)?`<tr class="brk"><td colspan="5" data-bb="${i}">${brkHtml(r)}</td></tr>`:"");}).join("");
   renderUnk();
 }
 /* 列車内訳(1.12.0): 読み取り専用。判定は GenCore.attributeRoutes と同じ結果(explainRoutes が内部で呼ぶ) */
 S.brk=new Set();
 function brkHtml(r){
   if(!r.conv.trains)return '<span class="mut">内訳を出せません(再変換してください)</span>';
-  const x=GenCore.explainRoutes(r.conv.trains,S.master||{});
-  const cur=r.routes.split(",").map(a=>a.trim()).filter(Boolean).join(", ");
-  let h=`<div>判定された路線: <b>${esc(x.routes.join(", ")||"なし")}</b>`+(cur!==x.routes.join(", ")?` <span class="wn">(路線欄は手で直されています: ${esc(cur)} / 内訳は自動判定の根拠)</span>`:"")+`</div>`;
+  // 入力は「路線欄の今の値」(1.13.0): マスタをその路線だけに絞って explainRoutes に渡す。explainRoutes 自体は変更なし
+  const cur=r.routes.split(",").map(a=>a.trim()).filter(Boolean);
+  const m=S.master||{},sub={},noMaster=[];
+  cur.forEach(n=>{if(m[n])sub[n]=m[n];else noMaster.push(n);});
+  const x=GenCore.explainRoutes(r.conv.trains,sub);
+  const unused=Object.keys(sub).filter(n=>!x.routes.includes(n));
+  let h=`<div>判定された路線(路線欄の今の内容から): <b>${esc(x.routes.join(", ")||"なし")}</b>`+(r.routes!==r.auto?` <span class="mut">(自動判定は ${esc(r.auto||"なし")})</span>`:"")+`</div>`;
+  if(unused.length)h+=`<div class="wn">路線欄にあるが当たる区間が無い/他の路線で説明済み: ${esc(unused.join(", "))}</div>`;
+  if(noMaster.length)h+=`<div class="wn">マスタに無い路線名(判定に使えません): ${esc(noMaster.join(", "))}</div>`;
   h+=`<table><tr><th>列車番号</th><th>種別</th><th>全体の区間</th><th>判定された路線ごとの区間</th><th>判定外</th></tr>`+x.trains.map(t=>{
     const sp=t.spans.map(s=>`<div class="sp">${esc(s.route)}: ${esc(s.from)} → ${esc(s.to)} <span class="mut">(${s.pairs}区間)</span></div>`).join("")||'<span class="ng">どの路線にも当たらない</span>';
     const ot=t.outside.length?`<span class="wn">判定外: ${esc(t.outside.map(o=>o.station).join("、"))}</span>`:"";
@@ -389,6 +395,12 @@ function brkHtml(r){
   if(lk.length)h+=`<div class="mut" style="margin-top:4px">列車と列車のつなぎ(前の列車の終着→次の列車の始発)も判定では1区間として数えられます。路線に当たったつなぎ: `+lk.map(l=>`${esc(l.fromTrain)}→${esc(l.toTrain)} ${esc(l.from)}→${esc(l.to)} [${esc(l.routes.join(","))}]`).join(" / ")+`</div>`;
   return h;
 }
+// 路線欄の編集を開いている内訳へリアルタイム反映(入力欄は作り直さないのでカーソルは動かない)
+$("tblPrev").addEventListener("input",e=>{
+  const t=e.target;if(!t.matches||!t.matches("[data-r]"))return;
+  const i=+t.dataset.r;S.results[i].routes=t.value.trim();
+  const c=document.querySelector(`[data-bb="${i}"]`);if(c)c.innerHTML=brkHtml(S.results[i]);
+});
 $("tblPrev").addEventListener("click",e=>{
   const b=e.target.closest("[data-brk]");if(!b)return;
   document.querySelectorAll("[data-r]").forEach(i=>{S.results[+i.dataset.r].routes=i.value.trim();});
