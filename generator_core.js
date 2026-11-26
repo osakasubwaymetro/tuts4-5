@@ -1,4 +1,4 @@
-/* generator_core.js v1.4.0 (1.4.0: 列車内訳 explainRoutes と convertUnyou の trains を追加。判定ロジックは不変)
+/* generator_core.js v1.5.0 (1.5.0: sheetSig 追加=時刻表の同一判定用。1.4.0: 1.4.0: 列車内訳 explainRoutes と convertUnyou の trains を追加。判定ロジックは不変)
  * elesite の生レスポンス → tuts4 静的JSON の変換ロジック(fetch_saikyo.py / convert.py の JS 移植)。
  * ブラウザ(window.GenCore)と Node(module.exports)の両方で使える。DOM・通信には触らない。
  */
@@ -228,6 +228,18 @@
     return { routes: at.routes, unknown: at.unknown, trains: out, links };
   }
 
+  /** 時刻表の同一判定用(1.5.0)。出力列順の行 [列車番号,駅名,時刻,行先,種別] の先頭5列(前後の空白は無視)。見出し行(列車番号/種別)は除く。行が無ければ "" */
+  function sheetSig(rows) {
+    const out = [];
+    for (const r of rows || []) {
+      if (!Array.isArray(r)) continue;
+      if (String(r[0]).trim() === "列車番号" && String(r[4] == null ? "" : r[4]).trim() === "種別") continue;
+      const c = []; for (let i = 0; i < 5; i++) c.push(String(r[i] == null ? "" : r[i]).trim());
+      out.push(c);
+    }
+    return out.length ? JSON.stringify(out) : "";
+  }
+
   /** diagrams > groups > defaults で実効値を解決 */
   function resolveFields(diag, group, defaults) {
     const F = ["company", "prefix", "weekday", "rinji", "start_date", "cars", "icons", "pattern_name"];
@@ -304,6 +316,6 @@
     taken.add(v);
     return v;
   }
-  const api = { hhmm, unbanBase, unbanFromRows, unbanFromGroup, uniqueUnban, REGISTRY_HEADERS, single, pickSegments, convertUnyou, toOutputRows, monotonicViolations, attributeRoutes, explainRoutes, normalizeStation, renameStations, resolveFields, buildRegistryRow, groupByRoute };
+  const api = { hhmm, unbanBase, unbanFromRows, unbanFromGroup, uniqueUnban, REGISTRY_HEADERS, single, pickSegments, convertUnyou, toOutputRows, monotonicViolations, attributeRoutes, explainRoutes, sheetSig, normalizeStation, renameStations, resolveFields, buildRegistryRow, groupByRoute };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.GenCore = api;
 })(typeof window !== "undefined" ? window : globalThis);
