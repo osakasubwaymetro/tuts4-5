@@ -1,3 +1,8 @@
+// trainpos.js v1.34.0
+// 1.34.0: 列車番号が同じでも時刻表が違う列車（「回送0828」のように 回送＋発車時刻 で付く番号は、別ダイヤに同じ番号が何本もある）を、
+//         1つの位置にまとめて描いていたのを直した。「列車番号が同じ列車は必ず併結」にするのは、時刻表（停車駅と時刻）も同じ時だけにした。
+//         また、同じダイヤの同じ列車が2回入っていた（臨時列車が一覧と個別JSONの両方／日付違いで重複など）時は1つにする。
+//         別ダイヤにある同一列車・同一時刻の重複（733T など。連結運用の判定に使う）は、これまでどおり残す。
 // trainpos.js v1.33.0
 // 1.33.0: 表示中の路線の駅に時刻のある停車が無い区間（時刻表の停車駅そのものが他路線の駅で、離れている区間）では、その路線の図の上に列車を置かない。
 //         例：中野→（東西線の各駅）→西船橋 の列車を JR中央・総武線で見た時に、中野—西船橋の間をJRの駅並びで補間して走らせていたのをやめた。
@@ -482,8 +487,26 @@
     return out;
   }
 
+  // 列車の時刻表の目印（停車駅と時刻の並び）。列車番号が同じでも時刻表が違えば別の列車として扱うために使う（1.34.0）
+  const _sigMemo = new WeakMap();
+  function trainSig(t) {
+    let v = _sigMemo.get(t);
+    if (v == null) { v = (t.stops || []).map(x => `${x.s}@${x.a == null ? "" : x.a}/${x.d == null ? "" : x.d}`).join(","); _sigMemo.set(t, v); }
+    return v;
+  }
   function rebuildTrains() {
-    st.trains = (st.baseTrains || []).concat(st.extraTrains || []);
+    const all = (st.baseTrains || []).concat(st.extraTrains || []);
+    // 同じダイヤ（会社・ID・運番・曜日区分）の同じ列車（番号・時刻表が同じ）が2回入っていたら1つにする。
+    // 別ダイヤ（sheetKey が違う）の同一列車は消さない（連結運用の判定に使うため）。この路線のダイヤを、並走路線経由のものより優先
+    const seenT = new Map(), out = [];
+    all.forEach(t => {
+      if (!t.sheetKey) { out.push(t); return; }
+      const k = `${t.sheetKey}|${t.trainNumber}|${trainSig(t)}`;
+      const i = seenT.get(k);
+      if (i == null) { seenT.set(k, out.length); out.push(t); }
+      else if (out[i].viaParallel && !t.viaParallel) out[i] = t;
+    });
+    st.trains = out;
   }
 
   /* ---------- 平日/土休日 ---------- */
@@ -1441,17 +1464,18 @@
         gm.set(gk, p);
         placed.push(p);
       });
-      // 列車番号が同じ列車は、位置・時刻が違っても必ず併結扱いにする（先に出てきた方の位置にまとめる）
+      // 列車番号も時刻表も同じ列車は、位置・時刻が違っても必ず併結扱いにする（先に出てきた方の位置にまとめる）。時刻表が違えば別の列車（1.34.0）
       const byNum = new Map();
       for (let i = 0; i < placed.length; i++) {
         const el = placed[i];
-        const nums = el.members.map(m => m.train.trainNumber ? `${m.train.srcRoute || ""}|${m.train.trainNumber}` : "").filter(Boolean);
+        const numKey = m => `${m.train.srcRoute || ""}|${m.train.trainNumber}|${trainSig(m.train)}`; // 時刻表も同じ時だけ（1.34.0）
+        const nums = el.members.map(m => m.train.trainNumber ? numKey(m) : "").filter(Boolean);
         const hit = nums.map(n => byNum.get(n)).find(x => x && x !== el);
         if (hit) {
           hit.members.push(...el.members);
           hit.h = 67 + 55 * (hit.members.length - 1);
           placed.splice(i, 1); i--;
-          hit.members.forEach(m => m.train.trainNumber && byNum.set(`${m.train.srcRoute || ""}|${m.train.trainNumber}`, hit));
+          hit.members.forEach(m => m.train.trainNumber && byNum.set(numKey(m), hit));
         } else {
           nums.forEach(n => byNum.set(n, el));
         }
