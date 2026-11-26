@@ -7,7 +7,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.33.12 -->
+<!-- version: 1.33.13 -->
+<!-- 1.33.13: trainpos.js 1.33.0（表示中の路線の駅に時刻のある停車が無い＝他路線を走っている区間には列車を置かない） -->
 <!-- 1.33.12: trainnavi.js 1.6.0（アナウンス音声を合成音声APIに接続できるように。設定は Train Navi 画面の「⚙ 音声設定」） -->
 <!-- 1.33.11: diagram_static.js 1.4.0・trainpos.js 1.32.0・timetable.js 1.22.0（同名路線の全会社を合体表示） -->
 <!-- 1.33.10: trainpos.js 1.31.0（駅名の横に「留置 N」。押すと留置中の運用の一覧） -->
@@ -641,7 +642,7 @@
 <script src="timetable.js?v=1.22.0"></script>
 <script src="trainnavi.js?v=1.6.0"></script>
 <script src="diagram_static.js?v=1.4.0"></script>
-<script src="trainpos.js?v=1.32.0"></script>
+<script src="trainpos.js?v=1.33.0"></script>
 <script>initNav("乗車路線マップ確認用");</script>
 <script>
 const username = checkLogin();

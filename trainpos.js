@@ -1,3 +1,7 @@
+// trainpos.js v1.33.0
+// 1.33.0: 表示中の路線の駅に時刻のある停車が無い区間（時刻表の停車駅そのものが他路線の駅で、離れている区間）では、その路線の図の上に列車を置かない。
+//         例：中野→（東西線の各駅）→西船橋 の列車を JR中央・総武線で見た時に、中野—西船橋の間をJRの駅並びで補間して走らせていたのをやめた。
+//         境界駅での在線（出発前・到着後・停車中）は従来どおり。「時刻が書いてない通過駅を他路線でたどる」補間（サンダーバード等）は別物でそのまま。
 // trainpos.js v1.32.0
 // 1.32.0: 同名路線の全会社を合体表示。選んだ路線（と並走路線）について、manifest にある同名路線の他社ファイルも読み、その路線を走る全会社の列車を出す（臨時列車の extras も会社ごとに取る）。運用の目印(sheetKey)・ダイヤの重複判定は会社込みにして、会社が違って ID_運番 がぶつかっても混ざらない。キャッシュは tp_trains15 に変更。
 // trainpos.js v1.31.1
@@ -854,7 +858,8 @@
       s: sp.s,
       a: sp.a != null ? sp.a : sp.d,
       d: sp.d != null ? sp.d : sp.a,
-      pass: !!sp.pass
+      pass: !!sp.pass,
+      orig: sp.a != null || sp.d != null // 時刻表に時刻が書いてある行（按分で時刻を補った行は false）
     }));
     // 1) 時刻の無い行を、前後の時刻から行の並びで按分
     const timed = [];
@@ -869,6 +874,15 @@
       }
     }
     const ent = seq.filter(x => x.a != null);
+
+    // 1.33.0) この路線の駅どうしの間に、時刻の書いてある「この路線に無い駅」の停車が挟まる所は、列車が他路線を走っている区間。
+    //         その前後のこの路線の駅（時刻つき）に gapTo を付け、locate でその間には置かない
+    for (let k = 0; k < ent.length; k++) {
+      if (!idxOf.has(ent[k].s)) continue;
+      let kk = k + 1, offTimed = false;
+      while (kk < ent.length && !idxOf.has(ent[kk].s)) { if (ent[kk].orig) offTimed = true; kk++; }
+      if (kk < ent.length && kk > k + 1 && offTimed) ent[k].gapTo = ent[kk];
+    }
 
     // 2) 路線の出入り口（境界駅）を補う
     const out = [];
@@ -914,7 +928,9 @@
         }
       }
     }
-    const on = out.filter(x => idxOf.has(x.s)).map(x => ({ i: idxOf.get(x.s), a: x.a, d: x.d, pass: x.pass }));
+    const onObjs = out.filter(x => idxOf.has(x.s));
+    const on = onObjs.map(x => ({ i: idxOf.get(x.s), a: x.a, d: x.d, pass: x.pass }));
+    onObjs.forEach((x, n) => { if (x.gapTo) { const m = onObjs.indexOf(x.gapTo); if (m === n + 1) on[n].gapNext = on[m]; } });
     train._on = on; train._onRoute = ctx.routeVal;
     return on;
   }
@@ -951,6 +967,7 @@
       }
       const nx = on[k + 1];
       if (nx && t > cur.d && t < nx.a) {
+        if (cur.gapNext === nx) return null; // 他路線を走っている区間（1.33.0）
         let i = cur.i, j = nx.i;
         if (ctx.isLoop) {
           // 環状線：一周の最後の行（index N）を使って、0番駅を跨ぐ区間を描く
