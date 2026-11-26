@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ダイヤ管理</title>
-<!-- version: 1.13.0 -->
+<!-- version: 1.14.0 -->
+<!-- 1.14.0: 「路線ファイルを選ぶ」の一覧を、ファイルの会社ではなく路線の持ち主（マスタ route タブの会社）でグループ化し、会社・路線の並び順もマスタ route タブの順に変更。マスタに無い路線・会社は従来の会社で末尾に manifest 順。読み込み・合体表示・保存は変更なし（一覧の並べ方だけ） -->
 <!-- 1.13.0: ページ上部に KV 書き込み使用量の表示を追加（Worker v1.5.0 の GET /api/usage）。接続後と保存後に自動取得、「再取得」ボタンあり。上限が近づくと色が変わる。analytics_token_missing の間は「集計トークン設定待ち」と表示。既存機能には影響しない（失敗しても他は動く） -->
 <!-- 1.12.0: 保存時に、編集したダイヤ(会社・ID・運番が同じ)のコピーが manifest の他の路線ファイルにもあれば、全コピーを同じ内容(登録行・時刻表)で更新する。削除は伝播しない。コピーの探索は同じ会社のファイルだけ(他社名義のファイルには書かない) -->
 <!-- 1.11.0: 同名路線の他社ファイルも一緒に読み込んで1つの一覧に合体表示(会社列を追加、会社だけ選択ボタン)。各ダイヤの由来ファイルを保持し、保存はダイヤの会社・路線ごと=由来ファイルごとに書き戻す(他社のダイヤを自社ファイルへ混ぜない)。同名路線の他社ファイルが無ければ従来どおり単独表示 -->
@@ -231,8 +232,8 @@ $("btnConn").onclick=async()=>{
   keySave($("key").value);
   try{S.manifest=await api("/api/manifest");
     $("connMsg").innerHTML=`<span class="ok">接続OK</span> 路線ファイル ${S.manifest.files.length} 件 / generated ${esc(S.manifest.generated)}`;
-    const comps=[...new Set(S.manifest.files.map(f=>f.company))];
-    S.comps=comps;$("selComp").value=comps.length===1?comps[0]:"";onComp();$("cFile").hidden=false;log("接続OK");loadUsage();}
+    const rl=buildRouteList(S.manifest.files);S.comps=rl.comps;S.byComp=rl.by;const comps=S.comps;
+    $("selComp").value=comps.length===1?comps[0]:"";onComp();$("cFile").hidden=false;log("接続OK");loadUsage();}
   catch(e){$("connMsg").innerHTML=`<span class="ngt">${esc(e.message)}</span>`;log("接続NG: "+e.message);}
 };
 if($("key").value)setTimeout(()=>$("btnConn").click(),0); // 覚えた合言葉があれば自動で接続
@@ -240,7 +241,7 @@ if($("key").value)setTimeout(()=>$("btnConn").click(),0); // 覚えた合言葉�
 /* ---------- 2. ファイル選択 ---------- */
 function onComp(){
   const c=$("selComp").value.trim();
-  const fs=S.manifest.files.filter(f=>f.company===c);
+  const fs=(S.byComp&&S.byComp[c])||[];
   $("selRoute").innerHTML=fs.length?fs.map(f=>`<option value="${esc(f.file)}">${esc(f.route)}</option>`).join(""):`<option value="">まず会社を選んでください</option>`;
 }
 // 会社の候補（入力に一致する会社をボタンで出し、タップで選ぶ）
@@ -496,24 +497,60 @@ const SUJI_URL="https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhb
 const KIND_FREE=["回送","臨時","団体"];
 S.suji=null;
 async function syncMaster(manual){ // マスタ(sujitype/station)を再取得して判定に反映。失敗した分は今のマスタのまま
-  const [a,b]=await Promise.all([
+  const [a,b,c]=await Promise.all([
     fetch(SUJI_URL,{cache:"no-store"}).then(r=>r.json()).catch(()=>null),
-    fetch(STATION_URL,{cache:"no-store"}).then(r=>r.json()).catch(()=>null)]);
-  const okA=Array.isArray(a)&&a.length>0,okB=Array.isArray(b)&&b.length>0;
+    fetch(STATION_URL,{cache:"no-store"}).then(r=>r.json()).catch(()=>null),
+    fetch(ROUTE_URL,{cache:"no-store"}).then(r=>r.json()).catch(()=>null)]);
+  const okA=Array.isArray(a)&&a.length>0,okB=Array.isArray(b)&&b.length>0,okC=Array.isArray(c)&&c.some(r=>r&&r["会社"]&&r["路線"]);
+  if(okC){setRouteMaster(c);try{localStorage.setItem("gen_route_adm",JSON.stringify(c));}catch(e){}}
   if(okA){S.suji=a;try{localStorage.setItem("gen_sujitype",JSON.stringify(a));}catch(e){}}
   if(okB){buildPairs(b);try{localStorage.setItem("gen_station_adm",JSON.stringify(b));}catch(e){}}
   if(S.cur)renderKinds();
   if(manual){
     const t=new Date().toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
     const m=$("syncMsg");
-    if(okA&&okB){m.className="ok";m.textContent=`マスタを同期しました(${t})`;}
-    else if(okA||okB){m.className="wn";m.textContent=`${okA?"sujitype":"station"}だけ同期しました(${okA?"station":"sujitype"}は失敗・前のまま)(${t})`;}
+    const okN=[["sujitype",okA],["station",okB],["route",okC]],ng=okN.filter(x=>!x[1]).map(x=>x[0]),good=okN.filter(x=>x[1]).map(x=>x[0]);
+    if(!ng.length){m.className="ok";m.textContent=`マスタを同期しました(${t})`;}
+    else if(good.length){m.className="wn";m.textContent=`${good.join("・")}だけ同期しました(${ng.join("・")}は失敗・前のまま)(${t})`;}
     else{m.className="ngt";m.textContent=`同期に失敗しました。前のマスタのままです(${t})`;}
-    log(`マスタ同期: sujitype ${okA?a.length+"件":"失敗"} / station ${okB?b.length+"件":"失敗"}`);
+    log(`マスタ同期: sujitype ${okA?a.length+"件":"失敗"} / station ${okB?b.length+"件":"失敗"} / route ${okC?c.length+"件":"失敗"}`);
   }
-  return okA||okB;
+  return okA||okB||okC;
 }
 $("btnSync").onclick=async()=>{const b=$("btnSync");b.disabled=true;$("syncMsg").className="mut";$("syncMsg").textContent="同期中…";try{await syncMaster(true);}finally{b.disabled=false;}};
+const ROUTE_URL="https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/route";
+/* 路線の持ち主・並び順（マスタ route タブ: 会社, 路線）。一覧は「路線の持ち主」でグループ化する */
+S.rOwner=new Map();S.rOrder=new Map();S.cOrder=new Map();
+function setRouteMaster(rows){
+  const own=new Map(),ord=new Map(),cord=new Map();
+  rows.forEach((r,i)=>{const c=String(r&&r["会社"]||"").trim(),rt=String(r&&r["路線"]||"").trim();if(!c||!rt)return;
+    if(!own.has(rt)){own.set(rt,c);ord.set(rt,i);}if(!cord.has(c))cord.set(c,i);});
+  S.rOwner=own;S.rOrder=ord;S.cOrder=cord;
+  if(S.manifest)rebuildRouteList();
+}
+function buildRouteList(files){ // → {comps:[会社...], by:{会社:[{route,file}]}}
+  const items=[];const seen=new Set();
+  files.forEach((f,i)=>{ // 路線名ごとに1件。持ち主の会社のファイルがあればそれを、無ければ最初のファイルを選ぶ
+    if(!f||!f.route)return;
+    const owner=S.rOwner.get(f.route)||f.company; const k=owner+"\t"+f.route;
+    const ex=items.find(x=>x.k===k);
+    if(!ex){items.push({k,owner,route:f.route,file:f.file,own:f.company===owner,i,known:S.rOwner.has(f.route)});seen.add(k);}
+    else if(!ex.own&&f.company===owner){ex.file=f.file;ex.own=true;}
+  });
+  const BIG=1e9;
+  const cOrd=c=>S.cOrder.has(c)?S.cOrder.get(c):BIG;
+  const comps=[...new Set(items.map(x=>x.owner))].map((c,i)=>({c,i})).sort((a,b)=>cOrd(a.c)-cOrd(b.c)||a.i-b.i).map(x=>x.c);
+  const by={};
+  comps.forEach(c=>{by[c]=items.filter(x=>x.owner===c).sort((a,b)=>(a.known?S.rOrder.get(a.route):BIG)-(b.known?S.rOrder.get(b.route):BIG)||a.i-b.i).map(x=>({route:x.route,file:x.file}));});
+  return {comps,by};
+}
+function rebuildRouteList(){
+  if(!S.manifest)return;
+  const keep=$("selRoute").value;
+  const r=buildRouteList(S.manifest.files);S.comps=r.comps;S.byComp=r.by;
+  onComp();
+  if(keep&&[...$("selRoute").options].some(o=>o.value===keep))$("selRoute").value=keep;
+}
 const STATION_URL="https://opensheet.elk.sh/1ZooIjdlOwsLZVjQv6KN53h4X2JYUyULYuJTuhbgk95s/station";
 S.pairs=null;
 (async()=>{
@@ -521,6 +558,7 @@ S.pairs=null;
   if(rows)S.suji=rows;
   let st=null;try{st=JSON.parse(localStorage.getItem("gen_station_adm")||"null");}catch(e){}
   if(st)buildPairs(st);
+  try{const rc=JSON.parse(localStorage.getItem("gen_route_adm")||"null");if(Array.isArray(rc))setRouteMaster(rc);}catch(e){}
   renderKinds();
   await syncMaster(false);
 })();
