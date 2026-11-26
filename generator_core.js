@@ -1,4 +1,4 @@
-/* generator_core.js v1.3.0
+/* generator_core.js v1.4.0 (1.4.0: 列車内訳 explainRoutes と convertUnyou の trains を追加。判定ロジックは不変)
  * elesite の生レスポンス → tuts4 静的JSON の変換ロジック(fetch_saikyo.py / convert.py の JS 移植)。
  * ブラウザ(window.GenCore)と Node(module.exports)の両方で使える。DOM・通信には触らない。
  */
@@ -69,8 +69,11 @@
     }
     const rows = [["列車番号", "駅名", "発車時刻", "種別", "行先"]];
     const stations = [];
+    const trains = []; // 列車内訳用(1.4.0): 列車ごとの番号・種別・停車駅(判定には使わない)
     for (const { num, shubetsu, ikisaki, chosen, i0, i1 } of pending) {
-      for (let i = i0; i <= i1; i++) stations.push(chosen[i].station);
+      const tst = [];
+      for (let i = i0; i <= i1; i++) { stations.push(chosen[i].station); tst.push(chosen[i].station); }
+      const tr = { num, shubetsu, ikisaki, stations: tst }; trains.push(tr);
       const isKaisou = num === "回送" || shubetsu === "回送";
       let genNum = null;
       for (let i = i0; i <= i1; i++) {
@@ -95,9 +98,10 @@
           rnum = genNum;
         }
         rows.push([rnum, x.station, t, shubetsu, ikisaki]);
+        tr.num = rnum;
       }
     }
-    const out = { rows, skipped, stations, bounds };
+    const out = { rows, skipped, stations, bounds, trains };
     return renameStations(out, null);
   }
 
@@ -115,6 +119,7 @@
     for (let i = 1; i < conv.rows.length; i++) conv.rows[i][1] = f(conv.rows[i][1]);
     conv.stations = conv.stations.map(f);
     conv.bounds = conv.bounds.map(f);
+    if (conv.trains) conv.trains.forEach(t => { t.stations = t.stations.map(f); });
     return conv;
   }
 
@@ -176,6 +181,51 @@
     const firstOf = r => { for (let i = 0; i + 1 < seq.length; i++) { const k = seq[i] < seq[i + 1] ? seq[i] + "\t" + seq[i + 1] : seq[i + 1] + "\t" + seq[i]; if (cover[r].has(k)) return i; } return 1e9; };
     const routes = chosen.sort((a, b) => firstOf(a) - firstOf(b));
     return { routes, unknown };
+  }
+
+  /**
+   * 列車内訳(1.4.0)。表示専用で、判定(attributeRoutes)は呼んで結果をそのまま使う=判定ロジックは変えない。
+   * attributeRoutes は全列車の停車駅をつなげた並びで判定するので、列車の境目(前の列車の終着→次の列車の始発)も1区間として数えられる。
+   * その区間も「つなぎ」として明示する。戻り値: { routes, unknown, trains:[{num,shubetsu,start,end,stations,spans:[{route,from,to,pairs}],outside:[{station,why}]}], links:[{from,to,fromTrain,toTrain,routes}] }
+   */
+  function explainRoutes(trains, stationsByRoute) {
+    const allSt = []; trains.forEach(t => t.stations.forEach(x => allSt.push(x)));
+    const at = attributeRoutes(allSt, stationsByRoute);
+    const adjOf = {}, inRoute = {};
+    for (const [r, list] of Object.entries(stationsByRoute)) {
+      const adj = new Set();
+      for (let i = 0; i + 1 < list.length; i++) { adj.add(list[i] + "\t" + list[i + 1]); adj.add(list[i + 1] + "\t" + list[i]); }
+      adjOf[r] = adj; inRoute[r] = new Set(list);
+    }
+    const pairs = []; // 判定が実際に数えた区間(連続重複を除いた並び)
+    let tail = null, last = -1;
+    trains.forEach((t, ti) => {
+      for (const s of t.stations) {
+        if (tail === s) { last = ti; continue; }
+        if (tail !== null) pairs.push({ a: tail, b: s, from: last, to: ti, link: last !== ti });
+        tail = s; last = ti;
+      }
+    });
+    const hit = p => at.routes.filter(r => adjOf[r].has(p.a + "\t" + p.b));
+    pairs.forEach(p => { p.routes = hit(p); });
+    const known = new Set(); for (const r of Object.keys(inRoute)) inRoute[r].forEach(x => known.add(x));
+    const out = trains.map((t, ti) => {
+      const own = pairs.filter(p => !p.link && p.to === ti);
+      const spans = at.routes.map(r => {
+        const ps = own.filter(p => p.routes.includes(r));
+        if (!ps.length) return null;
+        const idx = []; ps.forEach(p => { idx.push(t.stations.indexOf(p.a)); idx.push(t.stations.lastIndexOf(p.b)); });
+        // 区間の端: 最初に現れた a と、最後の b(同じ駅が2度出る列車でも順序どおり)
+        const a0 = ps[0].a, b0 = ps[ps.length - 1].b;
+        return { route: r, from: a0, to: b0, pairs: ps.length };
+      }).filter(Boolean);
+      const covered = new Set(); own.forEach(p => { if (p.routes.length) { covered.add(p.a); covered.add(p.b); } });
+      const outside = [];
+      for (const x of new Set(t.stations)) if (!covered.has(x)) outside.push({ station: x, why: known.has(x) ? "選ばれた路線の駅順で隣り合っていない" : "マスタに無い駅" });
+      return { num: t.num, shubetsu: t.shubetsu || "", start: t.stations[0] || "", end: t.stations[t.stations.length - 1] || "", stations: t.stations, spans, outside };
+    });
+    const links = pairs.filter(p => p.link).map(p => ({ from: p.a, to: p.b, fromTrain: trains[p.from].num, toTrain: trains[p.to].num, routes: p.routes }));
+    return { routes: at.routes, unknown: at.unknown, trains: out, links };
   }
 
   /** diagrams > groups > defaults で実効値を解決 */
@@ -254,6 +304,6 @@
     taken.add(v);
     return v;
   }
-  const api = { hhmm, unbanBase, unbanFromRows, unbanFromGroup, uniqueUnban, REGISTRY_HEADERS, single, pickSegments, convertUnyou, toOutputRows, monotonicViolations, attributeRoutes, normalizeStation, renameStations, resolveFields, buildRegistryRow, groupByRoute };
+  const api = { hhmm, unbanBase, unbanFromRows, unbanFromGroup, uniqueUnban, REGISTRY_HEADERS, single, pickSegments, convertUnyou, toOutputRows, monotonicViolations, attributeRoutes, explainRoutes, normalizeStation, renameStations, resolveFields, buildRegistryRow, groupByRoute };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.GenCore = api;
 })(typeof window !== "undefined" ? window : globalThis);
