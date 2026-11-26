@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ダイヤ管理</title>
-<!-- version: 1.14.0 -->
+<!-- version: 1.15.0 -->
+<!-- 1.15.0: 時刻表編集グリッドの「発車時刻」列を、見た目だけ「到着」「発車」の2つの入力ボックスに分割（保存データ・形式は従来どおり: 入力された時刻を上から順に改行でつなぐ）。値が1つだけの行は、その列車の最後の行なら到着、それ以外は発車 -->
 <!-- 1.14.0: 「路線ファイルを選ぶ」の一覧を、ファイルの会社ではなく路線の持ち主（マスタ route タブの会社）でグループ化し、会社・路線の並び順もマスタ route タブの順に変更。マスタに無い路線・会社は従来の会社で末尾に manifest 順。読み込み・合体表示・保存は変更なし（一覧の並べ方だけ） -->
 <!-- 1.13.0: ページ上部に KV 書き込み使用量の表示を追加（Worker v1.5.0 の GET /api/usage）。接続後と保存後に自動取得、「再取得」ボタンあり。上限が近づくと色が変わる。analytics_token_missing の間は「集計トークン設定待ち」と表示。既存機能には影響しない（失敗しても他は動く） -->
 <!-- 1.12.0: 保存時に、編集したダイヤ(会社・ID・運番が同じ)のコピーが manifest の他の路線ファイルにもあれば、全コピーを同じ内容(登録行・時刻表)で更新する。削除は伝播しない。コピーの探索は同じ会社のファイルだけ(他社名義のファイルには書かない) -->
@@ -450,13 +451,23 @@ function openSheet(k){
 function renderSheet(){
   const k=S.openKey;if(!k)return;
   const rows=sheetOf(k);const f=$("fltTrain").value.trim();
-  let h=`<tr><th class="stick">#</th>${COLS.map(c=>`<th class="stick">${c}</th>`).join("")}<th class="stick"></th></tr>`;
+  let h=`<tr><th class="stick">#</th>${COLS.map((c,j)=>j===2?`<th class="stick">到着</th><th class="stick">発車</th>`:`<th class="stick">${c}</th>`).join("")}<th class="stick"></th></tr>`;
   rows.forEach((r,i)=>{
     if(f&&!String(r[0]).includes(f))return;
-    h+=`<tr><td>${i+1}</td>`+COLS.map((c,j)=>j===2?`<td><textarea rows="1" data-r="${i}" data-c="${j}">${esc(r[j])}</textarea></td>`:`<td><input data-r="${i}" data-c="${j}" value="${esc(r[j])}"></td>`).join("")+
+    const isLast=!rows[i+1]||rows[i+1][0]!==r[0]; // 同じ列車番号が続く行のまとまりの最後の行（終着駅）
+    const tm=splitTime(r[2],isLast);
+    h+=`<tr><td>${i+1}</td>`+COLS.map((c,j)=>j===2?`<td><input class="tm" data-r="${i}" data-c="2a" value="${esc(tm.arr)}" placeholder="到着"></td><td><input class="tm" data-r="${i}" data-c="2d" value="${esc(tm.dep)}" placeholder="発車"></td>`:`<td><input data-r="${i}" data-c="${j}" value="${esc(r[j])}"></td>`).join("")+
       `<td style="white-space:nowrap"><button class="sub sm" data-up="${i}">↑</button><button class="sub sm" data-dn="${i}">↓</button><button class="sub sm" data-ins="${i}">＋</button><button class="ng sm" data-rm="${i}">✕</button></td></tr>`;});
   $("tblSheet").innerHTML=h;checkSheet();
 }
+/* 発車時刻セル ⇔ 到着・発車の2ボックス（見た目だけ。保存するセル値の形式は従来どおり） */
+function splitTime(v,isLast){
+  const s=String(v==null?"":v);if(s==="")return {arr:"",dep:""};
+  const p=s.split("\n");
+  if(p.length>=2)return {arr:p[0],dep:p.slice(1).join("\n")};
+  return isLast?{arr:s,dep:""}:{arr:"",dep:s};
+}
+const joinTime=(a,d)=>[String(a||"").trim(),String(d||"").trim()].filter(x=>x!=="").join("\n"); // 入力された時刻を上から順に改行でつなぐ
 function checkSheet(){
   const all=sheetOf(S.openKey);const w=[];
   const rows=all.filter(r=>!isHeadRow(r)); // 見出し行はデータ行に数えない
@@ -472,7 +483,11 @@ function GenCoreMono(rows){
 }
 $("tblSheet").addEventListener("change",e=>{
   const t=e.target;if(t.dataset.r==null)return;
-  const ed=ensureEdit(S.openKey);ed.sheet[+t.dataset.r][+t.dataset.c]=t.value;markChanged();checkSheet();
+  const ed=ensureEdit(S.openKey);
+  if(t.dataset.c==="2a"||t.dataset.c==="2d"){ // 到着・発車の2ボックス → 元の1セルの形式に戻す
+    const tr=t.closest("tr");ed.sheet[+t.dataset.r][2]=joinTime(tr.querySelector('[data-c="2a"]').value,tr.querySelector('[data-c="2d"]').value);
+  }else ed.sheet[+t.dataset.r][+t.dataset.c]=t.value;
+  markChanged();checkSheet();
 });
 $("tblSheet").addEventListener("click",e=>{
   const b=e.target.closest("button");if(!b)return;const ed=ensureEdit(S.openKey),s=ed.sheet;
