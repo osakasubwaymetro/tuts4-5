@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ダイヤ管理</title>
-<!-- version: 1.12.0 -->
+<!-- version: 1.13.0 -->
+<!-- 1.13.0: ページ上部に KV 書き込み使用量の表示を追加（Worker v1.5.0 の GET /api/usage）。接続後と保存後に自動取得、「再取得」ボタンあり。上限が近づくと色が変わる。analytics_token_missing の間は「集計トークン設定待ち」と表示。既存機能には影響しない（失敗しても他は動く） -->
 <!-- 1.12.0: 保存時に、編集したダイヤ(会社・ID・運番が同じ)のコピーが manifest の他の路線ファイルにもあれば、全コピーを同じ内容(登録行・時刻表)で更新する。削除は伝播しない。コピーの探索は同じ会社のファイルだけ(他社名義のファイルには書かない) -->
 <!-- 1.11.0: 同名路線の他社ファイルも一緒に読み込んで1つの一覧に合体表示(会社列を追加、会社だけ選択ボタン)。各ダイヤの由来ファイルを保持し、保存はダイヤの会社・路線ごと=由来ファイルごとに書き戻す(他社のダイヤを自社ファイルへ混ぜない)。同名路線の他社ファイルが無ければ従来どおり単独表示 -->
 <!-- 1.10.1: データ行の途中に混ざったヘッダー行(列車番号セル=「列車番号」かつ種別セル=「種別」)を、位置に関係なく集計・置換・時刻チェックから除外 -->
@@ -55,6 +56,11 @@ pre{white-space:pre-wrap;font:12px/1.4 ui-monospace,monospace}
 </head>
 <body>
 <main id="app">
+<div id="usageBar" style="font-size:12px;margin:0 0 8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+  <span id="usageTxt" class="mut">KV書き込み: 接続すると表示します</span>
+  <span id="usageMeter" style="display:none;width:90px;height:6px;border-radius:3px;background:var(--bd);overflow:hidden"><i id="usageFill" style="display:block;height:100%;width:0;background:#4caf50"></i></span>
+  <button class="sub sm" id="btnUsage" type="button">再取得</button>
+</div>
 <div class="card">
   <h2 style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">1. 接続 <span style="font-size:12px;font-weight:normal"><span id="syncMsg" class="mut"></span> <button class="sub sm" id="btnSync" type="button">マスタ最新同期</button></span></h2>
   <div class="row">
@@ -199,12 +205,34 @@ const errTxt=e=>`${e.message}${e.details?"\n"+JSON.stringify(e.details).slice(0,
 /* ---------- 1. 接続 ---------- */
 $("key").value=keyLoad();
 $("key").addEventListener("keydown",e=>{if(e.key==="Enter")$("btnConn").click();});
+/* ---------- KV書き込み使用量（Worker GET /api/usage） ---------- */
+async function loadUsage(){
+  const t=$("usageTxt"),m=$("usageMeter"),f=$("usageFill"),b=$("btnUsage");
+  b.disabled=true;t.className="mut";t.textContent="KV書き込み: 取得中…";
+  try{
+    const u=await api("/api/usage");
+    const w=Number(u.writes)||0,lim=Number(u.limit)||0,pct=lim?w/lim:0;
+    const col=pct>=0.9?"#d32f2f":pct>=0.7?"#ef8f00":"#4caf50";
+    t.className="";t.style.color=pct>=0.9?"#d32f2f":pct>=0.7?"#ef8f00":"";t.style.fontWeight=pct>=0.7?"bold":"";
+    const at=u.fetched_at?new Date(u.fetched_at):null;
+    const hm=at&&!isNaN(at)?at.toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"}):"";
+    t.textContent=`KV書き込み 今日 ${w.toLocaleString()} / ${lim.toLocaleString()}（${u.reset_jst||"09:00"} リセット）`+(pct>=0.9?" ⚠上限間近":pct>=0.7?" 注意":"");
+    t.title=`読み取り ${u.reads??"-"} / 削除 ${u.deletes??"-"} / 一覧 ${u.lists??"-"}\n集計日(UTC) ${u.date_utc||"-"}${hm?" / 取得 "+hm:""}\n${u.note||""}`;
+    m.style.display="inline-block";f.style.width=Math.min(100,Math.round(pct*100))+"%";f.style.background=col;
+  }catch(e){
+    m.style.display="none";t.title="";t.style.color="";t.style.fontWeight="";
+    if(e&&e.code==="analytics_token_missing"){t.className="mut";t.textContent="KV書き込み: 集計トークンの設定待ちです（Worker側の設定が済むと表示されます）";}
+    else{t.className="mut";t.textContent="KV書き込み: 取得できませんでした（"+((e&&e.message)||"エラー")+"）";}
+  }finally{b.disabled=false;}
+}
+$("btnUsage").onclick=loadUsage;
+
 $("btnConn").onclick=async()=>{
   keySave($("key").value);
   try{S.manifest=await api("/api/manifest");
     $("connMsg").innerHTML=`<span class="ok">接続OK</span> 路線ファイル ${S.manifest.files.length} 件 / generated ${esc(S.manifest.generated)}`;
     const comps=[...new Set(S.manifest.files.map(f=>f.company))];
-    S.comps=comps;$("selComp").value=comps.length===1?comps[0]:"";onComp();$("cFile").hidden=false;log("接続OK");}
+    S.comps=comps;$("selComp").value=comps.length===1?comps[0]:"";onComp();$("cFile").hidden=false;log("接続OK");loadUsage();}
   catch(e){$("connMsg").innerHTML=`<span class="ngt">${esc(e.message)}</span>`;log("接続NG: "+e.message);}
 };
 if($("key").value)setTimeout(()=>$("btnConn").click(),0); // 覚えた合言葉があれば自動で接続
@@ -675,7 +703,7 @@ $("btnDry").onclick=async()=>{
 };
 $("btnSave").onclick=async()=>{
   $("btnSave").disabled=true;
-  try{const r=await doSave(false);showRes(r,false);log("保存OK");
+  try{const r=await doSave(false);showRes(r,false);log("保存OK");loadUsage();
     const entry=S.cur.entry;const res=$("saveRes").innerHTML;await loadFile(entry);$("saveRes").innerHTML=res;}
   catch(e){
     if(e.code==="manifest_changed")$("saveRes").innerHTML=`<div class="wn">他の更新と重なりました。もう一度「保存せず確認」から進めてください。</div>`;
