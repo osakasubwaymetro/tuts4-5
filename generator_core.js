@@ -1,4 +1,4 @@
-/* generator_core.js v1.6.0 (1.6.0: explainRoutes に再判定(opts.second)を追加。attributeRoutes は不変。1.5.0: 1.5.0: sheetSig 追加=時刻表の同一判定用。1.4.0: 1.4.0: 列車内訳 explainRoutes と convertUnyou の trains を追加。判定ロジックは不変)
+/* generator_core.js v1.7.0 (1.7.0: 路線判定を trainpos 流(列車ごとの続けて停まる2駅×路線の駅順)に組み直し。再判定(second)は廃止。1.6.0: 1.6.0: explainRoutes に再判定(opts.second)を追加。attributeRoutes は不変。1.5.0: 1.5.0: sheetSig 追加=時刻表の同一判定用。1.4.0: 1.4.0: 列車内訳 explainRoutes と convertUnyou の trains を追加。判定ロジックは不変)
  * elesite の生レスポンス → tuts4 静的JSON の変換ロジック(fetch_saikyo.py / convert.py の JS 移植)。
  * ブラウザ(window.GenCore)と Node(module.exports)の両方で使える。DOM・通信には触らない。
  */
@@ -141,118 +141,105 @@
   }
 
   /**
-   * 路線帰属(1.1.0)。stationsByRoute: { 路線名: [駅名,...] } (マスタ station シートから。並びは路線の駅順)。
-   * 列車が通った「隣り合う2駅(区間)」のうち、その路線の駅順でも隣り合っている区間(上り下りは同じ区間として数える)を、その路線が説明できる区間とみなす。
-   * 全区間を少ない路線で説明できるように貪欲に選ぶ(同点なら駅数の少ない=専用の路線を優先)。
-   * 新しく説明できる区間が2つ未満の路線は採らない(境界駅だけ触れた路線を除くため)。
-   * 並びは最初に現れた順。unknown = どの路線にも無い駅。
+   * 路線判定(1.7.0)。trainpos(走行位置)と同じ発想: 列車ごとに、時刻表で続けて停まる2駅(隣り合う停車)が、その路線の駅順リストに
+   * 両方入っていれば、その区間はその路線を走る区間(間に別路線の停車駅が挟まる所は続けて停まる2駅ではないので数えない)。
+   * ・列車の境目(前の列車の終着→次の列車の始発)は区間に数えない(trainpos も列車単位)。
+   * ・各区間の候補路線 = 路線の駅順で隣り合っている路線。無ければ2駅とも駅順リストにある路線(急行が駅を飛ばした区間)。
+   * ・全区間を説明できる最小の路線の組(同じ数なら駅数の少ない=専用の路線を優先。候補が多い時は貪欲法)。
+   * ・採った路線のうち、区間ごとに1つの路線だけに割り当てる(その路線で説明できる区間が多い方を優先)。1つも割り当たらない路線は外す。
+   * 決定的(同じ入力なら同じ結果)。stationsByRoute: { 路線名: [駅名,...] }(渡した路線だけが候補)。
+   * 戻り値: { routes, unknown, pairs:[{a,b,t,route}], isAdj(r,a,b) }
    */
-  function attributeRoutes(stations, stationsByRoute) {
-    const seq = [];
-    for (const s of stations) if (seq[seq.length - 1] !== s) seq.push(s);
-    const known = new Set();
-    const cover = {}; // 路線 → 説明できる区間(index)の集合
-    const size = {};
-    for (const [r, list] of Object.entries(stationsByRoute)) {
-      size[r] = list.length;
-      const adj = new Set();
-      for (let i = 0; i + 1 < list.length; i++) { adj.add(list[i] + "\t" + list[i + 1]); adj.add(list[i + 1] + "\t" + list[i]); }
-      list.forEach(x => known.add(x));
-      const cs = new Set();
-      for (let i = 0; i + 1 < seq.length; i++) if (adj.has(seq[i] + "\t" + seq[i + 1])) cs.add(seq[i] < seq[i + 1] ? seq[i] + "\t" + seq[i + 1] : seq[i + 1] + "\t" + seq[i]);
-      if (cs.size) cover[r] = cs;
+  function judgeRoutes(trainStations, stationsByRoute) {
+    const names = Object.keys(stationsByRoute);
+    const pos = {}, adj = {}, size = {}, known = new Set();
+    for (const r of names) {
+      const list = stationsByRoute[r];
+      size[r] = list.length; pos[r] = new Set(list);
+      const ad = new Set();
+      for (let i = 0; i + 1 < list.length; i++) { ad.add(list[i] + "\t" + list[i + 1]); ad.add(list[i + 1] + "\t" + list[i]); }
+      adj[r] = ad; list.forEach(x => known.add(x));
     }
-    const unknown = [...new Set(seq.filter(s => !known.has(s)))];
-    const covered = new Set(), chosen = [];
-    for (const minGain of [2, 1]) {
-      if (chosen.length) break;
-      for (;;) {
-        let best = null, bg = 0;
-        for (const r of Object.keys(cover)) {
-          if (chosen.includes(r)) continue;
-          let g = 0; for (const i of cover[r]) if (!covered.has(i)) g++;
-          if (g < minGain) continue;
-          if (g > bg || (g === bg && best !== null && size[r] < size[best])) { best = r; bg = g; }
+    const isAdj = (r, a, b) => adj[r].has(a + "\t" + b);
+    const kOf = (a, b) => (a < b ? a + "\t" + b : b + "\t" + a);
+    const pairs = [], cand = new Map();
+    trainStations.forEach((st, t) => {
+      let prev = null;
+      for (const x of st) { if (x === prev) continue; if (prev !== null) pairs.push({ a: prev, b: x, t, route: null }); prev = x; }
+    });
+    for (const p of pairs) {
+      const k = kOf(p.a, p.b); if (cand.has(k)) continue;
+      let c = names.filter(r => isAdj(r, p.a, p.b));
+      if (!c.length) c = names.filter(r => pos[r].has(p.a) && pos[r].has(p.b));
+      cand.set(k, c);
+    }
+    const lists = [...cand.values()].filter(c => c.length);
+    const all = [...new Set(lists.flat())];
+    const masks = lists.map(c => c.reduce((m, r) => m | (1 << all.indexOf(r)), 0));
+    let chosen = [];
+    if (lists.length) {
+      if (all.length > 20) { // 候補が多すぎる時は貪欲法
+        const left = new Set(masks.keys());
+        while (left.size) {
+          let best = -1, bg = 0;
+          all.forEach((r, j) => { let g = 0; left.forEach(i => { if (masks[i] & (1 << j)) g++; }); if (g > bg || (g === bg && g > 0 && best >= 0 && size[r] < size[all[best]])) { bg = g; best = j; } });
+          if (best < 0) break;
+          chosen.push(all[best]); [...left].forEach(i => { if (masks[i] & (1 << best)) left.delete(i); });
         }
-        if (!best) break;
-        chosen.push(best); for (const i of cover[best]) covered.add(i);
+      } else {
+        const covers = m => masks.every(x => x & m);
+        outer: for (let n = 1; n <= all.length; n++) {
+          let best = null, bs = 1e9;
+          const rec = (start, m, c) => {
+            if (c === n) { if (covers(m)) { let sz = 0; all.forEach((r, j) => { if (m & (1 << j)) sz += size[r]; }); if (sz < bs) { bs = sz; best = m; } } return; }
+            for (let j = start; j < all.length; j++) rec(j + 1, m | (1 << j), c + 1);
+          };
+          rec(0, 0, 0);
+          if (best !== null) { chosen = all.filter((r, j) => best & (1 << j)); break outer; }
+        }
       }
     }
-    const firstOf = r => { for (let i = 0; i + 1 < seq.length; i++) { const k = seq[i] < seq[i + 1] ? seq[i] + "\t" + seq[i + 1] : seq[i + 1] + "\t" + seq[i]; if (cover[r].has(k)) return i; } return 1e9; };
-    const routes = chosen.sort((a, b) => firstOf(a) - firstOf(b));
-    return { routes, unknown };
+    // 区間ごとに1つの路線へ割り当て(説明できる区間が多い路線を優先、同数なら駅数の少ない方、さらに名前順)
+    const count = {}; chosen.forEach(r => { count[r] = 0; });
+    for (const c of lists) for (const r of c) if (r in count) count[r]++;
+    const order = chosen.slice().sort((x, y) => count[y] - count[x] || size[x] - size[y] || (x < y ? -1 : x > y ? 1 : 0));
+    const assigned = new Map();
+    for (const [k, c] of cand) { const r = order.find(x => c.includes(x)); if (r) assigned.set(k, r); }
+    pairs.forEach(p => { p.route = assigned.get(kOf(p.a, p.b)) || null; });
+    const used = new Set(assigned.values()), seq = [];
+    for (const p of pairs) if (p.route && !seq.includes(p.route)) seq.push(p.route);
+    const routes = seq.filter(r => used.has(r));
+    const unknown = [...new Set(trainStations.flat().filter(x => !known.has(x)))];
+    return { routes, unknown, pairs, isAdj };
+  }
+
+  /** 路線帰属。stations は「駅名の並び」または「列車ごとの駅名の並びの配列」(後者を渡すと列車の境目を区間に数えない)。戻り値 { routes, unknown } */
+  function attributeRoutes(stations, stationsByRoute) {
+    const trains = Array.isArray(stations[0]) ? stations : [stations];
+    const j = judgeRoutes(trains, stationsByRoute);
+    return { routes: j.routes, unknown: j.unknown };
   }
 
   /**
-   * 列車内訳(1.4.0)。表示専用で、判定(attributeRoutes)は呼んで結果をそのまま使う=判定ロジックは変えない。
-   * attributeRoutes は全列車の停車駅をつなげた並びで判定するので、列車の境目(前の列車の終着→次の列車の始発)も1区間として数えられる。
-   * その区間も「つなぎ」として明示する。戻り値: { routes, unknown, trains:[{num,shubetsu,start,end,stations,spans:[{route,from,to,pairs}],outside:[{station,why}]}], links:[{from,to,fromTrain,toTrain,routes}] }
+   * 列車内訳(1.4.0→1.7.0で判定を attributeRoutes と同じ judgeRoutes に統一)。表示専用。
+   * 戻り値: { routes, extra:[], unknown, trains:[{num,shubetsu,start,end,stations,spans:[{route,from,to,pairs,loose}],outside:[{station,why}]}], links:[] }
    */
-  function explainRoutes(trains, stationsByRoute, opts) {
-    const allSt = []; trains.forEach(t => t.stations.forEach(x => allSt.push(x)));
-    const at = attributeRoutes(allSt, stationsByRoute);
-    const adjOf = {}, inRoute = {};
-    for (const [r, list] of Object.entries(stationsByRoute)) {
-      const adj = new Set();
-      for (let i = 0; i + 1 < list.length; i++) { adj.add(list[i] + "\t" + list[i + 1]); adj.add(list[i + 1] + "\t" + list[i]); }
-      adjOf[r] = adj; inRoute[r] = new Set(list);
-    }
-    const pairs = []; // 判定が実際に数えた区間(連続重複を除いた並び)
-    let tail = null, last = -1;
-    trains.forEach((t, ti) => {
-      for (const s of t.stations) {
-        if (tail === s) { last = ti; continue; }
-        if (tail !== null) pairs.push({ a: tail, b: s, from: last, to: ti, link: last !== ti });
-        tail = s; last = ti;
-      }
-    });
-    const hit = p => at.routes.filter(r => adjOf[r].has(p.a + "\t" + p.b));
-    pairs.forEach(p => { p.routes = hit(p); });
-    // 再判定(1.6.0, opts.second): attributeRoutes は「新しく説明できる区間が2つ以上」の路線しか採らず、採った後は残りを見ない。
-    // そのため路線欄にあるのに区間が当たらなかった路線(extra候補)が残る。ここで、どの路線にも当たらなかった区間だけを、
-    // それらの路線で説明し直す。①その路線の駅順で隣り合う区間 → ②無ければ、2駅ともその路線の駅にある区間(急行の飛ばし区間)。少ない路線で、同点は駅数の少ない方。
-    const extra = [];
-    if (opts && opts.second) {
-      const cand = Object.keys(stationsByRoute).filter(r => !at.routes.includes(r));
-      const pos = {};
-      for (const r of cand) { pos[r] = new Map(); stationsByRoute[r].forEach((x, i) => { if (!pos[r].has(x)) pos[r].set(x, i); }); }
-      const strict = (r, p) => adjOf[r].has(p.a + "\t" + p.b);
-      const loose = (r, p) => pos[r].has(p.a) && pos[r].has(p.b);
-      const left = () => pairs.filter(p => !p.routes.length);
-      for (const [name, test] of [["strict", strict], ["loose", loose]]) {
-        for (;;) {
-          const L = left().filter(p => cand.some(r => test(r, p)));
-          if (!L.length) break;
-          let best = null, bg = 0;
-          for (const r of cand) {
-            let g = 0; for (const p of L) if (test(r, p)) g++;
-            if (g > bg || (g === bg && g > 0 && best !== null && stationsByRoute[r].length < stationsByRoute[best].length)) { best = r; bg = g; }
-          }
-          if (!best) break;
-          if (!extra.includes(best)) extra.push(best);
-          for (const p of L) if (test(best, p)) { p.routes = p.routes.concat([best]); (p.mode = p.mode || {})[best] = name; }
-        }
-      }
-    }
-    const allRoutes = at.routes.concat(extra);
-    const known = new Set(); for (const r of Object.keys(inRoute)) inRoute[r].forEach(x => known.add(x));
+  function explainRoutes(trains, stationsByRoute) {
+    const j = judgeRoutes(trains.map(t => t.stations), stationsByRoute);
+    const known = new Set(); for (const l of Object.values(stationsByRoute)) l.forEach(x => known.add(x));
     const out = trains.map((t, ti) => {
-      const own = pairs.filter(p => !p.link && p.to === ti);
-      const spans = allRoutes.map(r => {
-        const ps = own.filter(p => p.routes.includes(r));
+      const own = j.pairs.filter(p => p.t === ti);
+      const spans = j.routes.map(r => {
+        const ps = own.filter(p => p.route === r);
         if (!ps.length) return null;
-        const idx = []; ps.forEach(p => { idx.push(t.stations.indexOf(p.a)); idx.push(t.stations.lastIndexOf(p.b)); });
-        // 区間の端: 最初に現れた a と、最後の b(同じ駅が2度出る列車でも順序どおり)
-        const a0 = ps[0].a, b0 = ps[ps.length - 1].b;
-        return { route: r, from: a0, to: b0, pairs: ps.length, loose: ps.filter(p => p.mode && p.mode[r] === "loose").length, second: extra.includes(r) };
+        return { route: r, from: ps[0].a, to: ps[ps.length - 1].b, pairs: ps.length, loose: ps.filter(p => !j.isAdj(r, p.a, p.b)).length, second: false };
       }).filter(Boolean);
-      const covered = new Set(); own.forEach(p => { if (p.routes.length) { covered.add(p.a); covered.add(p.b); } });
+      const covered = new Set(); own.forEach(p => { if (p.route) { covered.add(p.a); covered.add(p.b); } });
       const outside = [];
-      for (const x of new Set(t.stations)) if (!covered.has(x)) outside.push({ station: x, why: known.has(x) ? "選ばれた路線の駅順で隣り合っていない" : "マスタに無い駅" });
+      for (const x of new Set(t.stations)) if (!covered.has(x)) outside.push({ station: x, why: known.has(x) ? "どの候補路線でも、続けて停まる駅の区間として説明できない" : "マスタに無い駅" });
       return { num: t.num, shubetsu: t.shubetsu || "", start: t.stations[0] || "", end: t.stations[t.stations.length - 1] || "", stations: t.stations, spans, outside };
     });
-    const links = pairs.filter(p => p.link).map(p => ({ from: p.a, to: p.b, fromTrain: trains[p.from].num, toTrain: trains[p.to].num, routes: p.routes }));
-    return { routes: at.routes, extra, unknown: at.unknown, trains: out, links };
+    return { routes: j.routes, extra: [], unknown: j.unknown, trains: out, links: [] };
   }
 
   /** 時刻表の同一判定用(1.5.0)。出力列順の行 [列車番号,駅名,時刻,行先,種別] の先頭5列(前後の空白は無視)。見出し行(列車番号/種別)は除く。行が無ければ "" */
@@ -343,6 +330,6 @@
     taken.add(v);
     return v;
   }
-  const api = { hhmm, unbanBase, unbanFromRows, unbanFromGroup, uniqueUnban, REGISTRY_HEADERS, single, pickSegments, convertUnyou, toOutputRows, monotonicViolations, attributeRoutes, explainRoutes, sheetSig, normalizeStation, renameStations, resolveFields, buildRegistryRow, groupByRoute };
+  const api = { hhmm, unbanBase, unbanFromRows, unbanFromGroup, uniqueUnban, REGISTRY_HEADERS, single, pickSegments, convertUnyou, toOutputRows, monotonicViolations, attributeRoutes, explainRoutes, judgeRoutes, sheetSig, normalizeStation, renameStations, resolveFields, buildRegistryRow, groupByRoute };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.GenCore = api;
 })(typeof window !== "undefined" ? window : globalThis);
