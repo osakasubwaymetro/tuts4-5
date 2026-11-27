@@ -1,3 +1,9 @@
+// trainnavi.js v1.7.0
+// 1.7.0: 背景（小窓・ホーム画面・他アプリ表示中）でアナウンスが端末の音声に落ちるのを直した。
+//        ①列車を選んだ時点で、その列車の全駅ぶんのアナウンス文を先に生成してキャッシュを温める（これまでは4区間先まで）。
+//          生成は近い順。AudioContext が無い（まだタップされていない）間もキャッシュ保存だけ先に進める。生成のタイムアウトは10→25秒（先行生成は急がないため）。
+//        ②再生時、デコード済みが無くてもキャッシュ（Cache Storage）に音声があれば、それを読んで合成音声で再生する。
+//          AudioContext が止まっていたら resume を最大1.5秒待つ。それでも鳴らせない／キャッシュにも無い時だけ端末の音声。
 // trainnavi.js v1.6.0
 // 1.6.0: アナウンス音声を、外部の合成音声API（Colab等）に接続できるようにした。ベースURLは Train Navi 画面の「⚙ 音声設定」で入力し、localStorage（tuts4_navi_ttsurl）に保存する。空なら従来どおり speechSynthesis だけ。
 //        設定がある時だけ: 開いた瞬間に GET /health（待たない）→200で音声OK。4分おきに /health（非表示の間は止める）。アナウンス文は POST /tts {"text"} → audio/wav で生成し、Cache Storage（キー＝文のハッシュ）に保存。
@@ -185,24 +191,18 @@
   }
   function stopAudioSrc() { try { if (nv.curSrc) { nv.curSrc.onended = null; nv.curSrc.stop(); } } catch (e) {} nv.curSrc = null; }
   function cancelSpeech() { stopAudioSrc(); try { window.speechSynthesis && speechSynthesis.cancel(); } catch (e) {} }
-  function say(text) {
-    if (!nv.voiceOn) return;
-    // 合成音声API: 先行生成が間に合っていれば、それを再生。間に合っていなければこの回だけ speechSynthesis
-    if (ttsEnabled() && nv.audio && nv.audio.state === "running") {
-      const buf = tts.mem.get(text);
-      if (buf) {
-        try {
-          cancelSpeech();
-          const src = nv.audio.createBufferSource(); src.buffer = buf; src.connect(nv.audio.destination);
-          nv.speaking = true; nv.spokenAnything = true; nv.lastSaid = text + "（合成）";
-          src.onended = () => { if (nv.curSrc === src) { nv.curSrc = null; nv.speaking = false; } };
-          nv.curSrc = src; src.start(0);
-          return;
-        } catch (e) { nv.curSrc = null; nv.speaking = false; }
-      }
-      ttsPump(); // 間に合っていない文を優先して作り直す
-    }
-    if (!window.speechSynthesis) return;
+  function playBuf(buf, text) {
+    try {
+      cancelSpeech();
+      const src = nv.audio.createBufferSource(); src.buffer = buf; src.connect(nv.audio.destination);
+      nv.speaking = true; nv.spokenAnything = true; nv.lastSaid = text + "（合成）";
+      src.onended = () => { if (nv.curSrc === src) { nv.curSrc = null; nv.speaking = false; } };
+      nv.curSrc = src; src.start(0);
+      return true;
+    } catch (e) { nv.curSrc = null; nv.speaking = false; return false; }
+  }
+  function sayDefault(text) {
+    if (!window.speechSynthesis) { nv.speaking = false; return; }
     try {
       cancelSpeech();
       const u = new SpeechSynthesisUtterance(text);
@@ -213,14 +213,43 @@
       speechSynthesis.speak(u);
     } catch (e) { nv.speaking = false; }
   }
+  // 背景などで、すぐ鳴らせない時の再生（1.7.0）: AudioContext を起こし、デコード済みが無ければキャッシュから読んで、合成音声で鳴らす。無理な時だけ端末の音声
+  async function saySynthSlow(text) {
+    const my = nv.sayTok = (nv.sayTok || 0) + 1;
+    nv.speaking = true; // 待っている間に次の注意喚起が重なって鳴らないように
+    let ok = false;
+    try {
+      if (nv.audio.state !== "running") { try { await Promise.race([nv.audio.resume(), new Promise(r => setTimeout(r, 1500))]); } catch (e) {} }
+      let buf = tts.mem.get(text);
+      if (!buf) {
+        const ab = await ttsCacheGet(text);
+        if (ab) { try { buf = await ttsDecode(ab); tts.mem.set(text, buf); } catch (e) { buf = null; } }
+      }
+      if (nv.sayTok !== my) return; // もっと新しい再生が始まった
+      if (buf && nv.audio.state === "running") ok = playBuf(buf, text);
+    } catch (e) { /* 端末の音声へ */ }
+    if (nv.sayTok !== my) return;
+    if (!ok) { ttsPump(); sayDefault(text); }
+  }
+  function say(text) {
+    if (!nv.voiceOn) return;
+    // 合成音声API: デコード済みがあればすぐ再生。無い・AudioContext が止まっている時は saySynthSlow（キャッシュから再生を試みる）
+    if (ttsEnabled() && nv.audio) {
+      const buf = tts.mem.get(text);
+      if (buf && nv.audio.state === "running" && playBuf(buf, text)) { nv.sayTok = (nv.sayTok || 0) + 1; return; }
+      saySynthSlow(text);
+      return;
+    }
+    sayDefault(text);
+  }
 
   // ---------- 合成音声API（ベースURLが設定されている時だけ有効） ----------
   // GET /health（起動確認）、POST /tts {"text"} → audio/wav。無料枠でアイドル時はスリープし、復帰に数十秒〜数分かかる前提。
-  const TTS_TIMEOUT = 10000;      // /tts のタイムアウト
+  const TTS_TIMEOUT = 25000;      // /tts のタイムアウト
   const TTS_AHEAD = 4;            // 再生位置から先、何駅分（区間）を裏で作っておくか（開始時は先頭3駅分で足りる）
   const TTS_KEEPALIVE = 4 * 60000; // /health を投げ続ける間隔
   const TTS_CACHE = "tuts4-navi-tts-v1";
-  const tts = { base: "", ready: false, mem: new Map(), fail: new Map(), inflight: null, busy: false, keepTimer: null, pollTimer: null, healthBusy: false, tok: 0 };
+  const tts = { base: "", ready: false, have: new Set(), mem: new Map(), fail: new Map(), inflight: null, busy: false, keepTimer: null, pollTimer: null, healthBusy: false, tok: 0 };
   function ttsNormUrl(v) { v = String(v || "").trim().replace(/\/+$/, ""); return /^https?:\/\/[^\s]+$/i.test(v) ? v : ""; }
   function ttsEnabled() { return !!tts.base; }
   tts.base = ttsNormUrl(lsGet(TTS_KEY, ""));
@@ -296,12 +325,13 @@
     const copy = ab.slice(0);
     return await new Promise((res, rej) => { const p = nv.audio.decodeAudioData(copy, res, rej); if (p && p.then) p.then(res, rej); });
   }
-  // 先に作っておく文（区間ごとに「次は、○○、停車。」＋停車前の固定文）。現在の区間から TTS_AHEAD 区間先まで、近い順
+  // 先に作っておく文（区間ごとに「次は、○○、停車。」＋停車前の固定文）。列車を選んだ時点で、全駅ぶん。現在の区間に近い順（1.7.0）
   function ttsWanted() {
     const out = [], seen = new Set(), ev = nv.ev; if (!ev || !ev.length) return out;
     const cars = nv.cars, add = t => { if (t && !seen.has(t)) { seen.add(t); out.push(t); } };
-    const k0 = Math.max(0, nv.curK || 0);
-    for (let j = k0; j < ev.length - 1 && j < k0 + TTS_AHEAD; j++) {
+    const n = ev.length - 1, k0 = Math.min(Math.max(0, nv.curK || 0), Math.max(0, n - 1));
+    for (let q = 0; q < n; q++) {
+      const j = (k0 + q) % n; // 今の区間から先へ、最後まで行ったら手前の区間
       add(`次は、${ev[j + 1].name}、停車。`);
       add("停車、停車、停車。");
       add(cars ? `${cars}両、停車。${cars}両、停車。` : "停車。停車。");
@@ -317,10 +347,10 @@
     try {
       for (let guard = 0; guard < 200; guard++) {
         if (!ttsEnabled() || !nv.stops || nv.token !== myTok) break;
-        const text = ttsWanted().find(t => !tts.mem.has(t) && !(tts.fail.get(t) > Date.now()));
+        const text = ttsWanted().find(t => !tts.mem.has(t) && !(tts.fail.get(t) > Date.now()) && !(tts.have.has(t) && !nv.audio));
         if (!text) break;
-        if (!nv.audio) break; // まだタップされていない（AudioContextが無い）
         let ab = await ttsCacheGet(text);
+        if (ab) tts.have.add(text);
         if (!ab) {
           if (!tts.ready) break; // APIがまだ起きていない
           const ctl = new AbortController(); tts.inflight = { text, ctl };
@@ -330,7 +360,7 @@
             if (!r.ok) throw new Error("HTTP " + r.status);
             ab = await r.arrayBuffer();
             if (!ab.byteLength) throw new Error("empty");
-            ttsCachePut(text, ab);
+            await ttsCachePut(text, ab); tts.have.add(text);
           } catch (e) {
             const stale = !ttsWanted().includes(text); // 駅を飛ばして不要になった要求の中止は失敗扱いにしない
             if (!stale) {
@@ -340,7 +370,7 @@
             ab = null;
           } finally { clearTimeout(timer); tts.inflight = null; }
         }
-        if (ab) { try { tts.mem.set(text, await ttsDecode(ab)); } catch (e) { tts.fail.set(text, Date.now() + 30000); } }
+        if (ab && nv.audio) { try { tts.mem.set(text, await ttsDecode(ab)); } catch (e) { tts.fail.set(text, Date.now() + 30000); } } // AudioContext が無い間はキャッシュ保存だけ（タップ後にデコード）
       }
     } finally { tts.busy = false; ttsCfgStatus(); }
   }
