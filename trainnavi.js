@@ -1,3 +1,9 @@
+// trainnavi.js v1.8.1
+// 1.8.1: 画面の左下に出ていた黒い枠（小窓用の video 要素）を、見えないようにした。小窓の機能はそのまま使える。
+//        display:none / visibility:hidden にすると、iPhone等で小窓にできなくなったり映像が止まることがあるため、大きさ・位置・描画はそのままで、透明（opacity:0）にして、タップも通す（pointer-events:none）。
+// trainnavi.js v1.8.0
+// 1.8.0: 「⚙ 設定」に「乗っている号車（前から何両目）」を追加（localStorage tuts4_navi_carpos、既定1両目）。位置の判定を（号車−1）×20mだけ前へずらし、
+//        常に自分が先頭にいる扱いにする（1両目+0m／2両目+20m／3両目+40m）。GPSの判定（次の停車駅までの距離 D、駅を出たかの判定）に反映。時刻だけの判定・デバッグ走行は変えない。
 // trainnavi.js v1.7.0
 // 1.7.0: 背景（小窓・ホーム画面・他アプリ表示中）でアナウンスが端末の音声に落ちるのを直した。
 //        ①列車を選んだ時点で、その列車の全駅ぶんのアナウンス文を先に生成してキャッシュを温める（これまでは4区間先まで）。
@@ -25,6 +31,10 @@
 (function () {
   "use strict";
   const CAR_KEY = "tuts4_navi_cars";
+  const CARPOS_KEY = "tuts4_navi_carpos"; // 乗っている号車（前から何両目）
+  const CAR_LEN = 20;                     // 1両の長さ（m）
+  const getCarPos = () => { const v = parseInt(lsGet(CARPOS_KEY, "1"), 10); return isFinite(v) && v >= 1 ? Math.min(v, 30) : 1; };
+  const carOffset = () => (getCarPos() - 1) * CAR_LEN; // 判定位置を前へずらす量（m）
   const VOICE_KEY = "tuts4_navi_voice";
   const TTS_KEY = "tuts4_navi_ttsurl";
   const nv = { stops: null, ev: null, timer: null, voiceOn: true, cars: "", spoken: new Set(), audio: null, lastPhase: "", flash: false, flashTimer: null, watchId: null, pos: null, speed: 0, fixAt: 0, acc: 9999, seg: null, src: "time", sim: { on: false, run: false, k: 0, mode: "stop", D: 0, v: 0, dwell: 0, mult: 1, t: 0, kmh: 72, timer: null }, speaking: false, lastMid: 0, midK: -1, spokenAnything: false, token: 0 };
@@ -106,7 +116,7 @@
       </div>
       <div class="tn-side">
         <button type="button" class="b-voice" id="tnVoiceBtn">🔊 音声</button>
-        <button type="button" class="b-cfg" id="tnCfgBtn">⚙ 音声設定</button>
+        <button type="button" class="b-cfg" id="tnCfgBtn">⚙ 設定</button>
         <div class="tn-gpsmsg" id="tnGpsMsg"></div>
         <button type="button" class="b-dbg" id="tnDbgBtn">🛠 デバッグ</button>
         <div class="tn-clock" id="tnClock"></div>
@@ -119,13 +129,22 @@
     // 音声API設定
     const cfg = document.createElement("div");
     cfg.id = "tnTtsCfg";
-    cfg.innerHTML = `<div class="box"><b>音声APIの設定</b>
+    cfg.innerHTML = `<div class="box"><b>乗っている号車</b>
+      <div style="font-size:12px;color:#bbb;margin-top:4px">前から何両目か。位置の判定を（号車−1）×20mだけ前へずらして、いつも自分が先頭にいる扱いにします（1両目＝ずらさない）。</div>
+      <div class="row" style="align-items:center;gap:6px"><input id="tnCarPos" type="number" inputmode="numeric" min="1" max="30" step="1" style="width:5em"> 両目 <span id="tnCarPosSt" style="font-size:12px;color:#bbb"></span></div>
+      <hr style="border:0;border-top:1px solid #444;margin:10px 0">
+      <b>音声APIの設定</b>
       <div style="font-size:12px;color:#bbb;margin-top:4px">合成音声APIのベースURL（例: https://xxxx.trycloudflare.com）。空にすると、端末の音声（speechSynthesis）だけで案内します。</div>
       <input id="tnTtsUrl" type="url" inputmode="url" placeholder="https://..." autocomplete="off">
       <div class="row"><button id="tnTtsSave">保存</button><button id="tnTtsClear" class="sub">空にして無効化</button><button id="tnTtsClose" class="sub">閉じる</button></div>
       <div class="st" id="tnTtsSt"></div></div>`;
     d.appendChild(cfg);
-    document.getElementById("tnCfgBtn").onclick = () => { document.getElementById("tnTtsUrl").value = tts.base; ttsCfgStatus(); cfg.classList.add("show"); };
+    const carPosSt = () => { const e = document.getElementById("tnCarPosSt"); if (e) e.textContent = `（判定を ${carOffset()}m 前へ）`; };
+    document.getElementById("tnCarPos").onchange = e => {
+      let v = parseInt(e.target.value, 10); if (!isFinite(v) || v < 1) v = 1; v = Math.min(v, 30);
+      e.target.value = v; lsSet(CARPOS_KEY, String(v)); carPosSt();
+    };
+    document.getElementById("tnCfgBtn").onclick = () => { document.getElementById("tnCarPos").value = getCarPos(); carPosSt(); document.getElementById("tnTtsUrl").value = tts.base; ttsCfgStatus(); cfg.classList.add("show"); };
     document.getElementById("tnTtsClose").onclick = () => cfg.classList.remove("show");
     document.getElementById("tnTtsSave").onclick = () => {
       const u = ttsNormUrl(document.getElementById("tnTtsUrl").value);
@@ -580,14 +599,14 @@
     const cur = ev[sg.k], nxt = ev[sg.k + 1];
     if (!nxt && sg.atStop) { nv.src = "gps"; return { kind: "stop", k: sg.k, src: "gps" }; }
     if (sg.atStop) {
-      if (cur.c && dist(nv.pos, cur.c) > 200) { nv.seg = { k: sg.k, atStop: false, depAt: Date.now() }; }
+      if (cur.c && dist(nv.pos, cur.c) + carOffset() > 200) { nv.seg = { k: sg.k, atStop: false, depAt: Date.now() }; }
       else { nv.src = "gps"; return { kind: "stop", k: sg.k, src: "gps" }; }
     }
     const sg2 = nv.seg;
     const nn = ev[sg2.k + 1];
     if (!nn) return tl;
     if (!nn.c) return tl; // 次の駅の座標が取れていない間は時刻で代用
-    const D = dist(nv.pos, nn.c);
+    const D = Math.max(0, dist(nv.pos, nn.c) - carOffset()); // 自分が先頭にいる扱い（号車ぶん前へ）
     nv.src = "gps";
     return { kind: "run", k: sg2.k, D, v, t: (Date.now() - sg2.depAt) / 1000, src: "gps" };
   }
@@ -723,7 +742,7 @@
       const vd = document.createElement("video");
       vd.muted = true; vd.defaultMuted = true; vd.loop = true; vd.autoplay = true;
       vd.playsInline = true; vd.setAttribute("playsinline", ""); vd.setAttribute("webkit-playsinline", "");
-      vd.style.cssText = "position:fixed;left:6px;bottom:6px;width:96px;height:54px;z-index:10003;border:1px solid #888;border-radius:4px;background:#000";
+      vd.style.cssText = "position:fixed;left:6px;bottom:6px;width:96px;height:54px;z-index:10003;opacity:0;pointer-events:none;border:0;background:transparent"; // 見えない（小窓用）。display:noneにはしない
       document.getElementById("tnOverlay").appendChild(vd);
       const onLeave = () => { nv.pipOn = false; clearInterval(nv.pipTimer); const b = document.getElementById("tnPipBtn"); if (b) b.textContent = "📺 小窓"; };
       vd.addEventListener("leavepictureinpicture", onLeave);
@@ -802,5 +821,5 @@
   }
 
   window.ttShowNavi = function (idx) { open(ttTrainDetailRegistry[idx]); };
-  window.TrainNavi = { _tts: tts, _ttsWanted: ttsWanted, _say: say, open, close: closeNavi, _buildEvents: buildEvents, _onFix: onFix, _state: nv, _drawPip: drawPip, _sim: () => nv.sim, _coordCache: coordCache };
+  window.TrainNavi = { _locate: locate, _tts: tts, _ttsWanted: ttsWanted, _say: say, open, close: closeNavi, _buildEvents: buildEvents, _onFix: onFix, _state: nv, _drawPip: drawPip, _sim: () => nv.sim, _coordCache: coordCache };
 })();
