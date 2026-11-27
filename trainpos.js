@@ -1,3 +1,8 @@
+// trainpos.js v1.35.0
+// 1.35.0: 停車駅と停車駅の間（途中の通過駅をまたぐ区間）を、時間に比例した「等間隔」ではなく「等速」で進める。
+//         駅間距離は Train Navi と同じ仕組み・同じデータ元（HeartRails Express の駅座標＋2点間の直線距離）。新しいデータは要らない。
+//         停車駅間の総距離と所要時間から速度を決め、進んだ距離を駅間距離の累積に当てはめて位置を決める（通過駅の通過時刻が距離比になり、
+//         次の停車駅への到着は時刻表どおり）。座標が取れていない駅が区間に含まれる間・環状線・取得失敗の時は、従来どおり等間隔。
 // trainpos.js v1.34.0
 // 1.34.0: 列車番号が同じでも時刻表が違う列車（「回送0828」のように 回送＋発車時刻 で付く番号は、別ダイヤに同じ番号が何本もある）を、
 //         1つの位置にまとめて描いていたのを直した。「列車番号が同じ列車は必ず併結」にするのは、時刻表（停車駅と時刻）も同じ時だけにした。
@@ -773,7 +778,7 @@
       if (!routesOf.has(n)) routesOf.set(n, new Set());
       routesOf.get(n).add(rt);
     }));
-    ctx._ri = { idxOf, byRoute, routesOf }; ctx._riRoute = ctx.routeVal;
+    ctx._ri = { idxOf, byRoute, routesOf, segD: null, segState: 0 }; ctx._riRoute = ctx.routeVal;
     return ctx._ri;
   }
 
@@ -958,6 +963,85 @@
     return on;
   }
 
+  /* ---------- 駅間距離（Train Navi と同じ：HeartRails Express の駅座標 → 直線距離）（1.35.0） ---------- */
+  const COORD_LS = "tuts4_tp_coords_v1";
+  const coordMem = new Map(); // 正規化した駅名 → [{lat,lon}...]（同名駅の候補）
+  let coordLsLoaded = false;
+  const normSt = n => (typeof ttNormStation === "function" ? ttNormStation(n) : String(n || "").replace(/駅$/, ""));
+  function coordLsLoad() {
+    if (coordLsLoaded) return; coordLsLoaded = true;
+    try { const o = JSON.parse(localStorage.getItem(COORD_LS) || "null"); if (o && o.d) Object.keys(o.d).forEach(k => coordMem.set(k, o.d[k])); } catch (e) { /* ignore */ }
+  }
+  function coordLsSave() {
+    try { const d = {}; coordMem.forEach((v, k) => { if (v && v.length) d[k] = v; }); localStorage.setItem(COORD_LS, JSON.stringify({ d })); } catch (e) { /* ignore */ }
+  }
+  function geoDist(a, b) {
+    const R = 6371000, rad = x => x * Math.PI / 180;
+    const dLat = rad(b.lat - a.lat), dLon = rad(b.lon - a.lon);
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+  function fetchCoordList(name) {
+    const key = normSt(name);
+    if (coordMem.has(key)) return Promise.resolve(coordMem.get(key));
+    const q = encodeURIComponent(String(name).replace(/駅$/, ""));
+    return fetch(`https://express.heartrails.com/api/json?method=getStations&name=${q}`)
+      .then(r => r.json())
+      .then(d => {
+        const list = ((d.response && d.response.station) || []).map(x => ({ lat: Number(x.y), lon: Number(x.x) })).filter(c => isFinite(c.lat) && isFinite(c.lon));
+        coordMem.set(key, list); return list;
+      })
+      .catch(() => []); // 失敗は覚えない（次の機会にまた試す）
+  }
+  // 路線の全駅の座標を取り、隣り合う駅の距離（m）の配列 segD[k]（k駅→k+1駅）を作る。取れない所は null。同名駅は手前の駅に一番近い候補（Train Navi と同じ）
+  async function buildSegD(ctx, ri) {
+    coordLsLoad();
+    const names = ctx.stationsOnRoute, N = names.length;
+    const todo = [...new Set(names.map(normSt))].filter(k => !coordMem.has(k));
+    const byKey = new Map(names.map(n => [normSt(n), n]));
+    let ci = 0;
+    await Promise.all(Array.from({ length: Math.min(4, todo.length) }, async () => {
+      while (ci < todo.length) { const k = todo[ci++]; await fetchCoordList(byKey.get(k)); }
+    }));
+    if (todo.length) coordLsSave();
+    const cand = names.map(n => coordMem.get(normSt(n)) || []);
+    const pick = new Array(N).fill(null);
+    // 先頭は2駅目の候補と一番近い組、以降は手前の駅に一番近い候補
+    let ref = null;
+    for (let k = 0; k < N; k++) {
+      const c = cand[k]; if (!c.length) { ref = null; continue; }
+      if (!ref) {
+        const nx = cand[k + 1];
+        if (nx && nx.length) { let b = null, bd = Infinity; c.forEach(x => nx.forEach(y => { const d0 = geoDist(x, y); if (d0 < bd) { bd = d0; b = x; } })); pick[k] = b; }
+        else pick[k] = c[0];
+      } else pick[k] = c.reduce((b, x) => geoDist(ref, x) < geoDist(ref, b) ? x : b, c[0]);
+      ref = pick[k];
+    }
+    const seg = [];
+    for (let k = 0; k + 1 < N; k++) seg.push(pick[k] && pick[k + 1] ? Math.max(1, geoDist(pick[k], pick[k + 1])) : null);
+    ri.segD = seg; ri.segState = 2;
+  }
+  function ensureSegD(ctx) {
+    const ri = routeInfo(ctx);
+    if (ri.segState === 0 && !ctx.isLoop && ctx.stationsOnRoute.length > 2) { ri.segState = 1; buildSegD(ctx, ri).catch(() => { ri.segState = 2; ri.segD = null; }); }
+    return ri.segD;
+  }
+  // 駅 i→j（間に駅がある）を frac（0〜1、時間の進み具合）まで「等速」で進んだ位置。距離は駅間距離の累積。
+  // 戻り値: 隣り合う2駅の行 r0,r1 とその間の割合 f。距離が足りない（座標が取れていない駅がある）時は null（呼び出し側が等間隔にする）
+  function speedPos(segD, i, j, frac) {
+    if (!segD) return null;
+    const s = j > i ? 1 : -1, n = Math.abs(j - i), d = [0];
+    for (let k = 0; k < n; k++) {
+      const v = segD[Math.min(i + s * k, i + s * (k + 1))];
+      if (!(v > 0)) return null;
+      d.push(d[k] + v);
+    }
+    const x = Math.min(Math.max(frac, 0), 1) * d[n];
+    for (let k = 0; k < n; k++) {
+      if (x <= d[k + 1] || k === n - 1) return { r0: i + s * k, r1: i + s * (k + 1), f: Math.min(1, Math.max(0, (x - d[k]) / (d[k + 1] - d[k]))) };
+    }
+    return null;
+  }
   function locate(train, t, ctx) {
     const N = ctx.stationsOnRoute.length;
     const on = buildOnRoute(train, ctx);
@@ -998,6 +1082,11 @@
           else if (i === 0 && j === N - 1) i = N;
         }
         const frac = (t - cur.d) / Math.max(1, nx.a - cur.d);
+        // 等速（1.35.0）: 2つの停車駅の間に駅が挟まる時は、キロ程で位置を決める。使えない時は従来の等間隔
+        if (!ctx.isLoop && Math.abs(j - i) > 1) {
+          const sp = speedPos(ensureSegD(ctx), i, j, frac);
+          if (sp) return { row0: sp.r0, row1: sp.r1, frac: sp.f, sign: Math.sign(j - i) || 1, atStation: false, sig: `r${cur.d}-${nx.a}` };
+        }
         return { row0: i, row1: j, frac, sign: Math.sign(j - i) || 1, atStation: false, sig: `r${cur.d}-${nx.a}` };
       }
     }
