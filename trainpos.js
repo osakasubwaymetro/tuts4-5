@@ -1,3 +1,5 @@
+// trainpos.js v1.37.0
+// 1.37.0: 回送・臨時・団体（非営業列車）は、種別チップだけでなく種別＋行先のラベル全体の背景も赤（#d32f2f）にする。営業列車は従来どおりチップのみ色付け。
 // trainpos.js v1.36.0
 // 1.36.0: 種別・行先ラベルの「種別」部分を四角い枠付きのチップにした。色は sujitype タブの「カラーコード」列（#RRGGBB）を（路線，種別）で引いて背景色にする
 //         （文字は背景の明るさで白／黒）。空欄・無効な値は枠だけの標準表示。種別が「回送」「臨時」「団体」の列車は色指定にかかわらず赤。
@@ -1667,7 +1669,7 @@
         el.innerHTML = `
           <div class="tp-badge">${esc(r.hm)}</div>
           ${icons.map(ic => `<div class="tp-icon"><img src="${esc(ic)}" alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';"></div>`).join("")}
-          ${labs.map(t => `<div class="tp-label">${t}</div>`).join("")}
+          ${labs.map(labDiv).join("")}
           ${r.number ? `<div class="tp-num">${esc(cleanNum(r.number))}</div>` : ""}`;
         layer.appendChild(el);
         return;
@@ -1700,7 +1702,7 @@
       el.innerHTML = `
         <div class="tp-badge">${esc(badges.join("+"))}</div>
         ${views.map(v => `<div class="tp-icon" data-mi="${v.mi}"><img src="${esc(v.icon)}" ${v.defIcons.length > 1 ? `data-icons="${esc(v.defIcons.join("\n"))}"` : ""} alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';"></div>`).join("")}
-        ${labels.map(t => `<div class="tp-label">${t}</div>`).join("")}
+        ${labels.map(labDiv).join("")}
         ${nums.map((n, i) => `<div class="tp-num">${esc(n)}${i < nums.length - 1 ? "+" : ""}</div>`).join("")}`;
       el.onclick = () => openDetail(p.a.train, p.members.map(m => m.train));
       // アイコンを押すと、その列車の「時刻表／乗車記録を上げる」を選べる
@@ -1752,8 +1754,10 @@
       }
       chip = `<span class="tp-chip"${style}>${esc(t)}</span>`;
     }
-    return chip + esc(bound || "");
+    return (RED_TYPES.has(t) ? RED_MARK : "") + chip + esc(bound || "");
   }
+  const RED_MARK = "<!--tp-red-->"; // 非営業列車のラベル全体を赤くする目印（labelHtml の先頭）
+  const labDiv = h => `<div class="tp-label${h.startsWith(RED_MARK) ? " tp-label-red" : ""}">${h}</div>`;
   // この列車のいまの種別・行先（併結のまとめ判定と表示で共通）
   function typeBound(a) {
     const last = a.train.stops[a.train.stops.length - 1];
