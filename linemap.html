@@ -7,9 +7,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>乗車路線マップ確認用</title>
-<!-- version: 1.33.15 -->
-<!-- 1.33.15: trainpos.js 1.35.0（停車駅間を駅間距離ベースの等速で移動。座標はHeartRailsから取得しlocalStorageにキャッシュ） -->
-<!-- 1.33.14: trainpos.js 1.34.0（列車番号が同じでも時刻表が違う列車は別々に描く／同じダイヤの同じ列車の二重描画を解消） -->
+<!-- version: 1.33.16 -->
+<!-- 1.33.16: trainpos.js 1.36.0（種別ラベルをチップ表示。sujitype のカラーコード、回送・臨時・団体は赤）。.tp-chip の CSS を追加 -->
+<!-- 1.33.15: trainpos.js 1.35.0（停車駅間を等速で進める。駅間距離は Train Navi と同じ HeartRails の駅座標） -->
+<!-- 1.33.14: trainpos.js 1.34.0（列車番号が同じで時刻表が違う列車を別々の位置に描く／同一エントリの二重描画を解消） -->
 <!-- 1.33.13: trainpos.js 1.33.0（表示中の路線の駅に時刻のある停車が無い＝他路線を走っている区間には列車を置かない） -->
 <!-- 1.33.12: trainnavi.js 1.6.0（アナウンス音声を合成音声APIに接続できるように。設定は Train Navi 画面の「⚙ 音声設定」） -->
 <!-- 1.33.11: diagram_static.js 1.4.0・trainpos.js 1.32.0・timetable.js 1.22.0（同名路線の全会社を合体表示） -->
@@ -403,6 +404,7 @@
   .tp-icon { width:44px; height:28px; margin-top:1px; }
   .tp-icon img { width:100%; height:100%; object-fit:contain; display:block; }
   .tp-label { background:#111; color:#fff; border-radius:3px; padding:0 4px; font-size:9px; line-height:13px; white-space:nowrap; max-width:76px; overflow:hidden; text-overflow:ellipsis; margin-top:-3px; }
+  .tp-chip { display:inline-block; border:1px solid rgba(255,255,255,.85); border-radius:2px; padding:0 2px; margin-right:2px; line-height:11px; font-size:9px; vertical-align:top; }
   .tp-scroll { text-overflow:clip; }
   .tp-scroll > span { display:inline-block; animation: tpMq var(--t,3s) linear infinite alternate; animation-delay: var(--dl,0s); will-change:transform; }
   @keyframes tpMq { 0%,18% { transform:translateX(0); } 82%,100% { transform:translateX(calc(-1 * var(--d,0px))); } }
@@ -644,7 +646,7 @@
 <script src="timetable.js?v=1.22.0"></script>
 <script src="trainnavi.js?v=1.6.0"></script>
 <script src="diagram_static.js?v=1.4.0"></script>
-<script src="trainpos.js?v=1.35.0"></script>
+<script src="trainpos.js?v=1.36.0"></script>
 <script>initNav("乗車路線マップ確認用");</script>
 <script>
 const username = checkLogin();

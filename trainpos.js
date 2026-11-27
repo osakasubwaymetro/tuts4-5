@@ -1,3 +1,7 @@
+// trainpos.js v1.36.0
+// 1.36.0: 種別・行先ラベルの「種別」部分を四角い枠付きのチップにした。色は sujitype タブの「カラーコード」列（#RRGGBB）を（路線，種別）で引いて背景色にする
+//         （文字は背景の明るさで白／黒）。空欄・無効な値は枠だけの標準表示。種別が「回送」「臨時」「団体」の列車は色指定にかかわらず赤。
+//         sujitype は毎回取り直す（色の追加をすぐ反映）。取れなければ前回の控えを使う。
 // trainpos.js v1.35.0
 // 1.35.0: 停車駅と停車駅の間（途中の通過駅をまたぐ区間）を、時間に比例した「等間隔」ではなく「等速」で進める。
 //         駅間距離は Train Navi と同じ仕組み・同じデータ元（HeartRails Express の駅座標＋2点間の直線距離）。新しいデータは要らない。
@@ -556,10 +560,15 @@
   }
 
   async function loadMasters() {
-    if (st.modelRows && st.numberRows && st.aliasMap) return;
+    if (st.modelRows && st.numberRows && st.aliasMap && st.sujiColor) return;
     const get = async (name) => {
       const key = "tp_master_" + name;
       let cached = null;
+      if (name === "sujitype") { // 種別の色は毎回取り直す。取れなければ前回の控え（1.36.0）
+        try { const res = await fetch(MASTER_BASE + name); const j = await res.json(); if (Array.isArray(j)) { if (idb()) idb().set(key, j); return j; } } catch (e) { /* 控えへ */ }
+        if (idb()) { const c = await idb().get(key); if (Array.isArray(c)) return c; }
+        return [];
+      }
       if (idb() && name !== "stationalias") { const c = await idb().get(key); if (Array.isArray(c) && c.length) cached = c; } // 駅名の対応表は毎回取り直す（追加してすぐ反映）
       if (cached) return cached;
       try {
@@ -569,8 +578,17 @@
       } catch (e) { /* ignore */ }
       return [];
     };
-    const [m, n, al] = await Promise.all([get("model"), get("number"), get("stationalias")]);
+    const [m, n, al, sj] = await Promise.all([get("model"), get("number"), get("stationalias"), get("sujitype")]);
     st.modelRows = m; st.numberRows = n;
+    // 種別の色: (路線,種別) → #RRGGBB。空欄・形式が違うものは入れない
+    const sc = new Map();
+    (sj || []).forEach(r => {
+      const rt = String(r["路線"] || "").trim(), ty = String(r["種別"] || "").trim();
+      let c = String(r["カラーコード"] || "").trim();
+      if (/^#[0-9a-f]{3}$/i.test(c)) c = "#" + c.slice(1).split("").map(x => x + x).join("");
+      if (rt && ty && /^#[0-9a-f]{6}$/i.test(c)) sc.set(rt + "\t" + ty, c.toLowerCase());
+    });
+    st.sujiColor = sc;
     // 駅名の表記ゆれ（stationaliasシート：正式名称⇄通称。ひらがな・カタカナの違いも同じ駅として扱う）
     const am = new Map();
     (al || []).forEach(r => {
@@ -1639,16 +1657,17 @@
         const realIcon = (r.model || r.number) ? resolveIcon(r.model, r.number) : FALLBACK_TRAIN_IMAGE;
         // 連結編成数ぶんのアイコンを縦に並べ、乗車位置の編成だけに車両アイコンを出す（ほかは汎用アイコン）
         const icons = Array.from({ length: n }, (_, j) => j === r.pos - 1 ? realIcon : FALLBACK_TRAIN_IMAGE);
+        const rr = (st.ctx && st.ctx.routeVal) || "";
         const labList = r.bounds && r.bounds.length > 1
-          ? r.bounds.map((b, i) => `${(r.types && (r.types[i] || r.types[0])) || ""}${b}`)
-          : [`${r.type}${r.bound}`];
+          ? r.bounds.map((b, i) => labelHtml(rr, (r.types && (r.types[i] || r.types[0])) || "", b))
+          : [labelHtml(rr, r.type, r.bound)];
         if (side === "right") { icons.reverse(); labList.reverse(); } // 右側は先頭の編成が下
         const labs = [...new Set(labList)];
         el.className = "tp-train tp-ride tp-" + side + (n > 1 ? " tp-coupled" : "");
         el.innerHTML = `
           <div class="tp-badge">${esc(r.hm)}</div>
           ${icons.map(ic => `<div class="tp-icon"><img src="${esc(ic)}" alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';"></div>`).join("")}
-          ${labs.map(t => `<div class="tp-label">${esc(t)}</div>`).join("")}
+          ${labs.map(t => `<div class="tp-label">${t}</div>`).join("")}
           ${r.number ? `<div class="tp-num">${esc(cleanNum(r.number))}</div>` : ""}`;
         layer.appendChild(el);
         return;
@@ -1659,7 +1678,7 @@
         const tb = typeBound(a);
         const defIcons = a.train.defaultIcons || [];
         const badge = a.train.trainNumber || (a.train.unban ? "運" + a.train.unban : "");
-        return { badge, defIcons, label: `${tb.type}${tb.bound}` };
+        return { badge, defIcons, label: labelHtml(a.train.srcRoute || (st.ctx && st.ctx.routeVal) || "", tb.type, tb.bound) };
       });
       const plan = slotPlan(p);
       const nM = mviews.length;
@@ -1681,7 +1700,7 @@
       el.innerHTML = `
         <div class="tp-badge">${esc(badges.join("+"))}</div>
         ${views.map(v => `<div class="tp-icon" data-mi="${v.mi}"><img src="${esc(v.icon)}" ${v.defIcons.length > 1 ? `data-icons="${esc(v.defIcons.join("\n"))}"` : ""} alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${FALLBACK_TRAIN_IMAGE}';"></div>`).join("")}
-        ${labels.map(t => `<div class="tp-label">${esc(t)}</div>`).join("")}
+        ${labels.map(t => `<div class="tp-label">${t}</div>`).join("")}
         ${nums.map((n, i) => `<div class="tp-num">${esc(n)}${i < nums.length - 1 ? "+" : ""}</div>`).join("")}`;
       el.onclick = () => openDetail(p.a.train, p.members.map(m => m.train));
       // アイコンを押すと、その列車の「時刻表／乗車記録を上げる」を選べる
@@ -1697,7 +1716,7 @@
       const over = lb.scrollWidth - lb.clientWidth;
       if (over < 2) return;
       const span = document.createElement("span");
-      span.textContent = lb.textContent;
+      span.innerHTML = lb.innerHTML; // チップ(span)も含めて動かす（1.36.0）
       lb.textContent = "";
       lb.appendChild(span);
       const dur = Math.max(2, over / 18); // 片道の秒数（遅めで読める速さ）
@@ -1712,6 +1731,29 @@
     document.dispatchEvent(new Event("tp-rendered"));
   }
 
+  // 種別チップ（1.36.0）。色: 回送・臨時・団体は赤、それ以外は sujitype のカラーコード、無ければ枠だけ
+  const RED_TYPES = new Set(["回送", "臨時", "団体"]);
+  function typeColor(route, type) {
+    const t = String(type || "").trim();
+    if (!t) return "";
+    if (RED_TYPES.has(t)) return "#d32f2f";
+    return (st.sujiColor && st.sujiColor.get(String(route || "") + "\t" + t)) || "";
+  }
+  function labelHtml(route, type, bound) {
+    const t = String(type || "").trim();
+    let chip = "";
+    if (t) {
+      const c = typeColor(route, t);
+      let style = "";
+      if (c) {
+        const r = parseInt(c.slice(1, 3), 16), g = parseInt(c.slice(3, 5), 16), b = parseInt(c.slice(5, 7), 16);
+        const fg = (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? "#111" : "#fff";
+        style = ` style="background:${c};color:${fg};border-color:${c}"`;
+      }
+      chip = `<span class="tp-chip"${style}>${esc(t)}</span>`;
+    }
+    return chip + esc(bound || "");
+  }
   // この列車のいまの種別・行先（併結のまとめ判定と表示で共通）
   function typeBound(a) {
     const last = a.train.stops[a.train.stops.length - 1];
