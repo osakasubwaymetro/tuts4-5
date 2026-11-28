@@ -1,3 +1,5 @@
+// trainpos.js v1.38.1
+// 1.38.1: 臨時ダイヤの選択肢に添えていた運行日（M/D）をやめて、ダイヤ名だけで表示する（選んだ時の切り替わりは1.38.0のまま）。
 // trainpos.js v1.38.0
 // 1.38.0: パターンのプルダウンに、その路線にある臨時ダイヤ（臨時ダイヤ名のあるダイヤ）を、いま見ている日に走るかどうかに関係なく全部出す。
 //         選ぶだけでその臨時ダイヤの運行日（今日以降でいちばん近い日。無ければ直近の過去の日）の走行位置に切り替わる（日付をいじらなくてよい）。選択肢には運行日（M/D）を添える。
@@ -1220,11 +1222,7 @@
     if (!sel) return;
     const esc = s => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
     let html = `<option value="auto">自動（今日）</option><option value="weekday">平日ダイヤ</option><option value="holiday">土日祝ダイヤ</option>`;
-    names.forEach(n => {
-      let tag = "";
-      if (loaded) { const d = diaDateFor(n); if (activeDiasOn(d).has(n) || pickDiaDate(n)) tag = `（${d.getMonth() + 1}/${d.getDate()}）`; } // 運行日が分かる時だけ添える
-      html += `<option value="dia:${esc(n)}">${esc(n)}${tag}</option>`;
-    });
+    names.forEach(n => { html += `<option value="dia:${esc(n)}">${esc(n)}</option>`; }); // ダイヤ名だけ（日付は添えない・1.38.1）
     sel.innerHTML = html;
     sel.value = st.pattern;
   }
