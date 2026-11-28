@@ -1,3 +1,9 @@
+// trainnavi.js v1.8.2
+// 1.8.2: 号車設定（1.8.0）で後ろの号車（例: 7両目）にしていると、駅に停車中に「次は○○」を連呼する不具合の修正。
+//        原因は「駅を出たか」の判定に号車オフセットを足していたこと。停車確定の判定（駅座標から200m以内）と重なる範囲ができ、
+//        停車中も「出発した」と誤判定→停車に再確定（発声済みフラグが消える）→また誤判定…を繰り返していた。
+//        出発の判定は停車確定と同じ実距離（駅座標から200m超）に統一した。次駅までの距離 D へのオフセット（本来の目的）はそのまま。
+//        ※2026-11-28、claude.aiにログインできなかったため Muse が暫定修正。後日 claudeくんへファイルごと共有する。
 // trainnavi.js v1.8.1
 // 1.8.1: 画面の左下に出ていた黒い枠（小窓用の video 要素）を、見えないようにした。小窓の機能はそのまま使える。
 //        display:none / visibility:hidden にすると、iPhone等で小窓にできなくなったり映像が止まることがあるため、大きさ・位置・描画はそのままで、透明（opacity:0）にして、タップも通す（pointer-events:none）。
@@ -599,7 +605,7 @@
     const cur = ev[sg.k], nxt = ev[sg.k + 1];
     if (!nxt && sg.atStop) { nv.src = "gps"; return { kind: "stop", k: sg.k, src: "gps" }; }
     if (sg.atStop) {
-      if (cur.c && dist(nv.pos, cur.c) + carOffset() > 200) { nv.seg = { k: sg.k, atStop: false, depAt: Date.now() }; }
+      if (cur.c && dist(nv.pos, cur.c) > 200) { nv.seg = { k: sg.k, atStop: false, depAt: Date.now() }; }
       else { nv.src = "gps"; return { kind: "stop", k: sg.k, src: "gps" }; }
     }
     const sg2 = nv.seg;
