@@ -1,3 +1,7 @@
+// trainpos.js v1.38.0
+// 1.38.0: パターンのプルダウンに、その路線にある臨時ダイヤ（臨時ダイヤ名のあるダイヤ）を、いま見ている日に走るかどうかに関係なく全部出す。
+//         選ぶだけでその臨時ダイヤの運行日（今日以降でいちばん近い日。無ければ直近の過去の日）の走行位置に切り替わる（日付をいじらなくてよい）。選択肢には運行日（M/D）を添える。
+//         日付を変えた時の、臨時ダイヤの自動選択・自動に戻す動きは従来どおり。
 // trainpos.js v1.37.0
 // 1.37.0: 回送・臨時・団体（非営業列車）は、種別チップだけでなく種別＋行先のラベル全体の背景も赤（#d32f2f）にする。営業列車は従来どおりチップのみ色付け。
 // trainpos.js v1.36.0
@@ -473,13 +477,45 @@
   function effDateKey() { const d = effDate(); return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate(); }
 
   // 臨時列車（個別JSON）。見ている日の前日・当日・翌日に走るものだけ取る。取れなければ空
+  // 索引にある、この路線の臨時ダイヤ [{name, dates:[YYYY-MM-DD…]}]（昨日以降に運行日があるものだけ。日付が書いてなければ常に）
+  function idxDiasOf(idx, ctx, DS) {
+    if (!idx || !Array.isArray(idx.trains)) return [];
+    const since = DS.defaultDates()[0], m = new Map();
+    idx.trains.forEach(t => {
+      if (!t || !t.dia || !Array.isArray(t.routes) || !t.routes.includes(ctx.routeVal)) return;
+      if (t.company && ctx.company && t.company !== ctx.company) return;
+      const ds = Array.isArray(t.dates) ? t.dates.filter(d => d >= since) : [];
+      if (Array.isArray(t.dates) && t.dates.length && !ds.length) return; // 過去の臨時ダイヤは出さない
+      const n = String(t.dia).trim(); if (!n) return;
+      if (!m.has(n)) m.set(n, new Set());
+      ds.forEach(d => m.get(n).add(d));
+    });
+    return [...m].map(([name, set]) => ({ name, dates: [...set].sort() }));
+  }
+  // 臨時ダイヤの運行日を索引から決める（見ている日以降でいちばん近い日。無ければ最後の日）。索引に日付が無ければ null
+  function pickDiaDate(name) {
+    const e = (st.idxDias || []).find(x => x.name === name);
+    if (!e || !e.dates.length) return null;
+    const base0 = st.manualDate || new Date();
+    const b = ymd(new Date(base0.getFullYear(), base0.getMonth(), base0.getDate()));
+    const d = e.dates.find(x => x >= b) || e.dates[e.dates.length - 1];
+    const m = d.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
+  }
   async function loadExtras(ctx) {
     const DS = window.DiagramStatic;
     if (!DS || !DS.tempsFor) return [];
     const par = (ctx.parallelRoutes || []).filter(p => p.route && p.route !== ctx.routeVal);
     let man = null; try { man = await getManifest(false); } catch (e) { man = null; }
     const targets = expandSameRoute([{ route: ctx.routeVal, company: ctx.company, via: false }, ...par.map(p => ({ route: p.route, company: p.company, via: true }))], man);
-    const dates = DS.defaultDates(effDate());
+    let dates = DS.defaultDates(effDate());
+    // 臨時ダイヤ（索引にあるもの）の一覧を覚える。選択中の臨時ダイヤがあれば、その運行日の臨時ダイヤ・臨時列車も読む（1.38.0）
+    let idxAll = null; try { idxAll = DS.getExtrasIndex ? await DS.getExtrasIndex(false) : null; } catch (e) { idxAll = null; }
+    st.idxDias = idxDiasOf(idxAll, ctx, DS);
+    if (st.pattern && st.pattern.startsWith("dia:")) {
+      const pd = pickDiaDate(st.pattern.slice(4));
+      if (pd) dates = [...new Set(dates.concat(DS.defaultDates(pd)))];
+    }
     const out = [];
     const seen = new Set();
     for (const t of targets) {
@@ -1142,7 +1178,7 @@
     const key = name + "|" + ymd(base);
     if (st._diaDates && st._diaDates.key === key && st._diaDates.f === st.trains) return st._diaDates.d;
     let hit = null;
-    for (let i = 0; i <= 400 && !hit; i++) {
+    for (let i = 0; i <= 800 && !hit; i++) {
       const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i);
       if (activeDiasOn(d).has(name)) hit = d;
     }
@@ -1150,7 +1186,7 @@
       const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() - i);
       if (activeDiasOn(d).has(name)) hit = d;
     }
-    hit = hit || base;
+    hit = hit || pickDiaDate(name) || base;
     st._diaDates = { key, f: st.trains, d: hit };
     return hit;
   }
@@ -1167,9 +1203,9 @@
     let names = [];
     if (loaded) {
       const act = activeDiasOn(effDate());
-      names = diaNamesOf().filter(n => act.has(n));
+      names = [...new Set(diaNamesOf().concat((st.idxDias || []).map(x => x.name)))]; // 見ている日に走らなくても全部出す（選ぶとその臨時ダイヤの運行日に切り替わる）。日付が遠くて列車がまだ読まれていない臨時ダイヤも、索引から出す
       if (cur && !names.includes(cur)) st.pattern = "auto";
-      else if (st.pattern === "auto" && st.manualDate && names.length) st.pattern = "dia:" + names[0]; // 指定した日が臨時ダイヤの日なら自動で選ぶ
+      else if (st.pattern === "auto" && st.manualDate) { const hitNames = names.filter(n => act.has(n)); if (hitNames.length) st.pattern = "dia:" + hitNames[0]; } // 指定した日が臨時ダイヤの日なら自動で選ぶ（従来どおり）
       if (!st._diaDiag) {
         st._diaDiag = true;
         diaNamesOf().forEach(n => {
@@ -1184,7 +1220,11 @@
     if (!sel) return;
     const esc = s => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
     let html = `<option value="auto">自動（今日）</option><option value="weekday">平日ダイヤ</option><option value="holiday">土日祝ダイヤ</option>`;
-    names.forEach(n => { html += `<option value="dia:${esc(n)}">${esc(n)}</option>`; });
+    names.forEach(n => {
+      let tag = "";
+      if (loaded) { const d = diaDateFor(n); if (activeDiasOn(d).has(n) || pickDiaDate(n)) tag = `（${d.getMonth() + 1}/${d.getDate()}）`; } // 運行日が分かる時だけ添える
+      html += `<option value="dia:${esc(n)}">${esc(n)}${tag}</option>`;
+    });
     sel.innerHTML = html;
     sel.value = st.pattern;
   }
