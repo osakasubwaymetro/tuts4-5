@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ダイヤ管理</title>
-<!-- version: 1.16.0 -->
+<!-- version: 1.17.0 -->
+<!-- 1.17.0: 時刻表グリッドで、行の範囲（表示中の行番号）を指定して「行先」または「種別」を一括で書き換えられるようにした（グリッド上の編集として扱う＝保存フローは従来どおり） -->
 <!-- 1.16.0: 時刻表グリッドでヘッダー行（isHeadRow: 列車番号セル=「列車番号」かつ種別セル=「種別」。先頭の保存用ヘッダー・途中の重複ヘッダーとも）を表示しない。表示だけの変更で、データ・保存形式は従来どおり（非表示の行も保存される）。行番号は表示している行の連番。↑↓は表示されている隣のデータ行と入れ替える -->
 <!-- 1.15.0: 時刻表編集グリッドの「発車時刻」列を、見た目だけ「到着」「発車」の2つの入力ボックスに分割（保存データ・形式は従来どおり: 入力された時刻を上から順に改行でつなぐ）。値が1つだけの行は、その列車の最後の行なら到着、それ以外は発車 -->
 <!-- 1.14.0: 「路線ファイルを選ぶ」の一覧を、ファイルの会社ではなく路線の持ち主（マスタ route タブの会社）でグループ化し、会社・路線の並び順もマスタ route タブの順に変更。マスタに無い路線・会社は従来の会社で末尾に manifest 順。読み込み・合体表示・保存は変更なし（一覧の並べ方だけ） -->
@@ -133,6 +134,13 @@ pre{white-space:pre-wrap;font:12px/1.4 ui-monospace,monospace}
   <div class="row">
     <div><label>列車番号で絞り込み</label><input id="fltTrain"></div>
     <div><button class="sub sm" id="btnAddRow">＋ 末尾に行を追加</button> <button class="sub sm" id="btnTsvOut">TSVを書き出す</button> <button class="sub sm" id="btnTsvIn">TSVを反映(全行置換)</button></div>
+  </div>
+  <div class="row" id="rgBar" style="align-items:flex-end;margin-top:6px">
+    <div><label>範囲を一括書き換え: 開始行</label><input id="rgFrom" type="number" min="1" style="width:5em" placeholder="1"></div>
+    <div><label>終了行</label><input id="rgTo" type="number" min="1" style="width:5em" placeholder="最後"></div>
+    <div><label>対象</label><select id="rgCol"><option value="3">行先</option><option value="4">種別</option></select></div>
+    <div><label>新しい値</label><input id="rgVal" style="width:10em"></div>
+    <div><button class="sm" id="btnRange">範囲に適用</button> <span class="mut" id="rgInfo"></span></div>
   </div>
   <textarea id="tsv" rows="3" style="width:100%;display:none;margin-top:6px" placeholder="列車番号⇥駅名⇥発車時刻⇥行先⇥種別(時刻の中の改行は \n と書く)"></textarea>
   <div class="mut" id="sheetWarn"></div>
@@ -454,17 +462,18 @@ function renderSheet(){
   const rows=sheetOf(k);const f=$("fltTrain").value.trim();
   let h=`<tr><th class="stick">#</th>${COLS.map((c,j)=>j===2?`<th class="stick">到着</th><th class="stick">発車</th>`:`<th class="stick">${c}</th>`).join("")}<th class="stick"></th></tr>`;
   const nextData=i=>{for(let j=i+1;j<rows.length;j++)if(!isHeadRow(rows[j]))return rows[j];return null;}; // 次のデータ行（ヘッダー行は飛ばす）
-  let no=0;
+  let no=0;S.dispIdx=[]; // 表示行番号 → 元のシート行インデックス（範囲書き換え用）
   rows.forEach((r,i)=>{
     if(isHeadRow(r))return; // ヘッダー行は表示しない（データは残り、保存もされる）
     if(f&&!String(r[0]).includes(f))return;
-    no++;
+    no++;S.dispIdx.push(i);
     const nx=nextData(i);
     const isLast=!nx||nx[0]!==r[0]; // 同じ列車番号が続く行のまとまりの最後の行（終着駅）。ヘッダー行を除いたデータ行の並びで判定
     const tm=splitTime(r[2],isLast);
     h+=`<tr><td>${no}</td>`+COLS.map((c,j)=>j===2?`<td><input class="tm" data-r="${i}" data-c="2a" value="${esc(tm.arr)}" placeholder="到着"></td><td><input class="tm" data-r="${i}" data-c="2d" value="${esc(tm.dep)}" placeholder="発車"></td>`:`<td><input data-r="${i}" data-c="${j}" value="${esc(r[j])}"></td>`).join("")+
       `<td style="white-space:nowrap"><button class="sub sm" data-up="${i}">↑</button><button class="sub sm" data-dn="${i}">↓</button><button class="sub sm" data-ins="${i}">＋</button><button class="ng sm" data-rm="${i}">✕</button></td></tr>`;});
   $("tblSheet").innerHTML=h;checkSheet();
+  $("rgInfo").textContent=`（表示中 1〜${no}行${f?"・絞り込み中":""}）`;
 }
 /* 発車時刻セル ⇔ 到着・発車の2ボックス（見た目だけ。保存するセル値の形式は従来どおり） */
 function splitTime(v,isLast){
@@ -487,6 +496,22 @@ function GenCoreMono(rows){
   const mins=t=>{const p=String(t).split("\n").pop().split(":");return (+p[0])*60+(+p[1]);};
   let bad=0,prev=-1;for(const r of rows.slice(1)){const v=mins(r[2]);if(isNaN(v))continue;if(v<prev&&!(prev>20*60&&v<5*60))bad++;prev=v;}return bad;
 }
+/* 範囲の一括書き換え(1.17.0): 表示されている行番号(左端の#)の範囲で、行先か種別を書き換える。グリッドの編集と同じ ed.sheet を直接書き換えるので、保存・差分・変更一覧は従来どおり */
+$("btnRange").onclick=async()=>{
+  const k=S.openKey;if(!k)return;
+  const idx=S.dispIdx||[],n=idx.length;
+  if(!n){await note("書き換える行がありません");return;}
+  const rf=$("rgFrom").value.trim(),rt=$("rgTo").value.trim();
+  const a=rf===""?1:parseInt(rf,10),b=rt===""?n:parseInt(rt,10);
+  if(!isFinite(a)||!isFinite(b)||a<1||b>n||a>b){await note(`行の範囲が正しくありません。1〜${n} の間で、開始 ≦ 終了 になるように入れてください（空欄なら 開始=1／終了=最後）`);return;}
+  const col=+$("rgCol").value,nm=COLS[col],val=$("rgVal").value.trim();
+  if(val===""&&!await yes(`${a}〜${b}行目(${b-a+1}行)の「${nm}」を空にします。よろしいですか？`))return;
+  const ed=ensureEdit(k);let c=0;
+  for(let i=a;i<=b;i++){const r=ed.sheet[idx[i-1]];if(r&&String(r[col]==null?"":r[col])!==val){r[col]=val;c++;}}
+  markChanged();renderSheet();
+  log(`${k}: ${a}〜${b}行目の「${nm}」を「${val}」に書き換えました（${c}行が変わりました）`);
+  $("rgInfo").textContent=`${a}〜${b}行目の「${nm}」を「${val}」に書き換えました（${c}行が変わりました）`;
+};
 $("tblSheet").addEventListener("change",e=>{
   const t=e.target;if(t.dataset.r==null)return;
   const ed=ensureEdit(S.openKey);
